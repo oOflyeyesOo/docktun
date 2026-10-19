@@ -20,7 +20,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./cloudflared:/etc/cloudflared
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/run/docker.sock:/var/run/docker.sock
       - ${PROJECTS_ROOT:-./projects}:/opt/projects
     networks:
       - cloudflared

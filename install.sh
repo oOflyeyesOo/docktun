@@ -683,6 +683,11 @@ else
         comp_name=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$cname" 2>/dev/null || true)
         comp_dir=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$cname" 2>/dev/null || true)
 
+        # Validate that comp_dir is a real absolute directory on disk
+        if [[ ! "$comp_dir" =~ ^/ ]] || [ ! -d "$comp_dir" ]; then
+            comp_dir=""
+        fi
+
         C_NAMES[$INDEX]="$cname"
         C_PORTS[$INDEX]="$first_port"
         C_COMP_NAME[$INDEX]="$comp_name"
@@ -739,7 +744,7 @@ else
             pname="${C_COMP_NAME[$i]}"
             pdir="${C_COMP_DIR[$i]}"
             
-            if [ -n "$pdir" ] && [ -z "${SEEN_PROJECTS[$pdir]}" ]; then
+            if [ -n "$pdir" ] && [[ "$pdir" =~ ^/ ]] && [ -d "$pdir" ] && [ -z "${SEEN_PROJECTS[$pdir]}" ]; then
                 SEEN_PROJECTS["$pdir"]=1
                 [ -z "$pname" ] && pname=$(basename "$pdir")
                 
@@ -879,7 +884,9 @@ EOF
 
 # Add mounts for any external Compose project directories discovered
 for pdir in "${COMPOSE_MOUNT_PATHS[@]}"; do
-    echo "      - $pdir:$pdir" >> "$SCRIPT_DIR/docker-compose.yml"
+    if [[ "$pdir" =~ ^/ ]] && [ -d "$pdir" ] && [ "$pdir" != "$SCRIPT_DIR" ]; then
+        echo "      - $pdir:$pdir" >> "$SCRIPT_DIR/docker-compose.yml"
+    fi
 done
 
 cat >> "$SCRIPT_DIR/docker-compose.yml" << EOF
@@ -917,9 +924,27 @@ header "Step 7: Launching Tunlify Stack"
 
 info "Building and launching containers via $DOCKER_COMPOSE_CMD..."
 $DOCKER_COMPOSE_CMD down 2>/dev/null || true
-$DOCKER_COMPOSE_CMD up -d --build
+if ! $DOCKER_COMPOSE_CMD up -d --build; then
+    echo ""
+    error "Failed to start Tunlify containers with Docker Compose!"
+    echo -e "${C_YELLOW}Please check the Docker error output above.${C_RESET}"
+    exit 1
+fi
 
+info "Verifying containers are online..."
 sleep 4
+
+echo ""
+$DOCKER_COMPOSE_CMD ps
+echo ""
+
+# Verify containers are running
+RUNNING_CONTAINERS_COUNT=$($DOCKER_COMPOSE_CMD ps --status running -q 2>/dev/null | wc -l)
+if [ "$RUNNING_CONTAINERS_COUNT" -lt 2 ]; then
+    warn "One or more containers failed to stay running! Recent logs:"
+    $DOCKER_COMPOSE_CMD logs --tail=30
+    echo ""
+fi
 
 # Detect host local IP address
 HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
