@@ -599,6 +599,7 @@ if [ "$RESUME_PREVIOUS" = true ]; then
             success "Restored tunnel credentials from $SYS_TUNNEL_JSON"
         fi
     fi
+    [ -f "$SCRIPT_DIR/cloudflared/credentials.json" ] && chmod 644 "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true
 
     success "Tunnel configuration restored: ${TUNNEL_NAME} (${TUNNEL_ID})"
 
@@ -802,6 +803,8 @@ else
         warn "Tunnel ID could not be parsed automatically. Using placeholder: $TUNNEL_ID"
     fi
 
+    [ -f "$SCRIPT_DIR/cloudflared/credentials.json" ] && chmod 644 "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true
+
     DEFAULT_DOM="${PREV_DOMAIN:-tunlify.example.com}"
     read -rp "Enter the public domain/hostname for Tunlify Web UI (Default: ${DEFAULT_DOM}): " TUNLIFY_DOMAIN
     TUNLIFY_DOMAIN=${TUNLIFY_DOMAIN:-$DEFAULT_DOM}
@@ -938,54 +941,92 @@ else
         success "All containers connected to 'cloudflared' network."
     fi
 
-    # Import Docker Compose projects into SQLite database & volume mounts
+    # Import Docker Compose projects and standalone containers into SQLite database & volume mounts
     echo ""
-    read -rp "Import detected Docker Compose projects into Tunlify dashboard? [Y/n]: " IMPORT_COMPOSE
-    IMPORT_COMPOSE=${IMPORT_COMPOSE:-Y}
+    read -rp "Import detected containers & projects into Tunlify dashboard? [Y/n]: " IMPORT_PROJECTS
+    IMPORT_PROJECTS=${IMPORT_PROJECTS:-Y}
 
-    if [[ "$IMPORT_COMPOSE" =~ ^[Yy]$ ]]; then
+    if [[ "$IMPORT_PROJECTS" =~ ^[Yy]$ ]]; then
         info "Preparing Tunlify projects database..."
         
-        # Initialize SQLite database file & table using a helper container to guarantee zero host dependency issues
-        docker run --rm -v "$SCRIPT_DIR/data:/data" alpine sh -c '
-            apk add --no-cache sqlite >/dev/null 2>&1
-            sqlite3 /data/app.db "
-                CREATE TABLE IF NOT EXISTS projects (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    path TEXT NOT NULL,
-                    repo_url TEXT DEFAULT \"\",
-                    git_username TEXT DEFAULT \"\",
-                    git_token TEXT DEFAULT \"\",
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                );
-            "
-        ' 2>/dev/null || true
+        # Prepare SQL batch file
+        SQL_FILE="$SCRIPT_DIR/data/import_projects.sql"
+        cat > "$SQL_FILE" << 'EOSQL'
+CREATE TABLE IF NOT EXISTS projects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL,
+    repo_url TEXT DEFAULT '',
+    git_username TEXT DEFAULT '',
+    git_token TEXT DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_path ON projects(path);
+EOSQL
 
         declare -A SEEN_PROJECTS
         for ((i=1; i<INDEX; i++)); do
+            cname="${C_NAMES[$i]}"
             pname="${C_COMP_NAME[$i]}"
             pdir="${C_COMP_DIR[$i]}"
             
-            if [ -n "$pdir" ] && [[ "$pdir" =~ ^/ ]] && [ -d "$pdir" ] && [ -z "${SEEN_PROJECTS[$pdir]}" ]; then
-                SEEN_PROJECTS["$pdir"]=1
-                [ -z "$pname" ] && pname=$(basename "$pdir")
-                
-                info "Importing project: $pname ($pdir)..."
-                
-                # Insert into DB if not exists
-                docker run --rm -v "$SCRIPT_DIR/data:/data" alpine sh -c "
-                    apk add --no-cache sqlite >/dev/null 2>&1
-                    COUNT=\$(sqlite3 /data/app.db \"SELECT COUNT(*) FROM projects WHERE path = '$pdir';\")
-                    if [ \"\$COUNT\" -eq 0 ]; then
-                        sqlite3 /data/app.db \"INSERT INTO projects (name, path) VALUES ('$pname', '$pdir');\"
-                    fi
-                " 2>/dev/null || true
+            if [ -n "$pdir" ] && [[ "$pdir" =~ ^/ ]] && [ -d "$pdir" ]; then
+                # Existing host Compose project
+                if [ -z "${SEEN_PROJECTS[$pdir]}" ]; then
+                    SEEN_PROJECTS["$pdir"]=1
+                    [ -z "$pname" ] && pname=$(basename "$pdir")
+                    info "Importing Compose project: $pname ($pdir)..."
+                    
+                    esc_name=$(echo "$pname" | sed "s/'/''/g")
+                    esc_path=$(echo "$pdir" | sed "s/'/''/g")
+                    echo "INSERT OR IGNORE INTO projects (name, path) VALUES ('$esc_name', '$esc_path');" >> "$SQL_FILE"
+                    COMPOSE_MOUNT_PATHS+=("$pdir")
+                fi
+            else
+                # Standalone container -> generate compose project stub in projects/<cname>
+                proj_stub_dir="$SCRIPT_DIR/projects/$cname"
+                proj_db_path="/opt/projects/$cname"
+                if [ -z "${SEEN_PROJECTS[$proj_db_path]}" ]; then
+                    SEEN_PROJECTS["$proj_db_path"]=1
+                    info "Importing standalone container as project: $cname ($proj_db_path)..."
+                    
+                    mkdir -p "$proj_stub_dir"
+                    if [ ! -f "$proj_stub_dir/docker-compose.yml" ]; then
+                        cimage=$(docker inspect -f '{{.Config.Image}}' "$cname" 2>/dev/null || echo "alpine")
+                        [ -z "$cimage" ] && cimage="alpine"
+                        cat > "$proj_stub_dir/docker-compose.yml" << EOF
+services:
+  ${cname}:
+    image: ${cimage}
+    container_name: ${cname}
+    restart: unless-stopped
+    networks:
+      - cloudflared
 
-                COMPOSE_MOUNT_PATHS+=("$pdir")
+networks:
+  cloudflared:
+    external: true
+EOF
+                    fi
+                    esc_name=$(echo "$cname" | sed "s/'/''/g")
+                    esc_path=$(echo "$proj_db_path" | sed "s/'/''/g")
+                    echo "INSERT OR IGNORE INTO projects (name, path) VALUES ('$esc_name', '$esc_path');" >> "$SQL_FILE"
+                fi
             fi
         done
-        success "Docker Compose projects registered into Tunlify database."
+
+        # Execute batch SQL
+        if command -v sqlite3 &>/dev/null; then
+            sqlite3 "$SCRIPT_DIR/data/app.db" < "$SQL_FILE" 2>/dev/null || true
+        else
+            docker run --rm -v "$SCRIPT_DIR/data:/data" alpine sh -c '
+                apk add --no-cache sqlite >/dev/null 2>&1
+                sqlite3 /data/app.db < /data/import_projects.sql
+            ' 2>/dev/null || true
+        fi
+        rm -f "$SQL_FILE"
+        chmod 644 "$SCRIPT_DIR/data/app.db" 2>/dev/null || true
+        success "Containers and projects successfully registered into Tunlify database."
     fi
 
     # Restore any previously configured custom container ingress rules from existing config.yml
@@ -1005,28 +1046,52 @@ else
     fi
 
     # Ingress Configuration
+    BASE_DOMAIN="$TUNLIFY_DOMAIN"
+    if [[ "$TUNLIFY_DOMAIN" =~ \. ]]; then
+        dot_count=$(echo "$TUNLIFY_DOMAIN" | tr -cd '.' | wc -c)
+        if [ "$dot_count" -ge 2 ]; then
+            BASE_DOMAIN="${TUNLIFY_DOMAIN#*.}"
+        fi
+    fi
+
     echo ""
-    read -rp "Would you like to expose any other containers through Cloudflare Tunnel right now? [y/N]: " CONFIGURE_INGRESS
-    CONFIGURE_INGRESS=${CONFIGURE_INGRESS:-N}
+    read -rp "Would you like to expose detected containers through Cloudflare Tunnel hostnames? [Y/n]: " CONFIGURE_INGRESS
+    CONFIGURE_INGRESS=${CONFIGURE_INGRESS:-Y}
 
     if [[ "$CONFIGURE_INGRESS" =~ ^[Yy]$ ]]; then
         for ((i=1; i<INDEX; i++)); do
             cname="${C_NAMES[$i]}"
             def_port="${C_PORTS[$i]}"
-            echo ""
-            read -rp "Expose container '$cname' via Cloudflare? [y/N]: " EXPOSE_C
-            if [[ "$EXPOSE_C" =~ ^[Yy]$ ]]; then
-                read -rp "Enter public hostname for '$cname' (e.g. $cname.${TUNLIFY_DOMAIN#*.}): " C_HOST
-                read -rp "Enter internal service port for '$cname' (Default: $def_port): " C_PORT
-                C_PORT=${C_PORT:-$def_port}
+            def_host="${cname}.${BASE_DOMAIN}"
 
-                if [ -n "$C_HOST" ]; then
-                    IMPORTED_INGRESS+=("  - hostname: $C_HOST"$'\n'"    service: http://$cname:$C_PORT")
-                    if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_NAME" ]; then
-                        info "Configuring Cloudflare DNS route: $C_HOST -> $TUNNEL_NAME..."
-                        cloudflared tunnel route dns "$TUNNEL_NAME" "$C_HOST" 2>/dev/null || true
+            already_configured=false
+            for r in "${IMPORTED_INGRESS[@]}"; do
+                if echo "$r" | grep -q "hostname: $def_host"; then
+                    already_configured=true
+                    break
+                fi
+            done
+
+            if [ "$already_configured" = true ]; then
+                info "Container '$cname' is already configured at https://$def_host."
+            else
+                echo ""
+                read -rp "Expose '$cname' via Cloudflare at https://$def_host -> http://$cname:$def_port? [Y/n]: " EXPOSE_C
+                EXPOSE_C=${EXPOSE_C:-Y}
+                if [[ "$EXPOSE_C" =~ ^[Yy]$ ]]; then
+                    read -rp "Enter public hostname for '$cname' (Default: $def_host): " C_HOST
+                    C_HOST=${C_HOST:-$def_host}
+                    read -rp "Enter internal service port for '$cname' (Default: $def_port): " C_PORT
+                    C_PORT=${C_PORT:-$def_port}
+
+                    if [ -n "$C_HOST" ]; then
+                        IMPORTED_INGRESS+=("  - hostname: $C_HOST"$'\n'"    service: http://$cname:$C_PORT")
+                        if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_NAME" ]; then
+                            info "Configuring Cloudflare DNS route: $C_HOST -> $TUNNEL_NAME..."
+                            cloudflared tunnel route dns "$TUNNEL_NAME" "$C_HOST" 2>/dev/null || true
+                        fi
+                        success "Added ingress rule for $C_HOST -> http://$cname:$C_PORT"
                     fi
-                    success "Added ingress rule for $C_HOST -> http://$cname:$C_PORT"
                 fi
             fi
         done
@@ -1081,15 +1146,27 @@ ingress:
     service: http://tunlify-frontend:80
 EOF
 
-# Append imported container ingress rules
+declare -A WRITTEN_HOSTS
+WRITTEN_HOSTS["$TUNLIFY_DOMAIN"]=1
+
+# Append imported container ingress rules (deduplicated)
 for rule in "${IMPORTED_INGRESS[@]}"; do
-    echo "$rule" >> "$SCRIPT_DIR/cloudflared/config.yml"
+    rhost=$(echo "$rule" | grep -oE 'hostname:[[:space:]]*[^[:space:]]+' | awk '{print $2}' || true)
+    if [ -n "$rhost" ]; then
+        if [ -z "${WRITTEN_HOSTS[$rhost]}" ]; then
+            WRITTEN_HOSTS["$rhost"]=1
+            echo "$rule" >> "$SCRIPT_DIR/cloudflared/config.yml"
+        fi
+    else
+        echo "$rule" >> "$SCRIPT_DIR/cloudflared/config.yml"
+    fi
 done
 
 # Ingress catch-all must ALWAYS be the last rule
 cat >> "$SCRIPT_DIR/cloudflared/config.yml" << EOF
   - service: http_status:404
 EOF
+chmod 644 "$SCRIPT_DIR/cloudflared/config.yml" 2>/dev/null || true
 success "Created $SCRIPT_DIR/cloudflared/config.yml"
 
 # Configure project mounts via docker-compose.override.yml if needed (leaves docker-compose.yml clean for git)
@@ -1116,7 +1193,10 @@ fi
 
 # Set correct permissions
 chmod 755 "$SCRIPT_DIR/data" "$SCRIPT_DIR/cloudflared" "$SCRIPT_DIR/projects"
-chmod 600 "$SCRIPT_DIR/.env" "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true
+chmod 600 "$SCRIPT_DIR/.env" 2>/dev/null || true
+chmod 644 "$SCRIPT_DIR/cloudflared/credentials.json" "$SCRIPT_DIR/cloudflared/config.yml" 2>/dev/null || true
+[ -f "$SCRIPT_DIR/docker-compose.override.yml" ] && chmod 644 "$SCRIPT_DIR/docker-compose.override.yml" 2>/dev/null || true
+[ -f "$SCRIPT_DIR/data/app.db" ] && chmod 644 "$SCRIPT_DIR/data/app.db" 2>/dev/null || true
 
 # ------------------------------------------------------------------------------
 # 7. Launch Tunlify Containers
