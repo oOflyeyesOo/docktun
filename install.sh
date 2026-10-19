@@ -1,0 +1,958 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Tunlify & Cloudflare Tunnel Installer for Docker VM
+# ==============================================================================
+# Features:
+#   1. Detects OS and installs necessary dependencies (curl, jq, openssl, pciutils)
+#   2. Pre-flight checks:
+#      - Virtualization & Nesting (LXC cgroups/overlayfs/keyctl, KVM /dev/kvm, nested virt)
+#      - GPU Acceleration (NVIDIA GPU & Container Toolkit, Intel QuickSync & AMD VA-API)
+#      - Kernel & Network (IPv4 forwarding, /dev/net/tun, br_netfilter, overlay2, NTP sync)
+#      - System resources (RAM, disk space, port availability)
+#   3. Installs or verifies Docker & Docker Compose
+#   4. Installs official cloudflared CLI binary for host architecture
+#   5. Authenticates with Cloudflare (login / create tunnel / import credentials JSON)
+#   6. Securely configures Tunlify Admin credentials & generates JWT secret
+#   7. Discovers existing Docker containers:
+#      - Connects them to the 'cloudflared' Docker network for direct routing
+#      - Imports existing Docker Compose projects into Tunlify dashboard
+#      - Configures Cloudflare Tunnel Ingress rules & creates DNS records
+#   8. Builds & starts Tunlify stack via Docker Compose
+# ==============================================================================
+
+set -o pipefail
+
+# Colors
+C_RESET='\033[0m'
+C_BOLD='\033[1m'
+C_RED='\033[0;31m'
+C_GREEN='\033[0;32m'
+C_YELLOW='\033[0;33m'
+C_BLUE='\033[0;34m'
+C_CYAN='\033[0;36m'
+C_MAGENTA='\033[0;35m'
+
+info() { echo -e "${C_CYAN}ℹ [INFO]${C_RESET} $1"; }
+success() { echo -e "${C_GREEN}✔ [SUCCESS]${C_RESET} $1"; }
+warn() { echo -e "${C_YELLOW}⚠ [WARN]${C_RESET} $1"; }
+error() { echo -e "${C_RED}✖ [ERROR]${C_RESET} $1"; }
+header() {
+    echo -e "\n${C_BOLD}${C_BLUE}===================================================================${C_RESET}"
+    echo -e "${C_BOLD}${C_CYAN}  $1${C_RESET}"
+    echo -e "${C_BOLD}${C_BLUE}===================================================================${C_RESET}\n"
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# ------------------------------------------------------------------------------
+# 1. Root / Sudo Check
+# ------------------------------------------------------------------------------
+if [ "$EUID" -ne 0 ]; then
+    warn "This script requires superuser privileges to install packages, configure Docker, and manage cloudflared."
+    echo -e "Please re-run as root: ${C_BOLD}sudo ./install.sh${C_RESET}"
+    exit 1
+fi
+
+clear 2>/dev/null || true
+echo -e "${C_CYAN}"
+cat << "EOF"
+  _____            _ _  __       
+ |_   _|   _ _ __ | (_)/ _|_   _ 
+   | || | | | '_ \| | | |_| | | |
+   | || |_| | | | | | |  _| |_| |
+   |_| \__,_|_| |_|_|_|_|  \__, |
+                           |___/ 
+  Cloudflare Tunnel & Docker Management Stack
+EOF
+echo -e "${C_RESET}"
+
+header "Step 1: System, Dependencies & Pre-Flight Checks"
+
+# Detect package manager
+PKG_MANAGER=""
+if command -v apt-get &>/dev/null; then
+    PKG_MANAGER="apt"
+elif command -v dnf &>/dev/null; then
+    PKG_MANAGER="dnf"
+elif command -v yum &>/dev/null; then
+    PKG_MANAGER="yum"
+elif command -v apk &>/dev/null; then
+    PKG_MANAGER="apk"
+elif command -v pacman &>/dev/null; then
+    PKG_MANAGER="pacman"
+fi
+
+install_packages() {
+    local pkgs=("$@")
+    info "Installing required packages: ${pkgs[*]}..."
+    case "$PKG_MANAGER" in
+        apt)
+            apt-get update -qq && apt-get install -y -qq "${pkgs[@]}" >/dev/null
+            ;;
+        dnf|yum)
+            "$PKG_MANAGER" install -y -q "${pkgs[@]}" >/dev/null
+            ;;
+        apk)
+            apk add --no-cache "${pkgs[@]}" >/dev/null
+            ;;
+        pacman)
+            pacman -Sy --noconfirm "${pkgs[@]}" >/dev/null
+            ;;
+        *)
+            warn "Unknown package manager. Please ensure ${pkgs[*]} are installed manually."
+            ;;
+    esac
+}
+
+# Check prerequisite CLI tools
+NEEDED_TOOLS=()
+for tool in curl jq openssl; do
+    if ! command -v "$tool" &>/dev/null; then
+        NEEDED_TOOLS+=("$tool")
+    fi
+done
+
+if ! command -v lspci &>/dev/null; then
+    NEEDED_TOOLS+=("pciutils")
+fi
+
+if [ ${#NEEDED_TOOLS[@]} -gt 0 ]; then
+    install_packages "${NEEDED_TOOLS[@]}"
+fi
+success "Prerequisite tools verified."
+
+# ------------------------------------------------------------------------------
+# Pre-Flight: Docker & Docker Compose Verification
+# ------------------------------------------------------------------------------
+if ! command -v docker &>/dev/null; then
+    warn "Docker is not installed on this system."
+    read -rp "Would you like this installer to automatically install Docker? [Y/n]: " INSTALL_DOCKER
+    INSTALL_DOCKER=${INSTALL_DOCKER:-Y}
+    if [[ "$INSTALL_DOCKER" =~ ^[Yy]$ ]]; then
+        info "Installing Docker using official convenience script..."
+        curl -fsSL https://get.docker.com | sh
+        systemctl enable --now docker 2>/dev/null || service docker start 2>/dev/null || true
+        success "Docker installed successfully."
+    else
+        error "Docker is required to run Tunlify. Please install Docker and re-run this script."
+        exit 1
+    fi
+else
+    success "Docker is installed: $(docker --version)"
+fi
+
+# Ensure Docker daemon is active
+if ! docker info &>/dev/null; then
+    info "Starting Docker service..."
+    systemctl start docker 2>/dev/null || service docker start 2>/dev/null || true
+    sleep 2
+    if ! docker info &>/dev/null; then
+        error "Unable to communicate with Docker daemon. Please ensure Docker is running."
+        exit 1
+    fi
+fi
+
+# Check Docker Compose
+DOCKER_COMPOSE_CMD=""
+if docker compose version &>/dev/null; then
+    DOCKER_COMPOSE_CMD="docker compose"
+elif command -v docker-compose &>/dev/null; then
+    DOCKER_COMPOSE_CMD="docker-compose"
+else
+    info "Installing Docker Compose CLI plugin..."
+    if [ "$PKG_MANAGER" = "apt" ]; then
+        apt-get install -y -qq docker-compose-plugin >/dev/null || true
+    fi
+    if docker compose version &>/dev/null; then
+        DOCKER_COMPOSE_CMD="docker compose"
+    else
+        error "Docker Compose plugin could not be detected. Please install 'docker-compose-plugin'."
+        exit 1
+    fi
+fi
+success "Docker Compose verified: $($DOCKER_COMPOSE_CMD version)"
+
+# ------------------------------------------------------------------------------
+# Pre-Flight: Virtualization & Nesting Checks
+# ------------------------------------------------------------------------------
+echo ""
+info "Checking Virtualization & Nesting support..."
+
+VIRT_TYPE="bare-metal"
+if command -v systemd-detect-virt &>/dev/null; then
+    VIRT_TYPE=$(systemd-detect-virt 2>/dev/null || echo "none")
+elif [ -f /sys/class/dmi/id/product_name ]; then
+    VIRT_TYPE=$(cat /sys/class/dmi/id/product_name 2>/dev/null || echo "unknown")
+fi
+
+echo -e "  Environment: ${C_BOLD}${VIRT_TYPE}${C_RESET}"
+
+if [[ "$VIRT_TYPE" =~ lxc|lxd ]]; then
+    info "Detected LXC container environment (e.g. Proxmox LXC / LXD)."
+    
+    # Check cgroup write permissions
+    cgroup_ok=false
+    [ -w /sys/fs/cgroup ] && cgroup_ok=true
+
+    # Check overlayfs
+    modprobe overlay 2>/dev/null || true
+    overlay_ok=false
+    grep -q overlay /proc/filesystems 2>/dev/null && overlay_ok=true
+
+    if [ "$cgroup_ok" = true ] && [ "$overlay_ok" = true ]; then
+        success "LXC Nesting verified (cgroups writable, overlayfs active)."
+    else
+        warn "LXC Nesting may not be enabled on the hypervisor!"
+        echo -e "${C_YELLOW}  -> If running Proxmox LXC: Go to Proxmox Web UI > Container > Options > Features${C_RESET}"
+        echo -e "${C_YELLOW}     Enable 'Nesting' (nesting=1,keyctl=1 in /etc/pve/lxc/<ID>.conf)${C_RESET}"
+    fi
+
+elif [[ "$VIRT_TYPE" =~ kvm|qemu|vmware|hyperv|oracle|wsl ]]; then
+    info "Detected VM environment (${VIRT_TYPE}). Checking nested virtualization..."
+
+    # Check CPU flags for nested hardware virtualization
+    if grep -E -q '(vmx|svm)' /proc/cpuinfo 2>/dev/null; then
+        success "Nested CPU Virtualization extensions detected (Intel VMX / AMD SVM active)."
+    else
+        info "Nested CPU virtualization (VMX/SVM) not passed to VM (Docker runs fine; only nested VMs require this)."
+    fi
+
+    # Check /dev/kvm
+    if [ -e /dev/kvm ]; then
+        success "Hardware acceleration device /dev/kvm is available."
+    fi
+else
+    success "Host environment: ${VIRT_TYPE}."
+fi
+
+# Verify Docker socket nesting support
+if [ -S /var/run/docker.sock ]; then
+    success "Docker daemon socket (/var/run/docker.sock) is ready for container control."
+else
+    warn "Docker socket /var/run/docker.sock was not found."
+fi
+
+# ------------------------------------------------------------------------------
+# Pre-Flight: GPU Acceleration Checks
+# ------------------------------------------------------------------------------
+echo ""
+info "Scanning for GPU Acceleration hardware..."
+
+FOUND_GPU=false
+
+# 1. NVIDIA GPU Check
+NVIDIA_PCI=""
+if command -v lspci &>/dev/null; then
+    NVIDIA_PCI=$(lspci 2>/dev/null | grep -iE 'nvidia|vga compatible.*nvidia|3d controller.*nvidia' | head -n1 || true)
+fi
+
+if [ -n "$NVIDIA_PCI" ] || command -v nvidia-smi &>/dev/null || [ -e /dev/nvidia0 ]; then
+    FOUND_GPU=true
+    GPU_MODEL=""
+    if command -v nvidia-smi &>/dev/null; then
+        GPU_MODEL=$(nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null | head -n1 || true)
+    fi
+    [ -z "$GPU_MODEL" ] && GPU_MODEL="${NVIDIA_PCI:-NVIDIA Graphics Card}"
+
+    success "NVIDIA GPU Detected: ${C_BOLD}${GPU_MODEL}${C_RESET}"
+
+    # Check NVIDIA Container Toolkit in Docker
+    info "Checking NVIDIA Container Toolkit configuration..."
+    NVC_TOOL=false
+    if command -v nvidia-ctk &>/dev/null || command -v nvidia-container-runtime &>/dev/null; then
+        NVC_TOOL=true
+    fi
+
+    DOCKER_NVIDIA=false
+    if docker info 2>/dev/null | grep -iq 'nvidia'; then
+        DOCKER_NVIDIA=true
+    elif [ -f /etc/docker/daemon.json ] && grep -q 'nvidia' /etc/docker/daemon.json; then
+        DOCKER_NVIDIA=true
+    fi
+
+    if [ "$NVC_TOOL" = true ] && [ "$DOCKER_NVIDIA" = true ]; then
+        success "NVIDIA Container Toolkit is configured and active in Docker."
+    else
+        warn "NVIDIA GPU detected, but NVIDIA Container Toolkit is not configured in Docker!"
+        echo -e "${C_YELLOW}  Enabling this allows Docker containers (Plex, AI/Ollama, Jellyfin, Tdarr) to use your GPU.${C_RESET}"
+        read -rp "  Would you like to auto-install & configure nvidia-container-toolkit now? [y/N]: " SETUP_NVC
+        if [[ "$SETUP_NVC" =~ ^[Yy]$ ]]; then
+            info "Setting up NVIDIA Container Toolkit repository..."
+            if [ "$PKG_MANAGER" = "apt" ]; then
+                curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null || true
+                curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+                    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+                    tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
+                apt-get update -qq && apt-get install -y -qq nvidia-container-toolkit >/dev/null
+            elif [ "$PKG_MANAGER" = "dnf" ] || [ "$PKG_MANAGER" = "yum" ]; then
+                curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | \
+                    tee /etc/yum.repos.d/nvidia-container-toolkit.repo >/dev/null
+                "$PKG_MANAGER" install -y -q nvidia-container-toolkit >/dev/null
+            fi
+
+            if command -v nvidia-ctk &>/dev/null; then
+                nvidia-ctk runtime configure --runtime=docker >/dev/null 2>&1 || true
+                systemctl restart docker 2>/dev/null || service docker restart 2>/dev/null || true
+                sleep 2
+                success "NVIDIA Container Toolkit installed and Docker restarted."
+            else
+                warn "nvidia-ctk not available. Please install manually if GPU acceleration is needed."
+            fi
+        else
+            info "Skipping NVIDIA Container Toolkit setup."
+        fi
+    fi
+fi
+
+# 2. Intel / AMD GPU Check (QuickSync, VA-API, ROCm)
+RENDER_DEVS=""
+if [ -d /dev/dri ]; then
+    RENDER_DEVS=$(ls /dev/dri/render* /dev/dri/card* 2>/dev/null || true)
+fi
+
+if [ -n "$RENDER_DEVS" ]; then
+    FOUND_GPU=true
+    INTEL_AMD_PCI=""
+    if command -v lspci &>/dev/null; then
+        INTEL_AMD_PCI=$(lspci 2>/dev/null | grep -iE 'intel.*graphics|amd.*radeon|vga.*intel|vga.*amd' | head -n1 || true)
+    fi
+    [ -z "$INTEL_AMD_PCI" ] && INTEL_AMD_PCI="Integrated/Discrete GPU"
+
+    success "Intel/AMD Video Acceleration detected: ${C_BOLD}${INTEL_AMD_PCI}${C_RESET}"
+    echo -e "  Render nodes: ${C_CYAN}${RENDER_DEVS}${C_RESET} (available for QuickSync / VA-API hardware transcoding)."
+fi
+
+if [ "$FOUND_GPU" = false ]; then
+    info "No dedicated or integrated GPU detected. Containers will use CPU rendering."
+fi
+
+# ------------------------------------------------------------------------------
+# Pre-Flight: Essential Kernel & Network Features
+# ------------------------------------------------------------------------------
+echo ""
+info "Checking Essential Kernel & Network Features..."
+
+# 1. IP Forwarding (net.ipv4.ip_forward)
+IP_FWD=$(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo "0")
+if [ "$IP_FWD" != "1" ]; then
+    warn "IPv4 forwarding is currently disabled (net.ipv4.ip_forward=0). Containers will lack routing!"
+    info "Enabling IPv4 forwarding..."
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null
+    mkdir -p /etc/sysctl.d
+    echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/99-docker-ip-forward.conf
+    success "IPv4 forwarding enabled and persisted (/etc/sysctl.d/99-docker-ip-forward.conf)."
+else
+    success "IPv4 forwarding is enabled (net.ipv4.ip_forward=1)."
+fi
+
+# 2. TUN / TAP Device (/dev/net/tun)
+if [ -c /dev/net/tun ]; then
+    success "TUN/TAP device (/dev/net/tun) is available."
+else
+    info "TUN/TAP device missing. Attempting to load 'tun' module..."
+    modprobe tun 2>/dev/null || true
+    if [ ! -c /dev/net/tun ]; then
+        mkdir -p /dev/net
+        mknod /dev/net/tun c 10 200 2>/dev/null || true
+        chmod 666 /dev/net/tun 2>/dev/null || true
+    fi
+    if [ -c /dev/net/tun ]; then
+        success "TUN/TAP device created at /dev/net/tun."
+    else
+        warn "Could not create /dev/net/tun. VPN or Cloudflare WARP features may be limited."
+    fi
+fi
+
+# 3. br_netfilter module (Docker bridge packet filtering)
+if lsmod | grep -q br_netfilter 2>/dev/null; then
+    success "Bridge netfilter module (br_netfilter) is loaded."
+else
+    modprobe br_netfilter 2>/dev/null || true
+    if lsmod | grep -q br_netfilter 2>/dev/null; then
+        mkdir -p /etc/modules-load.d
+        echo "br_netfilter" > /etc/modules-load.d/docker-br-netfilter.conf 2>/dev/null || true
+        success "Loaded bridge netfilter module (br_netfilter)."
+    fi
+fi
+
+# 4. Storage Driver (OverlayFS)
+modprobe overlay 2>/dev/null || true
+if grep -q overlay /proc/filesystems 2>/dev/null; then
+    success "Overlay filesystem (overlay2) kernel support verified."
+else
+    warn "Overlay filesystem not found in /proc/filesystems."
+fi
+
+# 5. Cgroup Version
+if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+    success "Control Groups: cgroup v2 (modern unified hierarchy)."
+else
+    info "Control Groups: cgroup v1 (legacy hierarchy)."
+fi
+
+# 6. Time Synchronization (Crucial for Cloudflare TLS & JWT tokens)
+TIME_SYNCED=false
+if command -v timedatectl &>/dev/null; then
+    if timedatectl status 2>/dev/null | grep -iE 'synchronized: yes|NTP service: active' &>/dev/null; then
+        TIME_SYNCED=true
+    fi
+fi
+if [ "$TIME_SYNCED" = true ]; then
+    success "System clock is synchronized (NTP active)."
+else
+    warn "System clock synchronization could not be confirmed."
+    echo -e "${C_YELLOW}     Note: Cloudflare API & JWT authentication strictly require accurate system time.${C_RESET}"
+    echo -e "${C_YELLOW}     Current system time: $(date)${C_RESET}"
+fi
+
+# ------------------------------------------------------------------------------
+# Pre-Flight: Resources & Port Availability
+# ------------------------------------------------------------------------------
+echo ""
+info "Checking System Resources & Port Availability..."
+
+# RAM Check
+if command -v free &>/dev/null; then
+    TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
+    if [ -n "$TOTAL_RAM" ]; then
+        if [ "$TOTAL_RAM" -lt 900 ]; then
+            warn "Total RAM is low: ${TOTAL_RAM}MB (1GB+ recommended for multi-container stacks)."
+        else
+            success "Total RAM: ${TOTAL_RAM}MB."
+        fi
+    fi
+fi
+
+# Disk Space Check
+FREE_DISK_MB=$(df -m "$SCRIPT_DIR" 2>/dev/null | awk 'NR==2{print $4}')
+if [ -n "$FREE_DISK_MB" ]; then
+    FREE_GB=$((FREE_DISK_MB / 1024))
+    if [ "$FREE_GB" -lt 3 ]; then
+        warn "Free disk space is low: ${FREE_GB}GB available on ${SCRIPT_DIR}."
+    else
+        success "Free disk space: ${FREE_GB}GB available."
+    fi
+fi
+
+# Port 8080 Conflict Check
+PORT_BUSY=false
+if command -v ss &>/dev/null; then
+    ss -tulpn 2>/dev/null | grep -qE ':8080\s' && PORT_BUSY=true
+elif command -v netstat &>/dev/null; then
+    netstat -tulpn 2>/dev/null | grep -qE ':8080\s' && PORT_BUSY=true
+fi
+
+DEFAULT_WEB_PORT="8080"
+if [ "$PORT_BUSY" = true ]; then
+    DEFAULT_WEB_PORT="8081"
+    warn "Default port 8080 is currently in use by an existing host service!"
+    info "Defaulting suggested Web UI port to 8081."
+else
+    success "Web port 8080 is available."
+fi
+
+# ------------------------------------------------------------------------------
+# 2. Install Cloudflared CLI on Host
+# ------------------------------------------------------------------------------
+header "Step 2: Cloudflared CLI Installation"
+
+if command -v cloudflared &>/dev/null; then
+    success "cloudflared CLI is already installed: $(cloudflared --version 2>&1 | head -n1)"
+else
+    info "Detecting system architecture for cloudflared download..."
+    SYS_ARCH=$(uname -m)
+    case "$SYS_ARCH" in
+        x86_64)   CF_ARCH="amd64" ;;
+        aarch64)  CF_ARCH="arm64" ;;
+        armv7l|armhf) CF_ARCH="arm" ;;
+        i386|i686) CF_ARCH="386" ;;
+        *)
+            error "Unsupported architecture for automated cloudflared download: $SYS_ARCH"
+            exit 1
+            ;;
+    esac
+
+    CF_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}"
+    info "Downloading cloudflared (${CF_ARCH}) from GitHub releases..."
+    curl -fsSL "$CF_URL" -o /usr/local/bin/cloudflared
+    chmod +x /usr/local/bin/cloudflared
+
+    if command -v cloudflared &>/dev/null; then
+        success "cloudflared installed successfully: $(cloudflared --version 2>&1 | head -n1)"
+    else
+        error "Failed to install cloudflared to /usr/local/bin/cloudflared"
+        exit 1
+    fi
+fi
+
+# ------------------------------------------------------------------------------
+# 3. Cloudflare Authentication & Tunnel Configuration
+# ------------------------------------------------------------------------------
+header "Step 3: Cloudflare Login & Tunnel Setup"
+
+mkdir -p "$SCRIPT_DIR/cloudflared"
+mkdir -p "$SCRIPT_DIR/data"
+mkdir -p "$SCRIPT_DIR/projects"
+
+echo "Select how you would like to set up your Cloudflare Tunnel:"
+echo "  [1] Interactive Cloudflare login (creates new tunnel + generates credentials)"
+echo "  [2] Import existing credentials.json file from path"
+echo "  [3] Paste credentials JSON content directly"
+echo ""
+read -rp "Enter choice [1-3] (Default: 1): " CF_SETUP_CHOICE
+CF_SETUP_CHOICE=${CF_SETUP_CHOICE:-1}
+
+TUNNEL_ID=""
+TUNNEL_NAME=""
+TUNLIFY_DOMAIN=""
+LOGIN_SUCCESSFUL=false
+
+if [ "$CF_SETUP_CHOICE" = "1" ]; then
+    info "Launching Cloudflare login flow..."
+    echo -e "${C_YELLOW}A Cloudflare login URL will be printed below.${C_RESET}"
+    echo -e "${C_YELLOW}Open that link in your browser, select your domain, and approve the authorization.${C_RESET}\n"
+    
+    cloudflared tunnel login
+    
+    CF_CERT_PATH="$HOME/.cloudflared/cert.pem"
+    if [ ! -f "$CF_CERT_PATH" ] && [ -f "/root/.cloudflared/cert.pem" ]; then
+        CF_CERT_PATH="/root/.cloudflared/cert.pem"
+    fi
+
+    if [ -f "$CF_CERT_PATH" ]; then
+        success "Cloudflare certificate saved: $CF_CERT_PATH"
+        LOGIN_SUCCESSFUL=true
+    else
+        warn "Could not verify cert.pem location. Proceeding with caution."
+    fi
+
+    read -rp "Enter a name for your new Cloudflare Tunnel (Default: tunlify-tunnel): " TUNNEL_NAME
+    TUNNEL_NAME=${TUNNEL_NAME:-tunlify-tunnel}
+
+    info "Creating tunnel: $TUNNEL_NAME..."
+    TUNNEL_CREATE_OUTPUT=$(cloudflared tunnel create "$TUNNEL_NAME" 2>&1)
+    echo "$TUNNEL_CREATE_OUTPUT"
+
+    # Extract Tunnel ID
+    TUNNEL_ID=$(echo "$TUNNEL_CREATE_OUTPUT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -n1)
+
+    # Locate generated JSON in ~/.cloudflared
+    GEN_JSON=""
+    if [ -n "$TUNNEL_ID" ]; then
+        for p in "$HOME/.cloudflared/$TUNNEL_ID.json" "/root/.cloudflared/$TUNNEL_ID.json"; do
+            if [ -f "$p" ]; then
+                GEN_JSON="$p"
+                break
+            fi
+        done
+    fi
+
+    if [ -z "$GEN_JSON" ]; then
+        # Look for latest json
+        GEN_JSON=$(ls -t "$HOME/.cloudflared/"*.json /root/.cloudflared/*.json 2>/dev/null | head -n1 || true)
+    fi
+
+    if [ -f "$GEN_JSON" ]; then
+        cp "$GEN_JSON" "$SCRIPT_DIR/cloudflared/credentials.json"
+        success "Tunnel credentials copied to $SCRIPT_DIR/cloudflared/credentials.json"
+        if [ -z "$TUNNEL_ID" ]; then
+            TUNNEL_ID=$(jq -r '.TunnelID // empty' "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true)
+        fi
+    else
+        error "Could not find generated tunnel credentials JSON file."
+        read -rp "Please enter your Tunnel UUID manually: " TUNNEL_ID
+    fi
+
+elif [ "$CF_SETUP_CHOICE" = "2" ]; then
+    while true; do
+        read -rp "Enter the absolute path to your credentials.json file: " SRC_JSON
+        if [ -f "$SRC_JSON" ]; then
+            cp "$SRC_JSON" "$SCRIPT_DIR/cloudflared/credentials.json"
+            TUNNEL_ID=$(jq -r '.TunnelID // empty' "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true)
+            read -rp "Enter your Tunnel Name: " TUNNEL_NAME
+            success "Imported credentials for Tunnel ID: $TUNNEL_ID"
+            break
+        else
+            warn "File does not exist: $SRC_JSON. Please re-enter."
+        fi
+    done
+
+elif [ "$CF_SETUP_CHOICE" = "3" ]; then
+    echo "Paste the full contents of your credentials.json (press Ctrl+D when finished):"
+    cat > "$SCRIPT_DIR/cloudflared/credentials.json"
+    TUNNEL_ID=$(jq -r '.TunnelID // empty' "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true)
+    read -rp "Enter your Tunnel Name: " TUNNEL_NAME
+    success "Saved credentials.json. Tunnel ID: $TUNNEL_ID"
+fi
+
+if [ -z "$TUNNEL_ID" ]; then
+    TUNNEL_ID="your-tunnel-uuid"
+    warn "Tunnel ID could not be parsed automatically. Using placeholder: $TUNNEL_ID"
+fi
+
+read -rp "Enter the public domain/hostname for Tunlify Web UI (e.g. tunlify.example.com): " TUNLIFY_DOMAIN
+TUNLIFY_DOMAIN=${TUNLIFY_DOMAIN:-tunlify.example.com}
+
+# Automatically create DNS CNAME if logged in
+if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_NAME" ] && [ -n "$TUNLIFY_DOMAIN" ]; then
+    info "Registering DNS route in Cloudflare: $TUNLIFY_DOMAIN -> $TUNNEL_NAME..."
+    cloudflared tunnel route dns "$TUNNEL_NAME" "$TUNLIFY_DOMAIN" 2>/dev/null || true
+    success "DNS route configured in Cloudflare."
+fi
+
+# ------------------------------------------------------------------------------
+# 4. Tunlify Admin Credentials & Security
+# ------------------------------------------------------------------------------
+header "Step 4: Tunlify Admin & Security Setup"
+
+read -rp "Admin username (Default: admin): " ADMIN_USERNAME
+ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+
+while true; do
+    echo -n "Enter Tunlify Admin password: "
+    read -rs ADMIN_PASSWORD
+    echo ""
+    echo -n "Confirm Tunlify Admin password: "
+    read -rs ADMIN_PASSWORD_CONFIRM
+    echo ""
+    if [ -z "$ADMIN_PASSWORD" ]; then
+        warn "Password cannot be empty. Please enter a valid password."
+    elif [ "$ADMIN_PASSWORD" != "$ADMIN_PASSWORD_CONFIRM" ]; then
+        warn "Passwords do not match. Please try again."
+    else
+        success "Admin password confirmed."
+        break
+    fi
+done
+
+read -rp "Enter Web UI Host Port (Default: ${DEFAULT_WEB_PORT}): " PORT
+PORT=${PORT:-$DEFAULT_WEB_PORT}
+
+info "Generating cryptographically secure 64-character JWT secret..."
+JWT_SECRET=$(openssl rand -hex 32)
+
+# ------------------------------------------------------------------------------
+# 5. Discover & Import Previous Docker Containers
+# ------------------------------------------------------------------------------
+header "Step 5: Discovering Existing Docker Containers"
+
+# Ensure cloudflared network exists
+info "Checking Docker network 'cloudflared'..."
+if ! docker network inspect cloudflared >/dev/null 2>&1; then
+    docker network create cloudflared >/dev/null
+    success "Created Docker bridge network: cloudflared"
+else
+    success "Docker network 'cloudflared' is already available."
+fi
+
+# Find all running containers excluding tunlify
+RUNNING_CONTAINERS=$(docker ps --format '{{.Names}}' | grep -vE '^(tunlify-backend|tunlify-frontend|tunlify-cloudflared)$' || true)
+
+CONTAINER_COUNT=0
+if [ -n "$RUNNING_CONTAINERS" ]; then
+    CONTAINER_COUNT=$(echo "$RUNNING_CONTAINERS" | wc -l)
+fi
+
+IMPORTED_INGRESS=()
+COMPOSE_MOUNT_PATHS=()
+
+if [ "$CONTAINER_COUNT" -eq 0 ]; then
+    info "No external running containers detected on this host."
+else
+    success "Found $CONTAINER_COUNT running container(s) on your Docker host:"
+    echo ""
+
+    INDEX=1
+    declare -A C_NAMES
+    declare -A C_PORTS
+    declare -A C_COMP_DIR
+    declare -A C_COMP_NAME
+
+    while IFS= read -r cname; do
+        [ -z "$cname" ] && continue
+        
+        # Get internal ports
+        cports=$(docker inspect -f '{{range $p, $conf := .NetworkSettings.Ports}}{{$p}} {{end}}' "$cname" 2>/dev/null || true)
+        [ -z "$cports" ] && cports=$(docker inspect -f '{{range $p, $conf := .Config.ExposedPorts}}{{$p}} {{end}}' "$cname" 2>/dev/null || true)
+        
+        first_port=$(echo "$cports" | tr ' ' '\n' | grep '/tcp' | head -n1 | cut -d'/' -f1 || true)
+        [ -z "$first_port" ] && first_port="80"
+
+        # Check Docker Compose labels
+        comp_name=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$cname" 2>/dev/null || true)
+        comp_dir=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$cname" 2>/dev/null || true)
+
+        C_NAMES[$INDEX]="$cname"
+        C_PORTS[$INDEX]="$first_port"
+        C_COMP_NAME[$INDEX]="$comp_name"
+        C_COMP_DIR[$INDEX]="$comp_dir"
+
+        if [ -n "$comp_dir" ]; then
+            echo -e "  [${INDEX}] ${C_BOLD}${cname}${C_RESET} (Default Port: ${first_port}) ${C_CYAN}[Compose: ${comp_name} @ ${comp_dir}]${C_RESET}"
+        else
+            echo -e "  [${INDEX}] ${C_BOLD}${cname}${C_RESET} (Default Port: ${first_port}) ${C_YELLOW}[Standalone Container]${C_RESET}"
+        fi
+
+        INDEX=$((INDEX + 1))
+    done <<< "$RUNNING_CONTAINERS"
+
+    echo ""
+    read -rp "Connect all detected containers to the 'cloudflared' network for internal routing? [Y/n]: " CONNECT_ALL
+    CONNECT_ALL=${CONNECT_ALL:-Y}
+
+    if [[ "$CONNECT_ALL" =~ ^[Yy]$ ]]; then
+        for ((i=1; i<INDEX; i++)); do
+            cname="${C_NAMES[$i]}"
+            info "Connecting container '$cname' to 'cloudflared' network..."
+            docker network connect cloudflared "$cname" 2>/dev/null || true
+        done
+        success "All containers connected to 'cloudflared' network."
+    fi
+
+    # Import Docker Compose projects into SQLite database & volume mounts
+    echo ""
+    read -rp "Import detected Docker Compose projects into Tunlify dashboard? [Y/n]: " IMPORT_COMPOSE
+    IMPORT_COMPOSE=${IMPORT_COMPOSE:-Y}
+
+    if [[ "$IMPORT_COMPOSE" =~ ^[Yy]$ ]]; then
+        info "Preparing Tunlify projects database..."
+        
+        # Initialize SQLite database file & table using a helper container to guarantee zero host dependency issues
+        docker run --rm -v "$SCRIPT_DIR/data:/data" alpine sh -c '
+            apk add --no-cache sqlite >/dev/null 2>&1
+            sqlite3 /data/app.db "
+                CREATE TABLE IF NOT EXISTS projects (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    repo_url TEXT DEFAULT \"\",
+                    git_username TEXT DEFAULT \"\",
+                    git_token TEXT DEFAULT \"\",
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            "
+        ' 2>/dev/null || true
+
+        declare -A SEEN_PROJECTS
+        for ((i=1; i<INDEX; i++)); do
+            pname="${C_COMP_NAME[$i]}"
+            pdir="${C_COMP_DIR[$i]}"
+            
+            if [ -n "$pdir" ] && [ -z "${SEEN_PROJECTS[$pdir]}" ]; then
+                SEEN_PROJECTS["$pdir"]=1
+                [ -z "$pname" ] && pname=$(basename "$pdir")
+                
+                info "Importing project: $pname ($pdir)..."
+                
+                # Insert into DB if not exists
+                docker run --rm -v "$SCRIPT_DIR/data:/data" alpine sh -c "
+                    apk add --no-cache sqlite >/dev/null 2>&1
+                    COUNT=\$(sqlite3 /data/app.db \"SELECT COUNT(*) FROM projects WHERE path = '$pdir';\")
+                    if [ \"\$COUNT\" -eq 0 ]; then
+                        sqlite3 /data/app.db \"INSERT INTO projects (name, path) VALUES ('$pname', '$pdir');\"
+                    fi
+                " 2>/dev/null || true
+
+                COMPOSE_MOUNT_PATHS+=("$pdir")
+            fi
+        done
+        success "Docker Compose projects registered into Tunlify database."
+    fi
+
+    # Ingress Configuration
+    echo ""
+    read -rp "Would you like to expose any of these containers through Cloudflare Tunnel right now? [Y/n]: " CONFIGURE_INGRESS
+    CONFIGURE_INGRESS=${CONFIGURE_INGRESS:-Y}
+
+    if [[ "$CONFIGURE_INGRESS" =~ ^[Yy]$ ]]; then
+        for ((i=1; i<INDEX; i++)); do
+            cname="${C_NAMES[$i]}"
+            def_port="${C_PORTS[$i]}"
+            echo ""
+            read -rp "Expose container '$cname' via Cloudflare? [y/N]: " EXPOSE_C
+            if [[ "$EXPOSE_C" =~ ^[Yy]$ ]]; then
+                read -rp "Enter public hostname for '$cname' (e.g. $cname.${TUNLIFY_DOMAIN#*.}): " C_HOST
+                read -rp "Enter internal service port for '$cname' (Default: $def_port): " C_PORT
+                C_PORT=${C_PORT:-$def_port}
+
+                if [ -n "$C_HOST" ]; then
+                    IMPORTED_INGRESS+=("  - hostname: $C_HOST"$'\n'"    service: http://$cname:$C_PORT")
+                    if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_NAME" ]; then
+                        info "Configuring Cloudflare DNS route: $C_HOST -> $TUNNEL_NAME..."
+                        cloudflared tunnel route dns "$TUNNEL_NAME" "$C_HOST" 2>/dev/null || true
+                    fi
+                    success "Added ingress rule for $C_HOST -> http://$cname:$C_PORT"
+                fi
+            fi
+        done
+    fi
+fi
+
+# ------------------------------------------------------------------------------
+# 6. Generate Configuration Files
+# ------------------------------------------------------------------------------
+header "Step 6: Generating Configuration Files"
+
+# Write .env
+info "Writing .env configuration..."
+cat > "$SCRIPT_DIR/.env" << EOF
+# ==========================================
+# Tunlify Configuration
+# ==========================================
+
+# Auth
+JWT_SECRET=${JWT_SECRET}
+ADMIN_USERNAME=${ADMIN_USERNAME}
+ADMIN_PASSWORD=${ADMIN_PASSWORD}
+
+# Host Port for Web Dashboard (Access at http://localhost:${PORT})
+PORT=${PORT}
+
+# Tunnel Configuration
+TUNNEL_NAME=${TUNNEL_NAME}
+TUNNEL_ID=${TUNNEL_ID}
+
+# Backend Service Settings
+CLOUDFLARED_CONFIG_PATH=/etc/cloudflared/config.yml
+CLOUDFLARED_CONTAINER=tunlify-cloudflared
+DB_PATH=/app/data/app.db
+LISTEN_ADDR=0.0.0.0:3001
+SELF_PATH=/opt/projects/tunlify
+PROJECTS_ROOT=./projects
+EOF
+success "Created $SCRIPT_DIR/.env"
+
+# Write cloudflared/config.yml
+info "Writing cloudflared/config.yml..."
+cat > "$SCRIPT_DIR/cloudflared/config.yml" << EOF
+# Tunlify managed cloudflared config
+# Managed by Tunlify. Edit via the dashboard or manually here.
+
+tunnel: ${TUNNEL_ID}
+credentials-file: /etc/cloudflared/credentials.json
+
+ingress:
+  - hostname: ${TUNLIFY_DOMAIN}
+    service: http://tunlify-frontend:80
+EOF
+
+# Append imported container ingress rules
+for rule in "${IMPORTED_INGRESS[@]}"; do
+    echo "$rule" >> "$SCRIPT_DIR/cloudflared/config.yml"
+done
+
+# Ingress catch-all must ALWAYS be the last rule
+cat >> "$SCRIPT_DIR/cloudflared/config.yml" << EOF
+  - service: http_status:404
+EOF
+success "Created $SCRIPT_DIR/cloudflared/config.yml"
+
+# Update docker-compose.yml with project mounts if needed
+info "Configuring docker-compose.yml..."
+cat > "$SCRIPT_DIR/docker-compose.yml" << EOF
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: tunlify-cloudflared
+    restart: unless-stopped
+    command: tunnel --config /etc/cloudflared/config.yml --metrics 0.0.0.0:2000 run
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      - ./cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
+    networks:
+      - cloudflared
+
+  backend:
+    build: ./backend
+    container_name: tunlify-backend
+    restart: unless-stopped
+    expose:
+      - "3001"
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./cloudflared:/etc/cloudflared
+      - /var/run/docker.sock:/var/run/docker.sock
+      - \${PROJECTS_ROOT:-./projects}:/opt/projects
+EOF
+
+# Add mounts for any external Compose project directories discovered
+for pdir in "${COMPOSE_MOUNT_PATHS[@]}"; do
+    echo "      - $pdir:$pdir" >> "$SCRIPT_DIR/docker-compose.yml"
+done
+
+cat >> "$SCRIPT_DIR/docker-compose.yml" << EOF
+    networks:
+      - cloudflared
+
+  frontend:
+    build: ./frontend
+    container_name: tunlify-frontend
+    restart: unless-stopped
+    ports:
+      - "\${PORT:-8080}:80"
+    expose:
+      - "80"
+    depends_on:
+      - backend
+    networks:
+      - cloudflared
+
+networks:
+  cloudflared:
+    name: cloudflared
+    driver: bridge
+EOF
+success "Configured $SCRIPT_DIR/docker-compose.yml"
+
+# Set correct permissions
+chmod 755 "$SCRIPT_DIR/data" "$SCRIPT_DIR/cloudflared" "$SCRIPT_DIR/projects"
+chmod 600 "$SCRIPT_DIR/.env" "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true
+
+# ------------------------------------------------------------------------------
+# 7. Launch Tunlify Containers
+# ------------------------------------------------------------------------------
+header "Step 7: Launching Tunlify Stack"
+
+info "Building and launching containers via $DOCKER_COMPOSE_CMD..."
+$DOCKER_COMPOSE_CMD down 2>/dev/null || true
+$DOCKER_COMPOSE_CMD up -d --build
+
+sleep 4
+
+# Detect host local IP address
+HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
+[ -z "$HOST_IP" ] && HOST_IP="localhost"
+
+# ------------------------------------------------------------------------------
+# 8. Installation Summary
+# ------------------------------------------------------------------------------
+header "Installation & Deployment Complete!"
+
+echo -e "${C_GREEN}${C_BOLD}Tunlify is now running!${C_RESET}\n"
+echo -e "  ${C_BOLD}Local Web Dashboard:${C_RESET}     ${C_CYAN}http://${HOST_IP}:${PORT}${C_RESET}"
+if [ -n "$TUNLIFY_DOMAIN" ]; then
+    echo -e "  ${C_BOLD}Public Tunnel URL:${C_RESET}       ${C_CYAN}https://${TUNLIFY_DOMAIN}${C_RESET}"
+fi
+echo -e "  ${C_BOLD}Admin Username:${C_RESET}          ${C_YELLOW}${ADMIN_USERNAME}${C_RESET}"
+echo -e "  ${C_BOLD}Admin Password:${C_RESET}          ${C_YELLOW}${ADMIN_PASSWORD}${C_RESET}"
+echo -e "  ${C_BOLD}Tunnel Name:${C_RESET}             ${TUNNEL_NAME}"
+echo -e "  ${C_BOLD}Tunnel UUID:${C_RESET}             ${TUNNEL_ID}"
+echo ""
+
+if [ ${#IMPORTED_INGRESS[@]} -gt 0 ]; then
+    echo -e "${C_BOLD}Imported Container Ingress Hostnames:${C_RESET}"
+    for rule in "${IMPORTED_INGRESS[@]}"; do
+        echo -e "  $rule"
+    done
+    echo ""
+fi
+
+echo -e "${C_BOLD}Useful Management Commands:${C_RESET}"
+echo -e "  View logs:          ${C_CYAN}$DOCKER_COMPOSE_CMD logs -f${C_RESET}"
+echo -e "  Restart stack:      ${C_CYAN}$DOCKER_COMPOSE_CMD restart${C_RESET}"
+echo -e "  Stop stack:         ${C_CYAN}$DOCKER_COMPOSE_CMD down${C_RESET}"
+echo -e "  cloudflared CLI:    ${C_CYAN}cloudflared tunnel list${C_RESET}"
+echo ""
+success "Enjoy managing your Cloudflare Tunnel with Tunlify!"
