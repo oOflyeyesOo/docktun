@@ -1092,65 +1092,27 @@ cat >> "$SCRIPT_DIR/cloudflared/config.yml" << EOF
 EOF
 success "Created $SCRIPT_DIR/cloudflared/config.yml"
 
-# Update docker-compose.yml with project mounts if needed
-info "Configuring docker-compose.yml..."
-cat > "$SCRIPT_DIR/docker-compose.yml" << EOF
-services:
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: tunlify-cloudflared
-    restart: unless-stopped
-    command: tunnel --config /etc/cloudflared/config.yml --metrics 0.0.0.0:2000 run
-    volumes:
-      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
-      - ./cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
-    networks:
-      - cloudflared
-
-  backend:
-    build: ./backend
-    container_name: tunlify-backend
-    restart: unless-stopped
-    expose:
-      - "3001"
-    env_file: .env
-    volumes:
-      - ./data:/app/data
-      - ./cloudflared:/etc/cloudflared
-      - /var/run/docker.sock:/var/run/docker.sock
-      - \${PROJECTS_ROOT:-./projects}:/opt/projects
-EOF
-
-# Add mounts for any external Compose project directories discovered
+# Configure project mounts via docker-compose.override.yml if needed (leaves docker-compose.yml clean for git)
+rm -f "$SCRIPT_DIR/docker-compose.override.yml"
+VALID_MOUNTS=()
 for pdir in "${COMPOSE_MOUNT_PATHS[@]}"; do
     if [[ "$pdir" =~ ^/ ]] && [ -d "$pdir" ] && [ "$pdir" != "$SCRIPT_DIR" ]; then
-        echo "      - $pdir:$pdir" >> "$SCRIPT_DIR/docker-compose.yml"
+        VALID_MOUNTS+=("$pdir")
     fi
 done
 
-cat >> "$SCRIPT_DIR/docker-compose.yml" << EOF
-    networks:
-      - cloudflared
-
-  frontend:
-    build: ./frontend
-    container_name: tunlify-frontend
-    restart: unless-stopped
-    ports:
-      - "\${PORT:-8080}:80"
-    expose:
-      - "80"
-    depends_on:
-      - backend
-    networks:
-      - cloudflared
-
-networks:
-  cloudflared:
-    name: cloudflared
-    driver: bridge
+if [ ${#VALID_MOUNTS[@]} -gt 0 ]; then
+    info "Configuring external project mounts in docker-compose.override.yml..."
+    cat > "$SCRIPT_DIR/docker-compose.override.yml" << EOF
+services:
+  backend:
+    volumes:
 EOF
-success "Configured $SCRIPT_DIR/docker-compose.yml"
+    for vdir in "${VALID_MOUNTS[@]}"; do
+        echo "      - $vdir:$vdir" >> "$SCRIPT_DIR/docker-compose.override.yml"
+    done
+    success "Created docker-compose.override.yml for project mounts."
+fi
 
 # Set correct permissions
 chmod 755 "$SCRIPT_DIR/data" "$SCRIPT_DIR/cloudflared" "$SCRIPT_DIR/projects"
