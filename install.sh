@@ -607,90 +607,194 @@ if [ "$RESUME_PREVIOUS" = true ]; then
         TUNLIFY_DOMAIN=${TUNLIFY_DOMAIN:-tunlify.example.com}
     fi
 else
-    echo "Select how you would like to set up your Cloudflare Tunnel:"
-    echo "  [1] Interactive Cloudflare login (creates new tunnel + generates credentials)"
-    echo "  [2] Import existing credentials.json file from path"
-    echo "  [3] Paste credentials JSON content directly"
-    echo ""
-    read -rp "Enter choice [1-3] (Default: 1): " CF_SETUP_CHOICE
-    CF_SETUP_CHOICE=${CF_SETUP_CHOICE:-1}
+    # Discover all existing tunnels across ~/.cloudflared, /root/.cloudflared, and Cloudflare account
+    DETECTED_TUNNEL_COUNT=0
+    declare -A T_IDS
+    declare -A T_NAMES
+    declare -A T_JSONS
 
-    if [ "$CF_SETUP_CHOICE" = "1" ]; then
-        if [ "$CF_ALREADY_LOGGED_IN" = true ]; then
-            info "Found existing Cloudflare login session: $CF_CERT_PATH"
-            LOGIN_SUCCESSFUL=true
-        else
-            info "Launching Cloudflare login flow..."
-            echo -e "${C_YELLOW}A Cloudflare login URL will be printed below.${C_RESET}"
-            echo -e "${C_YELLOW}Open that link in your browser, select your domain, and approve the authorization.${C_RESET}\n"
-            
-            cloudflared tunnel login
-            
-            if [ -f "$CF_CERT_PATH" ]; then
-                success "Cloudflare certificate saved: $CF_CERT_PATH"
-                LOGIN_SUCCESSFUL=true
-            else
-                warn "Could not verify cert.pem location. Proceeding with caution."
-            fi
-        fi
-
-        DEFAULT_TNAME="${PREV_TUNNEL_NAME:-tunlify-tunnel}"
-        read -rp "Enter a name for your Cloudflare Tunnel (Default: ${DEFAULT_TNAME}): " TUNNEL_NAME
-        TUNNEL_NAME=${TUNNEL_NAME:-$DEFAULT_TNAME}
-
-        info "Creating tunnel: $TUNNEL_NAME..."
-        TUNNEL_CREATE_OUTPUT=$(cloudflared tunnel create "$TUNNEL_NAME" 2>&1)
-        echo "$TUNNEL_CREATE_OUTPUT"
-
-        # Extract Tunnel ID
-        TUNNEL_ID=$(echo "$TUNNEL_CREATE_OUTPUT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -n1)
-
-        # Locate generated JSON in ~/.cloudflared
-        GEN_JSON=""
-        if [ -n "$TUNNEL_ID" ]; then
-            for p in "$HOME/.cloudflared/$TUNNEL_ID.json" "/root/.cloudflared/$TUNNEL_ID.json"; do
-                if [ -f "$p" ]; then
-                    GEN_JSON="$p"
-                    break
+    # Scan filesystem for *.json credentials files in ~/.cloudflared and /root/.cloudflared
+    for cdir in "$HOME/.cloudflared" "/root/.cloudflared" "$SCRIPT_DIR/cloudflared"; do
+        if [ -d "$cdir" ]; then
+            for jf in "$cdir"/*.json; do
+                if [ -f "$jf" ]; then
+                    jid=$(jq -r '.TunnelID // empty' "$jf" 2>/dev/null || true)
+                    [ -z "$jid" ] && jid=$(grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' "$jf" 2>/dev/null | head -n1 || true)
+                    if [ -n "$jid" ] && [ "$jid" != "placeholder-tunnel-id" ] && [ "$jid" != "your-tunnel-uuid" ]; then
+                        already=false
+                        for ((k=1; k<=DETECTED_TUNNEL_COUNT; k++)); do
+                            if [ "${T_IDS[$k]}" = "$jid" ]; then
+                                already=true
+                                break
+                            fi
+                        done
+                        if [ "$already" = false ]; then
+                            DETECTED_TUNNEL_COUNT=$((DETECTED_TUNNEL_COUNT + 1))
+                            T_IDS[$DETECTED_TUNNEL_COUNT]="$jid"
+                            T_NAMES[$DETECTED_TUNNEL_COUNT]="tunnel-$DETECTED_TUNNEL_COUNT"
+                            T_JSONS[$DETECTED_TUNNEL_COUNT]="$jf"
+                        fi
+                    fi
                 fi
             done
         fi
+    done
 
-        if [ -z "$GEN_JSON" ]; then
-            GEN_JSON=$(ls -t "$HOME/.cloudflared/"*.json /root/.cloudflared/*.json 2>/dev/null | head -n1 || true)
+    # Query cloudflared CLI if cert.pem exists to get real tunnel names and any account tunnels
+    if [ -f "$CF_CERT_PATH" ]; then
+        tlist=$(cloudflared tunnel list 2>/dev/null | grep -E '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' || true)
+        if [ -n "$tlist" ]; then
+            while IFS= read -r line; do
+                [ -z "$line" ] && continue
+                tid=$(echo "$line" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -n1)
+                tname=$(echo "$line" | awk '{print $2}')
+                [ -z "$tname" ] && tname="$tid"
+
+                found_idx=0
+                for ((k=1; k<=DETECTED_TUNNEL_COUNT; k++)); do
+                    if [ "${T_IDS[$k]}" = "$tid" ]; then
+                        found_idx=$k
+                        break
+                    fi
+                done
+
+                if [ "$found_idx" -gt 0 ]; then
+                    T_NAMES[$found_idx]="$tname"
+                else
+                    m_json=""
+                    for d in "$HOME/.cloudflared" "/root/.cloudflared" "$SCRIPT_DIR/cloudflared"; do
+                        if [ -f "$d/$tid.json" ]; then
+                            m_json="$d/$tid.json"
+                            break
+                        fi
+                    done
+                    DETECTED_TUNNEL_COUNT=$((DETECTED_TUNNEL_COUNT + 1))
+                    T_IDS[$DETECTED_TUNNEL_COUNT]="$tid"
+                    T_NAMES[$DETECTED_TUNNEL_COUNT]="$tname"
+                    T_JSONS[$DETECTED_TUNNEL_COUNT]="$m_json"
+                fi
+            done <<< "$tlist"
         fi
+    fi
 
-        if [ -f "$GEN_JSON" ]; then
-            cp "$GEN_JSON" "$SCRIPT_DIR/cloudflared/credentials.json"
-            success "Tunnel credentials copied to $SCRIPT_DIR/cloudflared/credentials.json"
-            if [ -z "$TUNNEL_ID" ]; then
-                TUNNEL_ID=$(jq -r '.TunnelID // empty' "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true)
-            fi
-        else
-            error "Could not find generated tunnel credentials JSON file."
-            read -rp "Please enter your Tunnel UUID manually: " TUNNEL_ID
+    CREATE_BRAND_NEW=false
+    IMPORT_CUSTOM=false
+
+    if [ "$DETECTED_TUNNEL_COUNT" -gt 0 ]; then
+        if [ "$CF_ALREADY_LOGGED_IN" = true ]; then
+            success "Cloudflare login session active: $CF_CERT_PATH"
+            LOGIN_SUCCESSFUL=true
         fi
-
-    elif [ "$CF_SETUP_CHOICE" = "2" ]; then
-        while true; do
-            read -rp "Enter the absolute path to your credentials.json file: " SRC_JSON
-            if [ -f "$SRC_JSON" ]; then
-                cp "$SRC_JSON" "$SCRIPT_DIR/cloudflared/credentials.json"
-                TUNNEL_ID=$(jq -r '.TunnelID // empty' "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true)
-                read -rp "Enter your Tunnel Name: " TUNNEL_NAME
-                success "Imported credentials for Tunnel ID: $TUNNEL_ID"
-                break
-            else
-                warn "File does not exist: $SRC_JSON. Please re-enter."
-            fi
+        echo ""
+        echo -e "${C_GREEN}Found $DETECTED_TUNNEL_COUNT existing Cloudflare Tunnel(s):${C_RESET}"
+        for ((k=1; k<=DETECTED_TUNNEL_COUNT; k++)); do
+            tid="${T_IDS[$k]}"
+            tname="${T_NAMES[$k]}"
+            tjson="${T_JSONS[$k]}"
+            jstatus="${C_GREEN}[Credentials ready]${C_RESET}"
+            [ -z "$tjson" ] && jstatus="${C_YELLOW}[No local JSON]${C_RESET}"
+            echo -e "  [${k}] ${C_BOLD}${tname}${C_RESET} (UUID: ${C_CYAN}${tid}${C_RESET}) $jstatus"
         done
+        opt_new=$((DETECTED_TUNNEL_COUNT + 1))
+        opt_import=$((DETECTED_TUNNEL_COUNT + 2))
+        echo -e "  [${opt_new}] ${C_BOLD}Create a brand new tunnel${C_RESET}"
+        echo -e "  [${opt_import}] ${C_BOLD}Import another credentials.json from file/paste${C_RESET}"
+        echo ""
+        read -rp "Select an option [1-${opt_import}] (Default: 1): " T_SELECT
+        T_SELECT=${T_SELECT:-1}
 
-    elif [ "$CF_SETUP_CHOICE" = "3" ]; then
-        echo "Paste the full contents of your credentials.json (press Ctrl+D when finished):"
-        cat > "$SCRIPT_DIR/cloudflared/credentials.json"
-        TUNNEL_ID=$(jq -r '.TunnelID // empty' "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true)
-        read -rp "Enter your Tunnel Name: " TUNNEL_NAME
-        success "Saved credentials.json. Tunnel ID: $TUNNEL_ID"
+        if [ "$T_SELECT" -ge 1 ] && [ "$T_SELECT" -le "$DETECTED_TUNNEL_COUNT" ]; then
+            TUNNEL_ID="${T_IDS[$T_SELECT]}"
+            TUNNEL_NAME="${T_NAMES[$T_SELECT]}"
+            use_json="${T_JSONS[$T_SELECT]}"
+
+            if [ -n "$use_json" ] && [ -f "$use_json" ]; then
+                cp "$use_json" "$SCRIPT_DIR/cloudflared/credentials.json"
+                success "Using existing tunnel: ${C_BOLD}${TUNNEL_NAME}${C_RESET} (${TUNNEL_ID})"
+                success "Credentials copied to $SCRIPT_DIR/cloudflared/credentials.json"
+            else
+                warn "Credentials file for tunnel '${TUNNEL_NAME}' was not found in ~/.cloudflared."
+                read -rp "Enter path to credentials.json for this tunnel: " MAN_JSON
+                if [ -f "$MAN_JSON" ]; then
+                    cp "$MAN_JSON" "$SCRIPT_DIR/cloudflared/credentials.json"
+                    success "Imported credentials."
+                fi
+            fi
+            LOGIN_SUCCESSFUL=true
+        elif [ "$T_SELECT" -eq "$opt_new" ]; then
+            CREATE_BRAND_NEW=true
+        else
+            IMPORT_CUSTOM=true
+        fi
+    fi
+
+    # Fallback if no tunnels detected or user explicitly chose new/import
+    if [ -z "$TUNNEL_ID" ]; then
+        if [ "$IMPORT_CUSTOM" = true ]; then
+            while true; do
+                read -rp "Enter the absolute path to your credentials.json file (or 'paste' to paste): " SRC_JSON
+                if [ "$SRC_JSON" = "paste" ]; then
+                    echo "Paste the full contents of your credentials.json (press Ctrl+D when finished):"
+                    cat > "$SCRIPT_DIR/cloudflared/credentials.json"
+                    TUNNEL_ID=$(jq -r '.TunnelID // empty' "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true)
+                    read -rp "Enter your Tunnel Name: " TUNNEL_NAME
+                    break
+                elif [ -f "$SRC_JSON" ]; then
+                    cp "$SRC_JSON" "$SCRIPT_DIR/cloudflared/credentials.json"
+                    TUNNEL_ID=$(jq -r '.TunnelID // empty' "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true)
+                    read -rp "Enter your Tunnel Name: " TUNNEL_NAME
+                    break
+                else
+                    warn "File not found: $SRC_JSON. Please re-enter."
+                fi
+            done
+        else
+            # Need to login or create tunnel
+            if [ "$CF_ALREADY_LOGGED_IN" = true ]; then
+                success "Cloudflare login session active: $CF_CERT_PATH"
+                LOGIN_SUCCESSFUL=true
+            else
+                info "Launching Cloudflare login flow..."
+                echo -e "${C_YELLOW}A Cloudflare login URL will be printed below.${C_RESET}"
+                echo -e "${C_YELLOW}Open that link in your browser, select your domain, and approve the authorization.${C_RESET}\n"
+                cloudflared tunnel login
+                if [ -f "$CF_CERT_PATH" ]; then
+                    success "Cloudflare certificate saved: $CF_CERT_PATH"
+                    LOGIN_SUCCESSFUL=true
+                fi
+            fi
+
+            DEFAULT_TNAME="${PREV_TUNNEL_NAME:-tunlify-tunnel}"
+            read -rp "Enter a name for your Cloudflare Tunnel (Default: ${DEFAULT_TNAME}): " TUNNEL_NAME
+            TUNNEL_NAME=${TUNNEL_NAME:-$DEFAULT_TNAME}
+
+            info "Creating tunnel: $TUNNEL_NAME..."
+            TUNNEL_CREATE_OUTPUT=$(cloudflared tunnel create "$TUNNEL_NAME" 2>&1)
+            echo "$TUNNEL_CREATE_OUTPUT"
+
+            TUNNEL_ID=$(echo "$TUNNEL_CREATE_OUTPUT" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | head -n1)
+
+            GEN_JSON=""
+            if [ -n "$TUNNEL_ID" ]; then
+                for p in "$HOME/.cloudflared/$TUNNEL_ID.json" "/root/.cloudflared/$TUNNEL_ID.json"; do
+                    if [ -f "$p" ]; then
+                        GEN_JSON="$p"
+                        break
+                    fi
+                done
+            fi
+            if [ -z "$GEN_JSON" ]; then
+                GEN_JSON=$(ls -t "$HOME/.cloudflared/"*.json /root/.cloudflared/*.json 2>/dev/null | head -n1 || true)
+            fi
+
+            if [ -f "$GEN_JSON" ]; then
+                cp "$GEN_JSON" "$SCRIPT_DIR/cloudflared/credentials.json"
+                success "Tunnel credentials copied to $SCRIPT_DIR/cloudflared/credentials.json"
+                if [ -z "$TUNNEL_ID" ]; then
+                    TUNNEL_ID=$(jq -r '.TunnelID // empty' "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true)
+                fi
+            fi
+        fi
     fi
 
     if [ -z "$TUNNEL_ID" ]; then
