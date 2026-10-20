@@ -9,6 +9,7 @@ interface IngressRule { hostname: string; service: string; noTLSVerify: boolean 
 
 const rules = ref<IngressRule[]>([])
 const tunnelId = ref('')
+const protocol = ref('http2')
 const saving = ref(false)
 const message = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 
@@ -19,7 +20,10 @@ async function loadConfig() {
 function parseYaml(content: string) {
   const lines = content.split('\n')
   rules.value = []
-  for (const line of lines) { const m = line.match(/^tunnel:\s*(.+)/); if (m) tunnelId.value = m[1].trim() }
+  for (const line of lines) {
+    const m = line.match(/^tunnel:\s*(.+)/); if (m) tunnelId.value = m[1].trim()
+    const pm = line.match(/^protocol:\s*(.+)/); if (pm) protocol.value = pm[1].trim()
+  }
   let inIngress = false, cur: Partial<IngressRule> = {}
   for (const line of lines) {
     if (line.match(/^ingress:/)) { inIngress = true; continue }
@@ -37,7 +41,7 @@ function removeRule(i: number) { if (isTunlifyRule(rules.value[i])) return; rule
 function isTunlifyRule(rule: IngressRule) { return rule.service.includes('tunlify-frontend') }
 
 function generateYaml(): string {
-  let y = `tunnel: ${tunnelId.value}\ncredentials-file: /etc/cloudflared/credentials.json\n\ningress:\n`
+  let y = `tunnel: ${tunnelId.value}\ncredentials-file: /etc/cloudflared/credentials.json\nprotocol: ${protocol.value || 'http2'}\n\ningress:\n`
   for (const r of rules.value) { if (!r.hostname || !r.service) continue; y += `  - hostname: ${r.hostname}\n    service: ${r.service}\n`; if (r.noTLSVerify) y += `    originRequest:\n      noTLSVerify: true\n` }
   return y + `  - service: http_status:404\n`
 }

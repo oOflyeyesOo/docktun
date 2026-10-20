@@ -70,6 +70,18 @@ func (d *DB) migrate() error {
 			git_token TEXT DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
+
+		CREATE TABLE IF NOT EXISTS container_exposures (
+			container_name TEXT PRIMARY KEY,
+			mode TEXT NOT NULL DEFAULT 'internal',
+			hostname TEXT DEFAULT '',
+			target TEXT DEFAULT '',
+			private_type TEXT DEFAULT 'tailscale',
+			private_host TEXT DEFAULT '',
+			private_port INTEGER DEFAULT 80,
+			notes TEXT DEFAULT '',
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
 	`)
 	return err
 }

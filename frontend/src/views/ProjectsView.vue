@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, onMounted } from 'vue'
 import {
   Plus,
   Trash2,
@@ -461,7 +461,9 @@ async function runDockerCommand() {
   }
 }
 
-load()
+onMounted(() => {
+  load()
+})
 </script>
 
 <template>

@@ -5,6 +5,7 @@ import (
   "log"
   "net/http"
   "os/signal"
+  "path/filepath"
   "syscall"
   "time"
 
@@ -53,9 +54,11 @@ func main() {
     AllowCredentials: true,
   }))
 
+  dataDir := filepath.Dir(cfg.DBPath)
   projectsSvc := service.NewProjects(database, cfg.SelfPath)
   dockerRunSvc := service.NewDockerRun(database, projectsSvc)
-  dockerContainersSvc := service.NewDockerContainers()
+  dockerContainersSvc := service.NewDockerContainers(cfg, database, configSvc, cfdSvc)
+  meshSvc := service.NewMeshService(dataDir)
 
   authHandler := handler.NewAuth(cfg, database, auditSvc)
   statusHandler := handler.NewStatus(cfdSvc, cfg)
@@ -71,6 +74,7 @@ func main() {
   projectsHandler := handler.NewProjects(projectsSvc, auditSvc)
   dockerRunHandler := handler.NewDockerRun(dockerRunSvc, auditSvc)
   dockerContainersHandler := handler.NewDockerContainers(dockerContainersSvc)
+  meshHandler := handler.NewMesh(meshSvc)
 
   r.Post("/auth/login", authHandler.Login)
   r.Get("/api/logs/ws", logsHandler.Stream)
@@ -107,6 +111,9 @@ func main() {
     r.Put("/api/notifications", notifHandler.Update)
     r.Post("/api/notifications/test", notifHandler.Test)
 
+    r.Get("/api/mesh", meshHandler.Get)
+    r.Put("/api/mesh", meshHandler.Save)
+
     r.Get("/api/projects", projectsHandler.List)
     r.Post("/api/projects", projectsHandler.Create)
     r.Put("/api/projects/{id}", projectsHandler.Update)
@@ -126,6 +133,9 @@ func main() {
     r.Delete("/api/projects/{id}/file", projectsHandler.FileDelete)
 
     r.Get("/api/docker/containers", dockerContainersHandler.List)
+    r.Get("/api/docker/containers/{id}", dockerContainersHandler.Details)
+    r.Get("/api/docker/containers/{id}/exposure", dockerContainersHandler.Exposure)
+    r.Post("/api/docker/containers/{id}/exposure", dockerContainersHandler.UpdateExposure)
     r.Post("/api/docker/containers/{id}/start", dockerContainersHandler.Start)
     r.Post("/api/docker/containers/{id}/stop", dockerContainersHandler.Stop)
     r.Post("/api/docker/containers/{id}/restart", dockerContainersHandler.Restart)

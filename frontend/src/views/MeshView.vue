@@ -1,36 +1,45 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { Globe, Lock, RefreshCcw, ShieldCheck } from 'lucide-vue-next'
+import { Globe, Lock, RotateCcw, Shield, ShieldCheck, CheckCircle2, AlertCircle } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
 const { apiFetch } = useApi()
 
 const mode = ref<'none' | 'public' | 'tailscale' | 'wireguard'>('public')
 const tunnelName = ref('')
-const hostname = ref('docktun.example.com')
-const service = ref('http://app:3000')
+const hostname = ref('')
+const service = ref('http://tunlify-frontend:80')
 const tailscaleAuthKey = ref('')
-const tailscaleHostname = ref('docktun')
+const tailscaleHostname = ref('tunlify-node')
 const tailscaleLoginServer = ref('https://controlplane.tailscale.com')
 const wireguardPrivateKey = ref('')
 const wireguardInterface = ref('wg0')
 const wireguardListenPort = ref(51820)
 const saving = ref(false)
 const message = ref('')
+const messageType = ref<'success' | 'error'>('success')
 
 async function loadMesh() {
   try {
-    const cfg = await apiFetch<{ mode?: string; tunnel_name?: string; public?: { hostname?: string; service?: string }; tailscale?: { auth_key?: string; hostname?: string; login_server?: string }; wireguard?: { private_key?: string; interface?: string; listen_port?: number } }>('/api/mesh')
-    mode.value = (cfg.mode as any) || 'public'
-    tunnelName.value = cfg.tunnel_name || ''
-    hostname.value = cfg.public?.hostname || hostname.value
-    service.value = cfg.public?.service || service.value
-    tailscaleAuthKey.value = cfg.tailscale?.auth_key || ''
-    tailscaleHostname.value = cfg.tailscale?.hostname || tailscaleHostname.value
-    tailscaleLoginServer.value = cfg.tailscale?.login_server || tailscaleLoginServer.value
-    wireguardPrivateKey.value = cfg.wireguard?.private_key || ''
-    wireguardInterface.value = cfg.wireguard?.interface || wireguardInterface.value
-    wireguardListenPort.value = cfg.wireguard?.listen_port || wireguardListenPort.value
+    const cfg = await apiFetch<any>('/api/mesh')
+    if (cfg) {
+      mode.value = cfg.mode || 'public'
+      tunnelName.value = cfg.tunnel_name || ''
+      if (cfg.public) {
+        hostname.value = cfg.public.hostname || ''
+        service.value = cfg.public.service || 'http://tunlify-frontend:80'
+      }
+      if (cfg.tailscale) {
+        tailscaleAuthKey.value = cfg.tailscale.auth_key || ''
+        tailscaleHostname.value = cfg.tailscale.hostname || 'tunlify-node'
+        tailscaleLoginServer.value = cfg.tailscale.login_server || 'https://controlplane.tailscale.com'
+      }
+      if (cfg.wireguard) {
+        wireguardPrivateKey.value = cfg.wireguard.private_key || ''
+        wireguardInterface.value = cfg.wireguard.interface || 'wg0'
+        wireguardListenPort.value = cfg.wireguard.listen_port || 51820
+      }
+    }
   } catch {
     mode.value = 'public'
   }
@@ -59,9 +68,11 @@ async function saveMesh() {
         },
       }),
     })
-    message.value = 'Access settings saved.'
+    messageType.value = 'success'
+    message.value = 'Mesh & network access configuration saved successfully.'
   } catch (error: any) {
-    message.value = error.message || 'Failed to save.'
+    messageType.value = 'error'
+    message.value = error.message || 'Failed to save configuration.'
   } finally {
     saving.value = false
   }
@@ -72,89 +83,144 @@ onMounted(() => loadMesh())
 
 <template>
   <div class="space-y-6">
-    <div class="flex items-center justify-between gap-3">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <p class="text-[10px] uppercase tracking-[0.22em] text-slate-400">Network access</p>
-        <h1 class="text-2xl font-semibold text-slate-100">Expose containers</h1>
+        <p class="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">Encrypted Transport</p>
+        <h1 class="text-2xl font-bold tracking-tight text-slate-100">Private Mesh & Routing</h1>
       </div>
-      <button @click="saveMesh" :disabled="saving" class="cyber-btn">
-        <RefreshCcw class="mr-2 h-4 w-4" :stroke-width="1.8" /> {{ saving ? 'Saving…' : 'Save' }}
+      <button @click="saveMesh" :disabled="saving" class="cyber-btn flex items-center gap-2">
+        <RotateCcw class="h-4 w-4" :class="saving ? 'animate-spin' : ''" />
+        <span>{{ saving ? 'Saving…' : 'Save Changes' }}</span>
       </button>
     </div>
 
-    <div v-if="message" class="rounded border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200">{{ message }}</div>
+    <!-- Alert Banner -->
+    <div
+      v-if="message"
+      class="flex items-center gap-2.5 rounded-lg border px-4 py-3 text-xs"
+      :class="messageType === 'success' ? 'border-emerald-500/30 bg-emerald-950/40 text-emerald-300' : 'border-red-500/30 bg-red-950/40 text-red-300'"
+    >
+      <CheckCircle2 v-if="messageType === 'success'" class="h-4 w-4 flex-shrink-0" />
+      <AlertCircle v-else class="h-4 w-4 flex-shrink-0" />
+      <span>{{ message }}</span>
+    </div>
 
-    <div class="grid gap-3 md:grid-cols-4">
-      <button @click="mode = 'public'" class="cyber-card-glow text-left" :class="mode === 'public' ? 'border-emerald-500/60' : ''">
-        <Globe class="mb-3 h-5 w-5 text-emerald-300" />
-        <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400">Public</div>
-        <div class="mt-2 text-sm font-medium text-slate-100">Cloudflare</div>
+    <!-- Mode Selector Cards -->
+    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <button
+        @click="mode = 'public'"
+        class="cyber-card-glow text-left transition"
+        :class="mode === 'public' ? 'border-cyan-500 bg-cyan-950/20' : ''"
+      >
+        <Globe class="mb-3 h-5 w-5 text-cyan-400" />
+        <div class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Public Ingress</div>
+        <div class="mt-1 text-sm font-semibold text-slate-100">Cloudflare Tunnel</div>
+        <p class="mt-2 text-[11px] text-slate-500 leading-relaxed">Expose containers to the world with zero open ports via Cloudflare edge.</p>
       </button>
-      <button @click="mode = 'tailscale'" class="cyber-card-glow text-left" :class="mode === 'tailscale' ? 'border-sky-500/60' : ''">
-        <ShieldCheck class="mb-3 h-5 w-5 text-sky-300" />
-        <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400">Private</div>
-        <div class="mt-2 text-sm font-medium text-slate-100">Tailscale</div>
+
+      <button
+        @click="mode = 'tailscale'"
+        class="cyber-card-glow text-left transition"
+        :class="mode === 'tailscale' ? 'border-sky-500 bg-sky-950/20' : ''"
+      >
+        <ShieldCheck class="mb-3 h-5 w-5 text-sky-400" />
+        <div class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Private Mesh</div>
+        <div class="mt-1 text-sm font-semibold text-slate-100">Tailscale</div>
+        <p class="mt-2 text-[11px] text-slate-500 leading-relaxed">Join your Tailscale tailnet for peer-to-peer WireGuard mesh access.</p>
       </button>
-      <button @click="mode = 'wireguard'" class="cyber-card-glow text-left" :class="mode === 'wireguard' ? 'border-violet-500/60' : ''">
-        <Lock class="mb-3 h-5 w-5 text-violet-300" />
-        <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400">Private</div>
-        <div class="mt-2 text-sm font-medium text-slate-100">WireGuard</div>
+
+      <button
+        @click="mode = 'wireguard'"
+        class="cyber-card-glow text-left transition"
+        :class="mode === 'wireguard' ? 'border-violet-500 bg-violet-950/20' : ''"
+      >
+        <Lock class="mb-3 h-5 w-5 text-violet-400" />
+        <div class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Direct VPN</div>
+        <div class="mt-1 text-sm font-semibold text-slate-100">WireGuard</div>
+        <p class="mt-2 text-[11px] text-slate-500 leading-relaxed">Point-to-point native kernel WireGuard tunnel interface.</p>
       </button>
-      <button @click="mode = 'none'" class="cyber-card-glow text-left" :class="mode === 'none' ? 'border-slate-500/80' : ''">
-        <div class="mb-3 h-5 w-5 rounded-full border border-slate-500" />
-        <div class="text-[10px] uppercase tracking-[0.2em] text-slate-400">Disabled</div>
-        <div class="mt-2 text-sm font-medium text-slate-100">Off</div>
+
+      <button
+        @click="mode = 'none'"
+        class="cyber-card-glow text-left transition"
+        :class="mode === 'none' ? 'border-slate-500 bg-slate-900/60' : ''"
+      >
+        <div class="mb-3 flex h-5 w-5 items-center justify-center rounded-full border border-slate-600">
+          <span class="h-2 w-2 rounded-full bg-slate-600"></span>
+        </div>
+        <div class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Local Only</div>
+        <div class="mt-1 text-sm font-semibold text-slate-100">Isolated</div>
+        <p class="mt-2 text-[11px] text-slate-500 leading-relaxed">Disable overlay routing. Keep containers bound to local Docker networks.</p>
       </button>
     </div>
 
+    <!-- Active Mode Configuration Panel -->
     <div class="cyber-card space-y-4">
       <div v-if="mode === 'public'" class="space-y-4">
-        <div>
-          <label class="mb-1 block text-[10px] uppercase tracking-[0.18em] text-slate-400">Tunnel name</label>
-          <input v-model="tunnelName" class="cyber-input" placeholder="my-tunnel" />
+        <div class="border-b border-slate-800 pb-3">
+          <h2 class="text-xs font-bold uppercase tracking-[0.2em] text-cyan-400">Cloudflare Tunnel Parameters</h2>
+          <p class="mt-1 text-xs text-slate-400">Default fallback ingress settings for incoming tunnel traffic.</p>
         </div>
-        <div>
-          <label class="mb-1 block text-[10px] uppercase tracking-[0.18em] text-slate-400">Public hostname</label>
-          <input v-model="hostname" class="cyber-input" placeholder="app.example.com" />
-        </div>
-        <div>
-          <label class="mb-1 block text-[10px] uppercase tracking-[0.18em] text-slate-400">Service target</label>
-          <input v-model="service" class="cyber-input" placeholder="http://my-container:3000" />
+        <div class="grid gap-4 md:grid-cols-2">
+          <div>
+            <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Tunnel Name</label>
+            <input v-model="tunnelName" class="cyber-input" placeholder="tunlify-tunnel" />
+          </div>
+          <div>
+            <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Default Public Hostname</label>
+            <input v-model="hostname" class="cyber-input" placeholder="app.yourdomain.com" />
+          </div>
+          <div class="md:col-span-2">
+            <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Default Upstream Service Target</label>
+            <input v-model="service" class="cyber-input" placeholder="http://tunlify-frontend:80" />
+          </div>
         </div>
       </div>
 
       <div v-else-if="mode === 'tailscale'" class="space-y-4">
-        <div>
-          <label class="mb-1 block text-[10px] uppercase tracking-[0.18em] text-slate-400">Auth key</label>
-          <input v-model="tailscaleAuthKey" class="cyber-input" placeholder="tskey-auth-..." />
+        <div class="border-b border-slate-800 pb-3">
+          <h2 class="text-xs font-bold uppercase tracking-[0.2em] text-sky-400">Tailscale Authentication</h2>
+          <p class="mt-1 text-xs text-slate-400">Connect this host or container cluster to your private Tailscale tailnet.</p>
         </div>
-        <div>
-          <label class="mb-1 block text-[10px] uppercase tracking-[0.18em] text-slate-400">Hostname</label>
-          <input v-model="tailscaleHostname" class="cyber-input" placeholder="docktun" />
-        </div>
-        <div>
-          <label class="mb-1 block text-[10px] uppercase tracking-[0.18em] text-slate-400">Login server</label>
-          <input v-model="tailscaleLoginServer" class="cyber-input" placeholder="https://controlplane.tailscale.com" />
+        <div class="grid gap-4 md:grid-cols-2">
+          <div class="md:col-span-2">
+            <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Auth Key (Reusable or Ephemeral)</label>
+            <input v-model="tailscaleAuthKey" type="password" class="cyber-input" placeholder="tskey-auth-k..." />
+          </div>
+          <div>
+            <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Tailnet Node Hostname</label>
+            <input v-model="tailscaleHostname" class="cyber-input" placeholder="tunlify-node" />
+          </div>
+          <div>
+            <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Control Plane / Headscale Server</label>
+            <input v-model="tailscaleLoginServer" class="cyber-input" placeholder="https://controlplane.tailscale.com" />
+          </div>
         </div>
       </div>
 
       <div v-else-if="mode === 'wireguard'" class="space-y-4">
-        <div>
-          <label class="mb-1 block text-[10px] uppercase tracking-[0.18em] text-slate-400">Private key</label>
-          <input v-model="wireguardPrivateKey" class="cyber-input" placeholder="privateKey==" />
+        <div class="border-b border-slate-800 pb-3">
+          <h2 class="text-xs font-bold uppercase tracking-[0.2em] text-violet-400">WireGuard Interface Settings</h2>
+          <p class="mt-1 text-xs text-slate-400">Native point-to-point WireGuard tunnel interface configuration.</p>
         </div>
-        <div>
-          <label class="mb-1 block text-[10px] uppercase tracking-[0.18em] text-slate-400">Interface</label>
-          <input v-model="wireguardInterface" class="cyber-input" placeholder="wg0" />
-        </div>
-        <div>
-          <label class="mb-1 block text-[10px] uppercase tracking-[0.18em] text-slate-400">Listen port</label>
-          <input v-model.number="wireguardListenPort" type="number" class="cyber-input" placeholder="51820" />
+        <div class="grid gap-4 md:grid-cols-2">
+          <div class="md:col-span-2">
+            <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Private Key</label>
+            <input v-model="wireguardPrivateKey" type="password" class="cyber-input" placeholder="e.g. aGFzZWN1cmVwcml2YXRla2V5...==" />
+          </div>
+          <div>
+            <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Network Interface</label>
+            <input v-model="wireguardInterface" class="cyber-input" placeholder="wg0" />
+          </div>
+          <div>
+            <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Listen UDP Port</label>
+            <input v-model.number="wireguardListenPort" type="number" class="cyber-input" placeholder="51820" />
+          </div>
         </div>
       </div>
 
-      <div v-else class="text-sm text-slate-400">
-        Public and private access are both disabled. Turn on a mode to expose a container.
+      <div v-else class="py-4 text-center text-xs text-slate-400">
+        Overlay networking disabled. All containers operate within isolated Docker network bridges.
       </div>
     </div>
   </div>

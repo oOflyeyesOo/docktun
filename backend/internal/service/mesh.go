@@ -1,98 +1,90 @@
 package service
 
 import (
-  "fmt"
-  "os"
-  "strings"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 )
 
-type MeshMode string
-
-const (
-  MeshModeNone     MeshMode = "none"
-  MeshModeTailscale MeshMode = "tailscale"
-  MeshModeWireguard MeshMode = "wireguard"
-)
-
-type MeshConfig struct {
-  Mode       MeshMode `json:"mode"`
-  Enabled    bool     `json:"enabled"`
-  Tailscale  TailscaleConfig `json:"tailscale,omitempty"`
-  Wireguard  WireguardConfig `json:"wireguard,omitempty"`
-  TunnelName string   `json:"tunnel_name,omitempty"`
+type PublicMeshConfig struct {
+	Hostname string `json:"hostname,omitempty"`
+	Service  string `json:"service,omitempty"`
 }
 
 type TailscaleConfig struct {
-  AuthKey       string `json:"auth_key,omitempty"`
-  Hostname      string `json:"hostname,omitempty"`
-  AdvertiseTags []string `json:"advertise_tags,omitempty"`
-  LoginServer   string `json:"login_server,omitempty"`
+	AuthKey       string   `json:"auth_key,omitempty"`
+	Hostname      string   `json:"hostname,omitempty"`
+	AdvertiseTags []string `json:"advertise_tags,omitempty"`
+	LoginServer   string   `json:"login_server,omitempty"`
 }
 
 type WireguardConfig struct {
-  PrivateKey string `json:"private_key,omitempty"`
-  Interface  string `json:"interface,omitempty"`
-  ListenPort int    `json:"listen_port,omitempty"`
-  Peers      []WireguardPeer `json:"peers,omitempty"`
+	PrivateKey string          `json:"private_key,omitempty"`
+	Interface  string          `json:"interface,omitempty"`
+	ListenPort int             `json:"listen_port,omitempty"`
+	Peers      []WireguardPeer `json:"peers,omitempty"`
 }
 
 type WireguardPeer struct {
-  PublicKey string `json:"public_key,omitempty"`
-  AllowedIPs string `json:"allowed_ips,omitempty"`
-  Endpoint string `json:"endpoint,omitempty"`
+	PublicKey  string `json:"public_key,omitempty"`
+	AllowedIPs string `json:"allowed_ips,omitempty"`
+	Endpoint   string `json:"endpoint,omitempty"`
 }
 
-type MeshService struct{}
+type MeshConfig struct {
+	Mode       string           `json:"mode"`
+	Enabled    bool             `json:"enabled"`
+	TunnelName string           `json:"tunnel_name,omitempty"`
+	Public     PublicMeshConfig `json:"public,omitempty"`
+	Tailscale  TailscaleConfig  `json:"tailscale,omitempty"`
+	Wireguard  WireguardConfig  `json:"wireguard,omitempty"`
+}
 
-func NewMeshService() *MeshService { return &MeshService{} }
+type MeshService struct {
+	storagePath string
+}
+
+func NewMeshService(dataDir string) *MeshService {
+	customPath := os.Getenv("TUNLIFY_MESH_CONFIG")
+	if customPath == "" {
+		customPath = filepath.Join(dataDir, "mesh.json")
+	}
+	return &MeshService{storagePath: customPath}
+}
 
 func (s *MeshService) Load() (*MeshConfig, error) {
-  cfgPath := os.Getenv("TUNLIFY_MESH_CONFIG")
-  if cfgPath == "" {
-    return &MeshConfig{Mode: MeshModeNone, Enabled: false}, nil
-  }
+	data, err := os.ReadFile(s.storagePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &MeshConfig{Mode: "public", Enabled: false}, nil
+		}
+		return nil, fmt.Errorf("read mesh config: %w", err)
+	}
 
-  data, err := os.ReadFile(cfgPath)
-  if err != nil {
-    return nil, fmt.Errorf("read mesh config: %w", err)
-  }
-
-  cfg := &MeshConfig{Mode: MeshModeNone, Enabled: false}
-  content := string(data)
-  if strings.Contains(content, "tailscale") || strings.Contains(content, "auth_key") {
-    cfg.Mode = MeshModeTailscale
-    cfg.Enabled = true
-  } else if strings.Contains(content, "wireguard") || strings.Contains(content, "private_key") {
-    cfg.Mode = MeshModeWireguard
-    cfg.Enabled = true
-  }
-
-  return cfg, nil
+	var cfg MeshConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return &MeshConfig{Mode: "public", Enabled: false}, nil
+	}
+	if cfg.Mode == "" {
+		cfg.Mode = "public"
+	}
+	return &cfg, nil
 }
 
 func (s *MeshService) Save(cfg *MeshConfig) error {
-  if cfg == nil {
-    return fmt.Errorf("mesh config is required")
-  }
+	if cfg == nil {
+		return fmt.Errorf("mesh config is required")
+	}
 
-  if cfg.Mode == MeshModeNone { cfg.Enabled = false; return nil }
+	if err := os.MkdirAll(filepath.Dir(s.storagePath), 0755); err != nil {
+		return fmt.Errorf("create mesh dir: %w", err)
+	}
 
-  path := os.Getenv("TUNLIFY_MESH_CONFIG")
-  if path == "" {
-    path = "/etc/tunlify/mesh.json"
-  }
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal mesh config: %w", err)
+	}
 
-  if err := os.MkdirAll(strings.TrimSuffix(path, "/mesh.json"), 0755); err != nil {
-    return fmt.Errorf("create mesh dir: %w", err)
-  }
-
-  payload := []byte("{}")
-  if cfg.Mode == MeshModeTailscale {
-    payload = []byte(fmt.Sprintf(`{"mode":"tailscale","enabled":true,"tailscale":{"auth_key":"%s","hostname":"%s","login_server":"%s"}}`, cfg.Tailscale.AuthKey, cfg.Tailscale.Hostname, cfg.Tailscale.LoginServer))
-  }
-  if cfg.Mode == MeshModeWireguard {
-    payload = []byte(fmt.Sprintf(`{"mode":"wireguard","enabled":true,"wireguard":{"private_key":"%s","interface":"%s","listen_port":%d}}`, cfg.Wireguard.PrivateKey, cfg.Wireguard.Interface, cfg.Wireguard.ListenPort))
-  }
-
-  return os.WriteFile(path, payload, 0644)
+	return os.WriteFile(s.storagePath, data, 0644)
 }
