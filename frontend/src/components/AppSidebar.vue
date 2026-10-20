@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { LayoutDashboard, ScrollText, Settings, Terminal, Shield, LogOut, Activity, BarChart3, Archive, Bell, Cog, Container, Server } from 'lucide-vue-next'
+import { LayoutDashboard, ScrollText, Settings, Terminal, Shield, LogOut, Activity, BarChart3, Archive, Bell, Cog, Container, Server, Cable } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
 import { useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
@@ -12,6 +12,7 @@ const { apiFetch } = useApi()
 const nav = [
   { to: '/', label: 'Status', icon: LayoutDashboard },
   { to: '/containers', label: 'Containers', icon: Server },
+  { to: '/mesh', label: 'Mesh', icon: Cable },
   { to: '/projects', label: 'Projects', icon: Container },
   { to: '/health', label: 'Health', icon: Activity },
   { to: '/metrics', label: 'Metrics', icon: BarChart3 },
@@ -35,9 +36,9 @@ async function handleLogout() {
   <aside class="flex h-full w-56 flex-col border-r border-slate-800 bg-slate-950">
     <div class="border-b border-slate-800 p-5">
       <div class="flex items-center gap-2">
-        <img src="/icon.png" alt="Tunlify" class="h-7 w-7" />
+        <img src="/icon.png" alt="DockTun" class="h-7 w-7" />
         <div>
-          <div class="text-base font-semibold tracking-[0.18em] text-slate-100">TUNLIFY</div>
+          <div class="text-base font-semibold tracking-[0.18em] text-slate-100">DOCKTUN</div>
         </div>
       </div>
     </div>
