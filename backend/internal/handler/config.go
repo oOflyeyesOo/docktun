@@ -76,7 +76,7 @@ func (h *Config) Validate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Config) ListBackups(w http.ResponseWriter, r *http.Request) {
-	limit, offset := 20, 0
+	limit, offset := 50, 0
 	if l := r.URL.Query().Get("limit"); l != "" {
 		limit, _ = strconv.Atoi(l)
 	}
@@ -89,9 +89,25 @@ func (h *Config) ListBackups(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to list backups"}`, http.StatusInternalServerError)
 		return
 	}
+	if backups == nil {
+		backups = []service.ConfigBackup{}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(backups)
+}
+
+func (h *Config) CreateBackup(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value("user_id").(int)
+	if err := h.mgr.CreateBackup("", userID); err != nil {
+		http.Error(w, `{"error":"failed to create backup: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+	h.audit.Log(userID, "config_backup_create", "manual backup", r.RemoteAddr)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (h *Config) GetBackup(w http.ResponseWriter, r *http.Request) {
@@ -109,4 +125,22 @@ func (h *Config) GetBackup(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(backup)
+}
+
+func (h *Config) DeleteBackup(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, `{"error":"invalid id"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := h.mgr.DeleteBackup(id); err != nil {
+		http.Error(w, `{"error":"failed to delete backup"}`, http.StatusInternalServerError)
+		return
+	}
+	userID, _ := r.Context().Value("user_id").(int)
+	h.audit.Log(userID, "config_backup_delete", strconv.Itoa(id), r.RemoteAddr)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }

@@ -38,6 +38,7 @@ func main() {
 	cfdSvc.Logs()
 	auditSvc := service.NewAuditLogger(database)
 	configSvc := service.NewConfigManager(cfg, database)
+	configSvc.EnsureInitialBackup()
 
 	authMw := middleware.NewAuth(cfg.JWTSecret)
 
@@ -87,7 +88,9 @@ func main() {
 		r.Get("/api/config", configHandler.Get)
 		r.Put("/api/config", configHandler.Update)
 		r.Get("/api/config/backups", configHandler.ListBackups)
+		r.Post("/api/config/backups", configHandler.CreateBackup)
 		r.Get("/api/config/backups/{id}", configHandler.GetBackup)
+		r.Delete("/api/config/backups/{id}", configHandler.DeleteBackup)
 		r.Post("/api/config/validate", configHandler.Validate)
 
 		r.Post("/api/tcp-access/generate", tcpHandler.Generate)
