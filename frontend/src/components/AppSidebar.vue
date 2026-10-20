@@ -32,34 +32,35 @@ async function handleLogout() {
 </script>
 
 <template>
-  <aside class="w-56 h-full bg-surface border-r border-border flex flex-col">
-    <div class="p-5 border-b border-border">
+  <aside class="flex h-full w-56 flex-col border-r border-slate-800 bg-slate-950">
+    <div class="border-b border-slate-800 p-5">
       <div class="flex items-center gap-2">
-        <img src="/icon.png" alt="Tunlify" class="w-7 h-7" />
-        <h1 class="font-display text-lg text-neon text-glow tracking-widest">TUNLIFY</h1>
+        <img src="/icon.png" alt="Tunlify" class="h-7 w-7" />
+        <div>
+          <div class="text-base font-semibold tracking-[0.18em] text-slate-100">TUNLIFY</div>
+        </div>
       </div>
-      <p class="text-xs text-muted mt-1 tracking-wider">// TUNNEL CTRL</p>
     </div>
 
-    <nav class="flex-1 p-3 space-y-1">
+    <nav class="flex-1 space-y-1 p-3">
       <router-link
         v-for="item in nav"
         :key="item.to"
         :to="item.to"
         @click="emit('navigate')"
-        class="flex items-center gap-3 px-3 py-2.5 text-sm text-muted uppercase tracking-wider hover:text-neon hover:bg-neon/5 transition-all duration-150"
-        active-class="!text-neon bg-neon/5 border-l-2 border-neon shadow-neon"
+        class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-xs font-medium uppercase tracking-[0.16em] text-slate-300 transition hover:bg-slate-900 hover:text-slate-100"
+        active-class="bg-slate-900 text-slate-100"
       >
-        <component :is="item.icon" class="w-4 h-4" :stroke-width="1.5" />
+        <component :is="item.icon" class="h-4 w-4" :stroke-width="1.7" />
         {{ item.label }}
       </router-link>
     </nav>
 
-    <div class="p-4 border-t border-border">
+    <div class="border-t border-slate-800 p-4">
       <div class="flex items-center justify-between">
-        <span class="text-xs text-muted tracking-wider">{{ authStore.username }}<span class="animate-blink text-neon">_</span></span>
-        <button @click="handleLogout" class="text-muted hover:text-danger transition-colors">
-          <LogOut class="w-4 h-4" :stroke-width="1.5" />
+        <span class="text-[10px] uppercase tracking-[0.18em] text-slate-400">{{ authStore.username }}</span>
+        <button @click="handleLogout" class="text-slate-400 transition hover:text-slate-200">
+          <LogOut class="h-4 w-4" :stroke-width="1.7" />
         </button>
       </div>
     </div>
