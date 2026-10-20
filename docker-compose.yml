@@ -1,7 +1,7 @@
 services:
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: tunlify-cloudflared
+    container_name: docktun-cloudflared
     restart: unless-stopped
     command: tunnel --config /etc/cloudflared/config.yml --metrics 0.0.0.0:2000 --protocol ${TUNNEL_PROTOCOL:-http2} run
     volumes:
@@ -13,7 +13,7 @@ services:
 
   backend:
     build: ./backend
-    container_name: tunlify-backend
+    container_name: docktun-backend
     restart: unless-stopped
     expose:
       - "3001"
@@ -28,7 +28,7 @@ services:
 
   frontend:
     build: ./frontend
-    container_name: tunlify-frontend
+    container_name: docktun-frontend
     restart: unless-stopped
     ports:
       - "${PORT:-8080}:80"

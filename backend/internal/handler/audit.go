@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/luzyver/tunlify/internal/service"
+	"github.com/luzyver/docktun/internal/service"
 )
 
 type Audit struct {

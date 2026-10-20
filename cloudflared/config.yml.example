@@ -1,10 +1,11 @@
-# Tunlify managed cloudflared config
-# This file is managed by Tunlify. Edit via the dashboard.
+# DockTun managed cloudflared config
+# This file is managed by DockTun. Edit via the dashboard.
 
 tunnel: YOUR_TUNNEL_ID
 credentials-file: /etc/cloudflared/credentials.json
+protocol: http2
 
 ingress:
-  - hostname: tunlify.example.com
-    service: http://tunlify-frontend:80
+  - hostname: docktun.example.com
+    service: http://docktun-frontend:80
   - service: http_status:404

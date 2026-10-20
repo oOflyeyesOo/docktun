@@ -1,6 +1,6 @@
-# 🚀 Tunlify Docker VM Installation Guide
+# 🚀 DockTun Docker VM Installation Guide
 
-This guide explains how to deploy **Tunlify** and **Cloudflare Tunnel** onto your Docker VM or container using the automated [`install.sh`](file:///c:/Users/oofly/Downloads/tun/install.sh) script.
+This guide explains how to deploy **DockTun** and **Cloudflare Tunnel** onto your Docker VM or container using the automated [`install.sh`](file:///c:/Users/oofly/Downloads/tun/install.sh) script.
 
 ---
 
@@ -19,12 +19,12 @@ This guide explains how to deploy **Tunlify** and **Cloudflare Tunnel** onto you
    - Automatically locates the generated credentials JSON (`<tunnel-id>.json`) and moves it to `./cloudflared/credentials.json`.
    - Automatically registers DNS CNAME routes directly in Cloudflare.
 5. **Admin Security**:
-   - Prompts you to set an Admin username and strong password (with masked input).
+   - Prompts you to set an Admin username and strong password (with masked input and auto-generate fallback).
    - Generates a random 64-character `JWT_SECRET`.
    - Writes everything into `.env`.
 6. **Existing Container Discovery & Import**:
    - Connects all detected running containers to the `cloudflared` Docker network for internal DNS and routing.
-   - Inspects containers for Docker Compose metadata (`com.docker.compose.project.working_dir`), registers them in Tunlify's SQLite database (`app.db`), and mounts their paths in `docker-compose.yml`.
+   - Inspects containers for Docker Compose metadata (`com.docker.compose.project.working_dir`), registers them in DockTun's SQLite database (`app.db`), and mounts their paths in `docker-compose.override.yml`.
    - Prompts you to assign public domain names to any of your containers, generating `cloudflared/config.yml` ingress rules and Cloudflare DNS records automatically.
 7. **Launch & Verification**:
    - Launches the stack using `docker compose up -d --build`.
@@ -34,19 +34,19 @@ This guide explains how to deploy **Tunlify** and **Cloudflare Tunnel** onto you
 
 ## ⚡ Quick Start on Your Linux VM
 
-### 1. Copy or Clone Tunlify to your VM
+### 1. Copy or Clone DockTun to your VM
 
 If copying from your local machine to your VM:
 ```bash
 # Example using rsync or scp:
-rsync -avz --exclude 'node_modules' --exclude '.git' ./ user@your-vm-ip:/opt/tunlify
+rsync -avz --exclude 'node_modules' --exclude '.git' ./ user@your-vm-ip:/opt/docktun
 ```
 
 Or clone directly on your VM:
 ```bash
 cd /opt
-# Ensure you are inside the Tunlify directory
-cd tunlify
+# Ensure you are inside the DockTun directory
+cd docktun
 ```
 
 ### 2. Make the script executable and run it
@@ -63,7 +63,7 @@ sudo ./install.sh
 ### Virtualization & Nesting Check
 - **Proxmox LXC Containers**: Verifies that LXC nesting is functional (`cgroups` writable, `overlayfs` supported). If not enabled, the installer guides you to enable `nesting=1,keyctl=1` in your container options.
 - **KVM / QEMU / VMware / Hyper-V VMs**: Checks CPU flags for nested hardware virtualization (`vmx`/`svm`) and `/dev/kvm` presence.
-- **Docker Socket**: Confirms `/var/run/docker.sock` is ready for Tunlify container management.
+- **Docker Socket**: Confirms `/var/run/docker.sock` is ready for DockTun container management.
 
 ### GPU Acceleration Check
 - **NVIDIA GPU Detection**: If an NVIDIA GPU is detected (via PCI or `nvidia-smi`), the script checks whether the **NVIDIA Container Toolkit** (`nvidia-ctk`) is configured in `/etc/docker/daemon.json`.
@@ -80,7 +80,7 @@ sudo ./install.sh
 ## 🌐 Post-Installation Access
 
 - **Local Access**: `http://<VM-IP>:<PORT>` (e.g. `http://192.168.1.100:8080`)
-- **Public Tunnel Access**: `https://tunlify.yourdomain.com` (if configured)
+- **Public Tunnel Access**: `https://docktun.yourdomain.com` (if configured)
 - **Default Username**: `admin` (or the username you selected)
 - **Password**: Your chosen admin password
 
@@ -89,16 +89,16 @@ sudo ./install.sh
 ## 🔧 Useful Commands on the VM
 
 ```bash
-# View realtime logs of all Tunlify services
+# View realtime logs of all DockTun services
 docker compose logs -f
 
 # View cloudflared tunnel logs specifically
 docker compose logs -f cloudflared
 
-# Restart Tunlify
+# Restart DockTun
 docker compose restart
 
-# Stop Tunlify
+# Stop DockTun
 docker compose down
 
 # Check Cloudflare tunnels via CLI

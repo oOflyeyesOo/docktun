@@ -69,11 +69,11 @@ func (h *Notifications) Test(w http.ResponseWriter, r *http.Request) {
 	var payload []byte
 	switch cfg.Type {
 	case "discord":
-		payload, _ = json.Marshal(map[string]string{"content": "🟢 Tunlify test notification"})
+		payload, _ = json.Marshal(map[string]string{"content": "🟢 DockTun test notification"})
 	case "telegram":
-		payload, _ = json.Marshal(map[string]interface{}{"text": "🟢 Tunlify test notification", "parse_mode": "HTML"})
+		payload, _ = json.Marshal(map[string]interface{}{"text": "🟢 DockTun test notification", "parse_mode": "HTML"})
 	default:
-		payload, _ = json.Marshal(map[string]string{"text": "🟢 Tunlify test notification"})
+		payload, _ = json.Marshal(map[string]string{"text": "🟢 DockTun test notification"})
 	}
 
 	resp, err := http.Post(cfg.WebhookURL, "application/json", jsonReader(payload))

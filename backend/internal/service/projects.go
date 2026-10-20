@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/luzyver/tunlify/internal/db"
+	"github.com/luzyver/docktun/internal/db"
 )
 
 type Project struct {
@@ -104,7 +104,7 @@ func (s *Projects) List() ([]Project, error) {
 
 func (s *Projects) Create(name, path, repoURL, gitUsername, gitToken string) (Project, error) {
 	if s.isSelf(path) {
-		return Project{}, fmt.Errorf("cannot add Tunlify itself as a project")
+		return Project{}, fmt.Errorf("cannot add DockTun itself as a project")
 	}
 	res, err := s.db.Exec("INSERT INTO projects (name, path, repo_url, git_username, git_token) VALUES (?, ?, ?, ?, ?)",
 		name, path, repoURL, gitUsername, gitToken)
@@ -117,7 +117,7 @@ func (s *Projects) Create(name, path, repoURL, gitUsername, gitToken string) (Pr
 
 func (s *Projects) Update(id int, name, path, repoURL, gitUsername, gitToken string) error {
 	if s.isSelf(path) {
-		return fmt.Errorf("cannot set path to Tunlify itself")
+		return fmt.Errorf("cannot set path to DockTun itself")
 	}
 	if gitToken == "" || gitToken == maskToken("x") {
 		_, err := s.db.Exec("UPDATE projects SET name=?, path=?, repo_url=?, git_username=? WHERE id=?",

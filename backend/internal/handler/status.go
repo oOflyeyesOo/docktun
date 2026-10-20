@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/luzyver/tunlify/internal/config"
-	"github.com/luzyver/tunlify/internal/service"
+	"github.com/luzyver/docktun/internal/config"
+	"github.com/luzyver/docktun/internal/service"
 	"gopkg.in/yaml.v3"
 )
 

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/luzyver/tunlify/internal/service"
+	"github.com/luzyver/docktun/internal/service"
 )
 
 type Mesh struct {

@@ -1,4 +1,4 @@
-module github.com/luzyver/tunlify
+module github.com/luzyver/docktun
 
 go 1.22.0
 

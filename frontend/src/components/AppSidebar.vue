@@ -36,9 +36,9 @@ async function handleLogout() {
   <aside class="flex h-full w-56 flex-col border-r border-slate-800 bg-slate-950">
     <div class="border-b border-slate-800 p-5">
       <div class="flex items-center gap-2.5">
-        <img src="/icon.png" alt="Tunlify" class="h-7 w-7" />
+        <img src="/icon.png" alt="DockTun" class="h-7 w-7" />
         <div>
-          <div class="text-base font-bold tracking-[0.18em] text-slate-100">TUNLIFY</div>
+          <div class="text-base font-bold tracking-[0.18em] text-slate-100">DOCKTUN</div>
           <div class="text-[9px] uppercase tracking-widest text-cyan-400 font-semibold">Docker & Cloudflare</div>
         </div>
       </div>

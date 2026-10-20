@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/luzyver/tunlify/internal/config"
-	"github.com/luzyver/tunlify/internal/ws"
+	"github.com/luzyver/docktun/internal/config"
+	"github.com/luzyver/docktun/internal/ws"
 )
 
 type ProcessState struct {
@@ -124,7 +124,7 @@ func (s *Cloudflared) dockerCmd(action string) error {
 
 	entry, _ := json.Marshal(map[string]string{
 		"time":    time.Now().Format(time.RFC3339),
-		"message": fmt.Sprintf("[tunlify] cloudflared %s", action),
+		"message": fmt.Sprintf("[docktun] cloudflared %s", action),
 	})
 	s.hub.Broadcast <- entry
 

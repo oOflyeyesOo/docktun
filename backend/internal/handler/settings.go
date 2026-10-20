@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/luzyver/tunlify/internal/db"
-	"github.com/luzyver/tunlify/internal/service"
+	"github.com/luzyver/docktun/internal/db"
+	"github.com/luzyver/docktun/internal/service"
 	"golang.org/x/crypto/bcrypt"
 )
 

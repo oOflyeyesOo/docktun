@@ -9,9 +9,9 @@ type Config struct {
 	AdminPassword       string `envconfig:"ADMIN_PASSWORD" required:"true"`
 	DBPath              string `envconfig:"DB_PATH" default:"./data/app.db"`
 	CloudflaredConfig   string `envconfig:"CLOUDFLARED_CONFIG_PATH" default:"/etc/cloudflared/config.yml"`
-	CloudflaredContainer string `envconfig:"CLOUDFLARED_CONTAINER" default:"tunlify-cloudflared"`
+	CloudflaredContainer string `envconfig:"CLOUDFLARED_CONTAINER" default:"docktun-cloudflared"`
 	TunnelName          string `envconfig:"TUNNEL_NAME" default:""`
-	MetricsAddr         string `envconfig:"CLOUDFLARED_METRICS" default:"http://tunlify-cloudflared:2000/metrics"`
+	MetricsAddr         string `envconfig:"CLOUDFLARED_METRICS" default:"http://docktun-cloudflared:2000/metrics"`
 	SelfPath            string `envconfig:"SELF_PATH" default:""`
 	MeshMode            string `envconfig:"MESH_MODE" default:"none"`
 	MeshConfigPath      string `envconfig:"MESH_CONFIG_PATH" default:"/etc/docktun/mesh.json"`

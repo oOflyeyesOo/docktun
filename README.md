@@ -1,4 +1,4 @@
-# ☁️ Tunlify
+# ☁️ DockTun
 
 Self-hosted web dashboard to manage and monitor Cloudflare Tunnel (cloudflared) and Docker Compose projects.
 
@@ -43,8 +43,8 @@ Self-hosted web dashboard to manage and monitor Cloudflare Tunnel (cloudflared) 
 ### Setup
 
 ```bash
-git clone https://github.com/luzyver/Tunlify.git
-cd Tunlify
+git clone https://github.com/luzyver/DockTun.git
+cd DockTun
 
 # Configure environment
 cp .env.example .env
@@ -68,7 +68,7 @@ docker compose up -d
 | `TUNNEL_NAME` | Cloudflare tunnel name | — |
 | `TUNNEL_ID` | Cloudflare tunnel UUID | — |
 | `CLOUDFLARED_CONFIG_PATH` | Config path inside container | `/etc/cloudflared/config.yml` |
-| `CLOUDFLARED_CONTAINER` | Cloudflared container name | `tunlify-cloudflared` |
+| `CLOUDFLARED_CONTAINER` | Cloudflared container name | `docktun-cloudflared` |
 | `DB_PATH` | SQLite database path | `/app/data/app.db` |
 | `LISTEN_ADDR` | Backend listen address | `0.0.0.0:3001` |
 
@@ -92,7 +92,7 @@ docker compose up -d
 ## Project Structure
 
 ```
-Tunlify/
+DockTun/
 ├── docker-compose.yml
 ├── .env.example
 ├── cloudflared/         # Tunnel config & credentials

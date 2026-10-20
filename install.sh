@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Tunlify & Cloudflare Tunnel Installer for Docker VM
+# DockTun & Cloudflare Tunnel Installer for Docker VM
 # ==============================================================================
 # Features:
 #   1. Detects OS and installs necessary dependencies (curl, jq, openssl, pciutils)
@@ -12,12 +12,12 @@
 #   3. Installs or verifies Docker & Docker Compose
 #   4. Installs official cloudflared CLI binary for host architecture
 #   5. Authenticates with Cloudflare (login / create tunnel / import credentials JSON)
-#   6. Securely configures Tunlify Admin credentials & generates JWT secret
+#   6. Securely configures DockTun Admin credentials & generates JWT secret
 #   7. Discovers existing Docker containers:
 #      - Connects them to the 'cloudflared' Docker network for direct routing
-#      - Imports existing Docker Compose projects into Tunlify dashboard
+#      - Imports existing Docker Compose projects into DockTun dashboard
 #      - Configures Cloudflare Tunnel Ingress rules & creates DNS records
-#   8. Builds & starts Tunlify stack via Docker Compose
+#   8. Builds & starts DockTun stack via Docker Compose
 # ==============================================================================
 
 set -o pipefail
@@ -42,6 +42,35 @@ header() {
     echo -e "${C_BOLD}${C_BLUE}===================================================================${C_RESET}\n"
 }
 
+# Terminal prompt helpers (handles piped curl | bash via /dev/tty fallback)
+prompt_read() {
+    local prompt_msg="$1"
+    local var_name="$2"
+    local default_val="$3"
+    local val=""
+    if [ -t 0 ]; then
+        read -rp "$prompt_msg" val
+    elif [ -e /dev/tty ]; then
+        read -rp "$prompt_msg" val < /dev/tty
+    fi
+    val="${val:-$default_val}"
+    printf -v "$var_name" '%s' "$val"
+}
+
+prompt_secret() {
+    local prompt_msg="$1"
+    local var_name="$2"
+    local val=""
+    if [ -t 0 ]; then
+        read -rsp "$prompt_msg" val
+        echo ""
+    elif [ -e /dev/tty ]; then
+        read -rsp "$prompt_msg" val < /dev/tty
+        echo "" > /dev/tty 2>/dev/null || echo ""
+    fi
+    printf -v "$var_name" '%s' "$val"
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -57,12 +86,12 @@ fi
 clear 2>/dev/null || true
 echo -e "${C_CYAN}"
 cat << "EOF"
-  _____            _ _  __       
- |_   _|   _ _ __ | (_)/ _|_   _ 
-   | || | | | '_ \| | | |_| | | |
-   | || |_| | | | | | |  _| |_| |
-   |_| \__,_|_| |_|_|_|_|  \__, |
-                           |___/ 
+  ____             _     _____             
+ |  _ \  ___   ___| | __|_   _|   _ _ __   
+ | | | |/ _ \ / __| |/ /  | | | | | '_ \  
+ | |_| | (_) | (__|   <   | | |_| | | | | 
+ |____/ \___/ \___|_|\_\  |_| \__,_|_| |_| 
+                                           
   Cloudflare Tunnel & Docker Management Stack
 EOF
 echo -e "${C_RESET}"
@@ -127,15 +156,14 @@ success "Prerequisite tools verified."
 # ------------------------------------------------------------------------------
 if ! command -v docker &>/dev/null; then
     warn "Docker is not installed on this system."
-    read -rp "Would you like this installer to automatically install Docker? [Y/n]: " INSTALL_DOCKER
-    INSTALL_DOCKER=${INSTALL_DOCKER:-Y}
+    prompt_read "Would you like this installer to automatically install Docker? [Y/n]: " INSTALL_DOCKER "Y"
     if [[ "$INSTALL_DOCKER" =~ ^[Yy]$ ]]; then
         info "Installing Docker using official convenience script..."
         curl -fsSL https://get.docker.com | sh
         systemctl enable --now docker 2>/dev/null || service docker start 2>/dev/null || true
         success "Docker installed successfully."
     else
-        error "Docker is required to run Tunlify. Please install Docker and re-run this script."
+        error "Docker is required to run DockTun. Please install Docker and re-run this script."
         exit 1
     fi
 else
@@ -276,7 +304,7 @@ if [ -n "$NVIDIA_PCI" ] || command -v nvidia-smi &>/dev/null || [ -e /dev/nvidia
     else
         warn "NVIDIA GPU detected, but NVIDIA Container Toolkit is not configured in Docker!"
         echo -e "${C_YELLOW}  Enabling this allows Docker containers (Plex, AI/Ollama, Jellyfin, Tdarr) to use your GPU.${C_RESET}"
-        read -rp "  Would you like to auto-install & configure nvidia-container-toolkit now? [y/N]: " SETUP_NVC
+        prompt_read "  Would you like to auto-install & configure nvidia-container-toolkit now? [y/N]: " SETUP_NVC "N"
         if [[ "$SETUP_NVC" =~ ^[Yy]$ ]]; then
             info "Setting up NVIDIA Container Toolkit repository..."
             if [ "$PKG_MANAGER" = "apt" ]; then
@@ -522,6 +550,7 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
     PREV_TUNNEL_ID=$(grep -E '^TUNNEL_ID=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
     PREV_TUNNEL_PROTOCOL=$(grep -E '^TUNNEL_PROTOCOL=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
     PREV_JWT_SECRET=$(grep -E '^JWT_SECRET=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
+    PREV_DOMAIN=$(grep -E '^(DOCKTUN_DOMAIN|TUNLIFY_DOMAIN)=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
 fi
 
 # 2. Check local credentials.json
@@ -556,7 +585,7 @@ if [ -f "$SCRIPT_DIR/cloudflared/config.yml" ]; then
         [ -z "$PREV_TUNNEL_ID" ] && PREV_TUNNEL_ID="$cfg_tid"
     fi
     cfg_dom=$(grep -E '^\s*-\s*hostname:' "$SCRIPT_DIR/cloudflared/config.yml" 2>/dev/null | head -n1 | awk '{print $NF}' | tr -d '\r')
-    if [ -n "$cfg_dom" ] && [ "$cfg_dom" != "tunlify.example.com" ]; then
+    if [ -n "$cfg_dom" ] && [ "$cfg_dom" != "docktun.example.com" ] && [ "$cfg_dom" != "tunlify.example.com" ]; then
         PREV_DOMAIN="$cfg_dom"
     fi
 fi
@@ -582,8 +611,7 @@ if [ -n "$PREV_TUNNEL_ID" ] && [ "$PREV_TUNNEL_ID" != "your-tunnel-uuid" ]; then
         echo -e "  • ${C_BOLD}Cloudflare Auth:${C_RESET} Active (${CF_CERT_PATH})"
     fi
     echo ""
-    read -rp "Would you like to resume and use these existing settings? [Y/n]: " RESUME_INPUT
-    RESUME_INPUT=${RESUME_INPUT:-Y}
+    prompt_read "Would you like to resume and use these existing settings? [Y/n]: " RESUME_INPUT "Y"
     if [[ "$RESUME_INPUT" =~ ^[Yy]$ ]]; then
         RESUME_PREVIOUS=true
     fi
@@ -591,14 +619,14 @@ fi
 
 TUNNEL_ID=""
 TUNNEL_NAME=""
-TUNLIFY_DOMAIN=""
+DOCKTUN_DOMAIN=""
 LOGIN_SUCCESSFUL=false
 
 if [ "$RESUME_PREVIOUS" = true ]; then
     info "Resuming setup with previously configured tunnel and credentials..."
     TUNNEL_ID="$PREV_TUNNEL_ID"
-    TUNNEL_NAME="${PREV_TUNNEL_NAME:-tunlify-tunnel}"
-    TUNLIFY_DOMAIN="${PREV_DOMAIN:-tunlify.example.com}"
+    TUNNEL_NAME="${PREV_TUNNEL_NAME:-docktun-tunnel}"
+    DOCKTUN_DOMAIN="${PREV_DOMAIN:-docktun.example.com}"
     [ "$CF_ALREADY_LOGGED_IN" = true ] && LOGIN_SUCCESSFUL=true
 
     # Ensure credentials.json is in place
@@ -612,9 +640,8 @@ if [ "$RESUME_PREVIOUS" = true ]; then
 
     success "Tunnel configuration restored: ${TUNNEL_NAME} (${TUNNEL_ID})"
 
-    if [ -z "$TUNLIFY_DOMAIN" ] || [ "$TUNLIFY_DOMAIN" = "tunlify.example.com" ]; then
-        read -rp "Enter the public domain/hostname for Tunlify Web UI (e.g. tunlify.example.com): " TUNLIFY_DOMAIN
-        TUNLIFY_DOMAIN=${TUNLIFY_DOMAIN:-tunlify.example.com}
+    if [ -z "$DOCKTUN_DOMAIN" ] || [ "$DOCKTUN_DOMAIN" = "docktun.example.com" ] || [ "$DOCKTUN_DOMAIN" = "tunlify.example.com" ]; then
+        prompt_read "Enter the public domain/hostname for DockTun Web UI (e.g. docktun.example.com): " DOCKTUN_DOMAIN "docktun.example.com"
     fi
 else
     # Discover all existing tunnels across ~/.cloudflared, /root/.cloudflared, and Cloudflare account
@@ -710,8 +737,7 @@ else
         echo -e "  [${opt_new}] ${C_BOLD}Create a brand new tunnel${C_RESET}"
         echo -e "  [${opt_import}] ${C_BOLD}Import another credentials.json from file/paste${C_RESET}"
         echo ""
-        read -rp "Select an option [1-${opt_import}] (Default: 1): " T_SELECT
-        T_SELECT=${T_SELECT:-1}
+        prompt_read "Select an option [1-${opt_import}] (Default: 1): " T_SELECT "1"
 
         if [ "$T_SELECT" -ge 1 ] && [ "$T_SELECT" -le "$DETECTED_TUNNEL_COUNT" ]; then
             TUNNEL_ID="${T_IDS[$T_SELECT]}"
@@ -724,7 +750,7 @@ else
                 success "Credentials copied to $SCRIPT_DIR/cloudflared/credentials.json"
             else
                 warn "Credentials file for tunnel '${TUNNEL_NAME}' was not found in ~/.cloudflared."
-                read -rp "Enter path to credentials.json for this tunnel: " MAN_JSON
+                prompt_read "Enter path to credentials.json for this tunnel: " MAN_JSON ""
                 if [ -f "$MAN_JSON" ]; then
                     cp "$MAN_JSON" "$SCRIPT_DIR/cloudflared/credentials.json"
                     success "Imported credentials."
@@ -742,17 +768,17 @@ else
     if [ -z "$TUNNEL_ID" ]; then
         if [ "$IMPORT_CUSTOM" = true ]; then
             while true; do
-                read -rp "Enter the absolute path to your credentials.json file (or 'paste' to paste): " SRC_JSON
+                prompt_read "Enter the absolute path to your credentials.json file (or 'paste' to paste): " SRC_JSON ""
                 if [ "$SRC_JSON" = "paste" ]; then
                     echo "Paste the full contents of your credentials.json (press Ctrl+D when finished):"
                     cat > "$SCRIPT_DIR/cloudflared/credentials.json"
                     TUNNEL_ID=$(jq -r '.TunnelID // empty' "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true)
-                    read -rp "Enter your Tunnel Name: " TUNNEL_NAME
+                    prompt_read "Enter your Tunnel Name: " TUNNEL_NAME ""
                     break
                 elif [ -f "$SRC_JSON" ]; then
                     cp "$SRC_JSON" "$SCRIPT_DIR/cloudflared/credentials.json"
                     TUNNEL_ID=$(jq -r '.TunnelID // empty' "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true)
-                    read -rp "Enter your Tunnel Name: " TUNNEL_NAME
+                    prompt_read "Enter your Tunnel Name: " TUNNEL_NAME ""
                     break
                 else
                     warn "File not found: $SRC_JSON. Please re-enter."
@@ -774,9 +800,8 @@ else
                 fi
             fi
 
-            DEFAULT_TNAME="${PREV_TUNNEL_NAME:-tunlify-tunnel}"
-            read -rp "Enter a name for your Cloudflare Tunnel (Default: ${DEFAULT_TNAME}): " TUNNEL_NAME
-            TUNNEL_NAME=${TUNNEL_NAME:-$DEFAULT_TNAME}
+            DEFAULT_TNAME="${PREV_TUNNEL_NAME:-docktun-tunnel}"
+            prompt_read "Enter a name for your Cloudflare Tunnel (Default: ${DEFAULT_TNAME}): " TUNNEL_NAME "$DEFAULT_TNAME"
 
             info "Creating tunnel: $TUNNEL_NAME..."
             TUNNEL_CREATE_OUTPUT=$(cloudflared tunnel create "$TUNNEL_NAME" 2>&1)
@@ -814,22 +839,21 @@ else
 
     [ -f "$SCRIPT_DIR/cloudflared/credentials.json" ] && chmod 644 "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true
 
-    DEFAULT_DOM="${PREV_DOMAIN:-tunlify.example.com}"
-    read -rp "Enter the public domain/hostname for Tunlify Web UI (Default: ${DEFAULT_DOM}): " TUNLIFY_DOMAIN
-    TUNLIFY_DOMAIN=${TUNLIFY_DOMAIN:-$DEFAULT_DOM}
+    DEFAULT_DOM="${PREV_DOMAIN:-docktun.example.com}"
+    prompt_read "Enter the public domain/hostname for DockTun Web UI (Default: ${DEFAULT_DOM}): " DOCKTUN_DOMAIN "$DEFAULT_DOM"
 
     # Automatically create DNS CNAME if logged in
-    if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_NAME" ] && [ -n "$TUNLIFY_DOMAIN" ]; then
-        info "Registering DNS route in Cloudflare: $TUNLIFY_DOMAIN -> $TUNNEL_NAME..."
-        cloudflared tunnel route dns "$TUNNEL_NAME" "$TUNLIFY_DOMAIN" 2>/dev/null || true
+    if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_NAME" ] && [ -n "$DOCKTUN_DOMAIN" ]; then
+        info "Registering DNS route in Cloudflare: $DOCKTUN_DOMAIN -> $TUNNEL_NAME..."
+        cloudflared tunnel route dns "$TUNNEL_NAME" "$DOCKTUN_DOMAIN" 2>/dev/null || true
         success "DNS route configured in Cloudflare."
     fi
 fi
 
 # ------------------------------------------------------------------------------
-# 4. Tunlify Admin Credentials & Security
+# 4. DockTun Admin Credentials & Security
 # ------------------------------------------------------------------------------
-header "Step 4: Tunlify Admin & Security Setup"
+header "Step 4: DockTun Admin & Security Setup"
 
 if [ "$RESUME_PREVIOUS" = true ] && [ -n "$PREV_ADMIN_PASS" ]; then
     ADMIN_USERNAME="${PREV_ADMIN_USER:-admin}"
@@ -839,19 +863,17 @@ if [ "$RESUME_PREVIOUS" = true ] && [ -n "$PREV_ADMIN_PASS" ]; then
     success "Reusing previously configured Admin credentials (Username: ${ADMIN_USERNAME}, Port: ${PORT})."
 else
     DEFAULT_AUSER="${PREV_ADMIN_USER:-admin}"
-    read -rp "Admin username (Default: ${DEFAULT_AUSER}): " ADMIN_USERNAME
-    ADMIN_USERNAME=${ADMIN_USERNAME:-$DEFAULT_AUSER}
+    prompt_read "Admin username (Default: ${DEFAULT_AUSER}): " ADMIN_USERNAME "$DEFAULT_AUSER"
 
     while true; do
-        echo -n "Enter Tunlify Admin password: "
-        read -rs ADMIN_PASSWORD
-        echo ""
-        echo -n "Confirm Tunlify Admin password: "
-        read -rs ADMIN_PASSWORD_CONFIRM
-        echo ""
+        prompt_secret "Enter DockTun Admin password (leave blank to auto-generate secure password): " ADMIN_PASSWORD
         if [ -z "$ADMIN_PASSWORD" ]; then
-            warn "Password cannot be empty. Please enter a valid password."
-        elif [ "$ADMIN_PASSWORD" != "$ADMIN_PASSWORD_CONFIRM" ]; then
+            ADMIN_PASSWORD=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
+            success "Auto-generated secure Admin password: $ADMIN_PASSWORD"
+            break
+        fi
+        prompt_secret "Confirm DockTun Admin password: " ADMIN_PASSWORD_CONFIRM
+        if [ "$ADMIN_PASSWORD" != "$ADMIN_PASSWORD_CONFIRM" ]; then
             warn "Passwords do not match. Please try again."
         else
             success "Admin password confirmed."
@@ -860,8 +882,7 @@ else
     done
 
     DEFAULT_P="${PREV_PORT:-$DEFAULT_WEB_PORT}"
-    read -rp "Enter Web UI Host Port (Default: ${DEFAULT_P}): " PORT
-    PORT=${PORT:-$DEFAULT_P}
+    prompt_read "Enter Web UI Host Port (Default: ${DEFAULT_P}): " PORT "$DEFAULT_P"
 
     info "Generating cryptographically secure 64-character JWT secret..."
     JWT_SECRET="${PREV_JWT_SECRET:-$(openssl rand -hex 32)}"
@@ -881,8 +902,8 @@ else
     success "Docker network 'cloudflared' is already available."
 fi
 
-# Find all running containers excluding tunlify
-RUNNING_CONTAINERS=$(docker ps --format '{{.Names}}' | grep -vE '^(tunlify-backend|tunlify-frontend|tunlify-cloudflared)$' || true)
+# Find all running containers excluding DockTun and legacy Tunlify
+RUNNING_CONTAINERS=$(docker ps --format '{{.Names}}' | grep -vE '^(docktun-backend|docktun-frontend|docktun-cloudflared|tunlify-backend|tunlify-frontend|tunlify-cloudflared)$' || true)
 
 CONTAINER_COUNT=0
 if [ -n "$RUNNING_CONTAINERS" ]; then
@@ -938,8 +959,7 @@ else
     done <<< "$RUNNING_CONTAINERS"
 
     echo ""
-    read -rp "Connect all detected containers to the 'cloudflared' network for internal routing? [Y/n]: " CONNECT_ALL
-    CONNECT_ALL=${CONNECT_ALL:-Y}
+    prompt_read "Connect all detected containers to the 'cloudflared' network for internal routing? [Y/n]: " CONNECT_ALL "Y"
 
     if [[ "$CONNECT_ALL" =~ ^[Yy]$ ]]; then
         for ((i=1; i<INDEX; i++)); do
@@ -952,11 +972,10 @@ else
 
     # Import Docker Compose projects and standalone containers into SQLite database & volume mounts
     echo ""
-    read -rp "Import detected containers & projects into Tunlify dashboard? [Y/n]: " IMPORT_PROJECTS
-    IMPORT_PROJECTS=${IMPORT_PROJECTS:-Y}
+    prompt_read "Import detected containers & projects into DockTun dashboard? [Y/n]: " IMPORT_PROJECTS "Y"
 
     if [[ "$IMPORT_PROJECTS" =~ ^[Yy]$ ]]; then
-        info "Preparing Tunlify projects database..."
+        info "Preparing DockTun projects database..."
         
         # Prepare SQL batch file
         SQL_FILE="$SCRIPT_DIR/data/import_projects.sql"
@@ -1035,7 +1054,7 @@ EOF
         fi
         rm -f "$SQL_FILE"
         chmod 644 "$SCRIPT_DIR/data/app.db" 2>/dev/null || true
-        success "Containers and projects successfully registered into Tunlify database."
+        success "Containers and projects successfully registered into DockTun database."
     fi
 
     # Restore any previously configured custom container ingress rules from existing config.yml
@@ -1043,7 +1062,7 @@ EOF
         while IFS= read -r rline; do
             if [[ "$rline" =~ ^[[:space:]]*-[[:space:]]*hostname:[[:space:]]*([^[:space:]]+) ]]; then
                 rh="${BASH_REMATCH[1]}"
-                if [ "$rh" != "$TUNLIFY_DOMAIN" ] && [ "$rh" != "tunlify.example.com" ]; then
+                if [ "$rh" != "$DOCKTUN_DOMAIN" ] && [ "$rh" != "docktun.example.com" ] && [ "$rh" != "tunlify.example.com" ]; then
                     read -r sline || true
                     IMPORTED_INGRESS+=("$rline"$'\n'"$sline")
                 fi
@@ -1055,17 +1074,16 @@ EOF
     fi
 
     # Ingress Configuration
-    BASE_DOMAIN="$TUNLIFY_DOMAIN"
-    if [[ "$TUNLIFY_DOMAIN" =~ \. ]]; then
-        dot_count=$(echo "$TUNLIFY_DOMAIN" | tr -cd '.' | wc -c)
+    BASE_DOMAIN="$DOCKTUN_DOMAIN"
+    if [[ "$DOCKTUN_DOMAIN" =~ \. ]]; then
+        dot_count=$(echo "$DOCKTUN_DOMAIN" | tr -cd '.' | wc -c)
         if [ "$dot_count" -ge 2 ]; then
-            BASE_DOMAIN="${TUNLIFY_DOMAIN#*.}"
+            BASE_DOMAIN="${DOCKTUN_DOMAIN#*.}"
         fi
     fi
 
     echo ""
-    read -rp "Would you like to expose detected containers through Cloudflare Tunnel hostnames? [Y/n]: " CONFIGURE_INGRESS
-    CONFIGURE_INGRESS=${CONFIGURE_INGRESS:-Y}
+    prompt_read "Would you like to expose detected containers through Cloudflare Tunnel hostnames? [Y/n]: " CONFIGURE_INGRESS "Y"
 
     if [[ "$CONFIGURE_INGRESS" =~ ^[Yy]$ ]]; then
         for ((i=1; i<INDEX; i++)); do
@@ -1085,13 +1103,10 @@ EOF
                 info "Container '$cname' is already configured at https://$def_host."
             else
                 echo ""
-                read -rp "Expose '$cname' via Cloudflare at https://$def_host -> http://$cname:$def_port? [Y/n]: " EXPOSE_C
-                EXPOSE_C=${EXPOSE_C:-Y}
+                prompt_read "Expose '$cname' via Cloudflare at https://$def_host -> http://$cname:$def_port? [Y/n]: " EXPOSE_C "Y"
                 if [[ "$EXPOSE_C" =~ ^[Yy]$ ]]; then
-                    read -rp "Enter public hostname for '$cname' (Default: $def_host): " C_HOST
-                    C_HOST=${C_HOST:-$def_host}
-                    read -rp "Enter internal service port for '$cname' (Default: $def_port): " C_PORT
-                    C_PORT=${C_PORT:-$def_port}
+                    prompt_read "Enter public hostname for '$cname' (Default: $def_host): " C_HOST "$def_host"
+                    prompt_read "Enter internal service port for '$cname' (Default: $def_port): " C_PORT "$def_port"
 
                     if [ -n "$C_HOST" ]; then
                         IMPORTED_INGRESS+=("  - hostname: $C_HOST"$'\n'"    service: http://$cname:$C_PORT")
@@ -1116,7 +1131,7 @@ header "Step 6: Generating Configuration Files"
 info "Writing .env configuration..."
 cat > "$SCRIPT_DIR/.env" << EOF
 # ==========================================
-# Tunlify Configuration
+# DockTun Configuration
 # ==========================================
 
 # Auth
@@ -1127,6 +1142,9 @@ ADMIN_PASSWORD=${ADMIN_PASSWORD}
 # Host Port for Web Dashboard (Access at http://localhost:${PORT})
 PORT=${PORT}
 
+# Public Hostname (optional reference)
+DOCKTUN_DOMAIN=${DOCKTUN_DOMAIN}
+
 # Tunnel Configuration
 TUNNEL_NAME=${TUNNEL_NAME}
 TUNNEL_ID=${TUNNEL_ID}
@@ -1134,10 +1152,10 @@ TUNNEL_PROTOCOL=${TUNNEL_PROTOCOL:-${PREV_TUNNEL_PROTOCOL:-http2}}
 
 # Backend Service Settings
 CLOUDFLARED_CONFIG_PATH=/etc/cloudflared/config.yml
-CLOUDFLARED_CONTAINER=tunlify-cloudflared
+CLOUDFLARED_CONTAINER=docktun-cloudflared
 DB_PATH=/app/data/app.db
 LISTEN_ADDR=0.0.0.0:3001
-SELF_PATH=/opt/projects/tunlify
+SELF_PATH=/opt/projects/docktun
 PROJECTS_ROOT=./projects
 EOF
 success "Created $SCRIPT_DIR/.env"
@@ -1145,20 +1163,20 @@ success "Created $SCRIPT_DIR/.env"
 # Write cloudflared/config.yml
 info "Writing cloudflared/config.yml..."
 cat > "$SCRIPT_DIR/cloudflared/config.yml" << EOF
-# Tunlify managed cloudflared config
-# Managed by Tunlify. Edit via the dashboard or manually here.
+# DockTun managed cloudflared config
+# Managed by DockTun. Edit via the dashboard or manually here.
 
 tunnel: ${TUNNEL_ID}
 credentials-file: /etc/cloudflared/credentials.json
 protocol: http2
 
 ingress:
-  - hostname: ${TUNLIFY_DOMAIN}
-    service: http://tunlify-frontend:80
+  - hostname: ${DOCKTUN_DOMAIN}
+    service: http://docktun-frontend:80
 EOF
 
 declare -A WRITTEN_HOSTS
-WRITTEN_HOSTS["$TUNLIFY_DOMAIN"]=1
+WRITTEN_HOSTS["$DOCKTUN_DOMAIN"]=1
 
 # Append imported container ingress rules (deduplicated)
 for rule in "${IMPORTED_INGRESS[@]}"; do
@@ -1210,15 +1228,15 @@ chmod 644 "$SCRIPT_DIR/cloudflared/credentials.json" "$SCRIPT_DIR/cloudflared/co
 [ -f "$SCRIPT_DIR/data/app.db" ] && chmod 644 "$SCRIPT_DIR/data/app.db" 2>/dev/null || true
 
 # ------------------------------------------------------------------------------
-# 7. Launch Tunlify Containers
+# 7. Launch DockTun Containers
 # ------------------------------------------------------------------------------
-header "Step 7: Launching Tunlify Stack"
+header "Step 7: Launching DockTun Stack"
 
 info "Building and launching containers via $DOCKER_COMPOSE_CMD..."
 $DOCKER_COMPOSE_CMD down 2>/dev/null || true
 if ! $DOCKER_COMPOSE_CMD up -d --build; then
     echo ""
-    error "Failed to start Tunlify containers with Docker Compose!"
+    error "Failed to start DockTun containers with Docker Compose!"
     echo -e "${C_YELLOW}Please check the Docker error output above.${C_RESET}"
     exit 1
 fi
@@ -1247,10 +1265,10 @@ HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
 # ------------------------------------------------------------------------------
 header "Installation & Deployment Complete!"
 
-echo -e "${C_GREEN}${C_BOLD}Tunlify is now running!${C_RESET}\n"
+echo -e "${C_GREEN}${C_BOLD}DockTun is now running!${C_RESET}\n"
 echo -e "  ${C_BOLD}Local Web Dashboard:${C_RESET}     ${C_CYAN}http://${HOST_IP}:${PORT}${C_RESET}"
-if [ -n "$TUNLIFY_DOMAIN" ]; then
-    echo -e "  ${C_BOLD}Public Tunnel URL:${C_RESET}       ${C_CYAN}https://${TUNLIFY_DOMAIN}${C_RESET}"
+if [ -n "$DOCKTUN_DOMAIN" ]; then
+    echo -e "  ${C_BOLD}Public Tunnel URL:${C_RESET}       ${C_CYAN}https://${DOCKTUN_DOMAIN}${C_RESET}"
 fi
 echo -e "  ${C_BOLD}Admin Username:${C_RESET}          ${C_YELLOW}${ADMIN_USERNAME}${C_RESET}"
 echo -e "  ${C_BOLD}Admin Password:${C_RESET}          ${C_YELLOW}${ADMIN_PASSWORD}${C_RESET}"
@@ -1272,4 +1290,4 @@ echo -e "  Restart stack:      ${C_CYAN}$DOCKER_COMPOSE_CMD restart${C_RESET}"
 echo -e "  Stop stack:         ${C_CYAN}$DOCKER_COMPOSE_CMD down${C_RESET}"
 echo -e "  cloudflared CLI:    ${C_CYAN}cloudflared tunnel list${C_RESET}"
 echo ""
-success "Enjoy managing your Cloudflare Tunnel with Tunlify!"
+success "Enjoy managing your Cloudflare Tunnel with DockTun!"

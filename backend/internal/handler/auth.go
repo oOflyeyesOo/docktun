@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/luzyver/tunlify/internal/config"
-	"github.com/luzyver/tunlify/internal/db"
-	"github.com/luzyver/tunlify/internal/service"
+	"github.com/luzyver/docktun/internal/config"
+	"github.com/luzyver/docktun/internal/db"
+	"github.com/luzyver/docktun/internal/service"
 	"golang.org/x/crypto/bcrypt"
 )
 

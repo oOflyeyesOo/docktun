@@ -8,7 +8,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
-	"github.com/luzyver/tunlify/internal/ws"
+	"github.com/luzyver/docktun/internal/ws"
 )
 
 var upgrader = websocket.Upgrader{

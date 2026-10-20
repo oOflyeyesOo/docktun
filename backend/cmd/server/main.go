@@ -12,12 +12,12 @@ import (
   "github.com/go-chi/chi/v5"
   chimw "github.com/go-chi/chi/v5/middleware"
   "github.com/go-chi/cors"
-  "github.com/luzyver/tunlify/internal/config"
-  "github.com/luzyver/tunlify/internal/db"
-  "github.com/luzyver/tunlify/internal/handler"
-  "github.com/luzyver/tunlify/internal/middleware"
-  "github.com/luzyver/tunlify/internal/service"
-  "github.com/luzyver/tunlify/internal/ws"
+  "github.com/luzyver/docktun/internal/config"
+  "github.com/luzyver/docktun/internal/db"
+  "github.com/luzyver/docktun/internal/handler"
+  "github.com/luzyver/docktun/internal/middleware"
+  "github.com/luzyver/docktun/internal/service"
+  "github.com/luzyver/docktun/internal/ws"
 )
 
 func main() {
@@ -38,6 +38,7 @@ func main() {
   cfdSvc := service.NewCloudflared(cfg, hub)
   cfdSvc.Logs()
   auditSvc := service.NewAuditLogger(database)
+  authHandler := handler.NewAuth(cfg, database, auditSvc)
   configSvc := service.NewConfigManager(cfg, database)
   configSvc.EnsureInitialBackup()
 
@@ -60,7 +61,6 @@ func main() {
   dockerContainersSvc := service.NewDockerContainers(cfg, database, configSvc, cfdSvc)
   meshSvc := service.NewMeshService(dataDir)
 
-  authHandler := handler.NewAuth(cfg, database, auditSvc)
   statusHandler := handler.NewStatus(cfdSvc, cfg)
   controlHandler := handler.NewControl(cfdSvc, auditSvc)
   logsHandler := handler.NewLogs(hub, cfg.JWTSecret)

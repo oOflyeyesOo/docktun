@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/luzyver/tunlify/internal/config"
-	"github.com/luzyver/tunlify/internal/db"
+	"github.com/luzyver/docktun/internal/config"
+	"github.com/luzyver/docktun/internal/db"
 	"gopkg.in/yaml.v3"
 )
 
@@ -177,6 +177,14 @@ func (s *DockerContainers) List() ([]Container, error) {
 				c.Network = st.net
 				c.BlockIO = st.block
 				c.PIDs = st.pids
+			} else if len(c.ID) >= 12 {
+				if st, ok := statsMap[c.ID[:12]]; ok {
+					c.CPU = st.cpu
+					c.Memory = st.mem
+					c.Network = st.net
+					c.BlockIO = st.block
+					c.PIDs = st.pids
+				}
 			}
 		}
 
@@ -227,7 +235,7 @@ func (s *DockerContainers) collectAllStats() map[string]liveStats {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}")
+	cmd := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format", "{{.ID}}\t{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}")
 	out, err := cmd.Output()
 	if err != nil {
 		return statsMap
@@ -240,17 +248,27 @@ func (s *DockerContainers) collectAllStats() map[string]liveStats {
 			continue
 		}
 		parts := strings.Split(line, "\t")
-		if len(parts) < 6 {
+		if len(parts) < 7 {
 			continue
 		}
-		name := strings.TrimPrefix(strings.TrimSpace(parts[0]), "/")
-		pids, _ := strconv.Atoi(strings.TrimSpace(parts[5]))
-		statsMap[name] = liveStats{
-			cpu:   strings.TrimSpace(parts[1]),
-			mem:   strings.TrimSpace(parts[2]),
-			net:   strings.TrimSpace(parts[3]),
-			block: strings.TrimSpace(parts[4]),
+		id := strings.TrimSpace(parts[0])
+		name := strings.TrimPrefix(strings.TrimSpace(parts[1]), "/")
+		pids, _ := strconv.Atoi(strings.TrimSpace(parts[6]))
+		st := liveStats{
+			cpu:   strings.TrimSpace(parts[2]),
+			mem:   strings.TrimSpace(parts[3]),
+			net:   strings.TrimSpace(parts[4]),
+			block: strings.TrimSpace(parts[5]),
 			pids:  pids,
+		}
+		if name != "" {
+			statsMap[name] = st
+		}
+		if id != "" {
+			statsMap[id] = st
+			if len(id) > 12 {
+				statsMap[id[:12]] = st
+			}
 		}
 	}
 	return statsMap

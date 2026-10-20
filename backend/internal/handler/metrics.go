@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/luzyver/tunlify/internal/config"
+	"github.com/luzyver/docktun/internal/config"
 )
 
 type Metrics struct {

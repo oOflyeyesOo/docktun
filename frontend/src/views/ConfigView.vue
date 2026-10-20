@@ -37,8 +37,8 @@ function parseYaml(content: string) {
 }
 
 function addRule() { rules.value.push({ hostname: '', service: '', noTLSVerify: false }) }
-function removeRule(i: number) { if (isTunlifyRule(rules.value[i])) return; rules.value.splice(i, 1) }
-function isTunlifyRule(rule: IngressRule) { return rule.service.includes('tunlify-frontend') }
+function removeRule(i: number) { if (isDocktunRule(rules.value[i])) return; rules.value.splice(i, 1) }
+function isDocktunRule(rule: IngressRule) { return rule.service.includes('docktun-frontend') || rule.service.includes('tunlify-frontend') }
 
 function generateYaml(): string {
   let y = `tunnel: ${tunnelId.value}\ncredentials-file: /etc/cloudflared/credentials.json\nprotocol: ${protocol.value || 'http2'}\n\ningress:\n`
@@ -82,19 +82,19 @@ loadConfig()
         <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
             <label class="text-[10px] text-muted uppercase tracking-widest block mb-1">Hostname</label>
-            <input v-model="rule.hostname" placeholder="app.example.com" class="cyber-input" :disabled="isTunlifyRule(rule)" :class="isTunlifyRule(rule) && 'opacity-50 cursor-not-allowed'" />
+            <input v-model="rule.hostname" placeholder="app.example.com" class="cyber-input" :disabled="isDocktunRule(rule)" :class="isDocktunRule(rule) && 'opacity-50 cursor-not-allowed'" />
           </div>
           <div>
             <label class="text-[10px] text-muted uppercase tracking-widest block mb-1">Service</label>
-            <input v-model="rule.service" placeholder="http://container:port" class="cyber-input" :disabled="isTunlifyRule(rule)" :class="isTunlifyRule(rule) && 'opacity-50 cursor-not-allowed'" />
+            <input v-model="rule.service" placeholder="http://container:port" class="cyber-input" :disabled="isDocktunRule(rule)" :class="isDocktunRule(rule) && 'opacity-50 cursor-not-allowed'" />
           </div>
           <label class="flex items-center gap-2 text-xs text-muted col-span-full">
-            <input type="checkbox" v-model="rule.noTLSVerify" class="accent-neon" :disabled="isTunlifyRule(rule)" />
+            <input type="checkbox" v-model="rule.noTLSVerify" class="accent-neon" :disabled="isDocktunRule(rule)" />
             <span class="uppercase tracking-wider">no-tls-verify</span>
-            <span v-if="isTunlifyRule(rule)" class="cyber-badge border-magenta text-magenta ml-2">LOCKED</span>
+            <span v-if="isDocktunRule(rule)" class="cyber-badge border-magenta text-magenta ml-2">LOCKED</span>
           </label>
         </div>
-        <button v-if="!isTunlifyRule(rule)" @click="removeRule(i)" class="cyber-btn-danger !px-2 !py-2 mt-5">
+        <button v-if="!isDocktunRule(rule)" @click="removeRule(i)" class="cyber-btn-danger !px-2 !py-2 mt-5">
           <Trash2 class="w-4 h-4" :stroke-width="1.5" />
         </button>
       </div>

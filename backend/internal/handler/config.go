@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/luzyver/tunlify/internal/service"
+	"github.com/luzyver/docktun/internal/service"
 )
 
 type Config struct {

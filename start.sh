@@ -2,7 +2,7 @@
 set -e
 
 echo "========================================================"
-echo "  Starting Tunlify (Cloudflare Tunnel & Compose Web UI)"
+echo "  Starting DockTun (Cloudflare Tunnel & Docker Manager)"
 echo "========================================================"
 
 if ! command -v docker &> /dev/null; then
@@ -16,8 +16,8 @@ docker compose up -d --build
 
 echo ""
 echo "========================================================"
-echo "  Tunlify is running!"
+echo "  DockTun is running!"
 echo "  URL:      http://localhost:8080"
 echo "  Username: admin"
-echo "  Password: adminpassword123"
+echo "  Password: [Configured in .env]"
 echo "========================================================"

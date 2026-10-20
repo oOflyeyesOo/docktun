@@ -8,9 +8,9 @@ const { apiFetch } = useApi()
 const mode = ref<'none' | 'public' | 'tailscale' | 'wireguard'>('public')
 const tunnelName = ref('')
 const hostname = ref('')
-const service = ref('http://tunlify-frontend:80')
+const service = ref('http://docktun-frontend:80')
 const tailscaleAuthKey = ref('')
-const tailscaleHostname = ref('tunlify-node')
+const tailscaleHostname = ref('docktun-node')
 const tailscaleLoginServer = ref('https://controlplane.tailscale.com')
 const wireguardPrivateKey = ref('')
 const wireguardInterface = ref('wg0')
@@ -27,11 +27,11 @@ async function loadMesh() {
       tunnelName.value = cfg.tunnel_name || ''
       if (cfg.public) {
         hostname.value = cfg.public.hostname || ''
-        service.value = cfg.public.service || 'http://tunlify-frontend:80'
+        service.value = cfg.public.service || 'http://docktun-frontend:80'
       }
       if (cfg.tailscale) {
         tailscaleAuthKey.value = cfg.tailscale.auth_key || ''
-        tailscaleHostname.value = cfg.tailscale.hostname || 'tunlify-node'
+        tailscaleHostname.value = cfg.tailscale.hostname || 'docktun-node'
         tailscaleLoginServer.value = cfg.tailscale.login_server || 'https://controlplane.tailscale.com'
       }
       if (cfg.wireguard) {
@@ -164,7 +164,7 @@ onMounted(() => loadMesh())
         <div class="grid gap-4 md:grid-cols-2">
           <div>
             <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Tunnel Name</label>
-            <input v-model="tunnelName" class="cyber-input" placeholder="tunlify-tunnel" />
+            <input v-model="tunnelName" class="cyber-input" placeholder="docktun-tunnel" />
           </div>
           <div>
             <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Default Public Hostname</label>
@@ -172,7 +172,7 @@ onMounted(() => loadMesh())
           </div>
           <div class="md:col-span-2">
             <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Default Upstream Service Target</label>
-            <input v-model="service" class="cyber-input" placeholder="http://tunlify-frontend:80" />
+            <input v-model="service" class="cyber-input" placeholder="http://docktun-frontend:80" />
           </div>
         </div>
       </div>
@@ -189,7 +189,7 @@ onMounted(() => loadMesh())
           </div>
           <div>
             <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Tailnet Node Hostname</label>
-            <input v-model="tailscaleHostname" class="cyber-input" placeholder="tunlify-node" />
+            <input v-model="tailscaleHostname" class="cyber-input" placeholder="docktun-node" />
           </div>
           <div>
             <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Control Plane / Headscale Server</label>

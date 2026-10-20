@@ -77,7 +77,7 @@ fi
 
 ensure_docker_compose
 
-info "Pulling and rebuilding the Tunlify stack..."
+info "Pulling and rebuilding the DockTun stack..."
 "${COMPOSE_CMD[@]}" pull || true
 "${COMPOSE_CMD[@]}" up -d --build --remove-orphans
 

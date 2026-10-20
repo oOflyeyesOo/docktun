@@ -832,7 +832,7 @@ onMounted(() => {
 
         <div class="p-5 flex-1 overflow-y-auto space-y-4">
           <p class="text-xs text-muted font-mono leading-relaxed">
-            Execute any <code class="text-neon">docker run</code> command. Tunlify can automatically convert it into a managed Compose stack so you can edit its Compose file and .env later!
+            Execute any <code class="text-neon">docker run</code> command. DockTun can automatically convert it into a managed Compose stack so you can edit its Compose file and .env later!
           </p>
 
           <!-- Command Input -->
@@ -868,7 +868,7 @@ onMounted(() => {
                 <span class="text-xs font-mono font-bold text-gray-200">Convert to Compose Stack</span>
               </div>
               <p class="text-[11px] text-muted font-mono mt-1 ml-5">
-                Generates a docker-compose.yml in Tunlify. Best for editing compose files, .env, and full management.
+                Generates a docker-compose.yml in DockTun. Best for editing compose files, .env, and full management.
               </p>
             </div>
 
@@ -891,7 +891,7 @@ onMounted(() => {
             </label>
             <label class="flex items-center gap-2 cursor-pointer text-gray-300">
               <input type="checkbox" v-model="dockerRunCreateProject" class="accent-neon" />
-              <span>Register container as a Tunlify Project</span>
+              <span>Register container as a DockTun Project</span>
             </label>
           </div>
 

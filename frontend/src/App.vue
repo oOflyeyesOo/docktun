@@ -17,8 +17,8 @@ onMounted(() => {
   <div class="flex h-screen bg-slate-950 text-slate-100">
     <div v-if="showSidebar" class="fixed inset-x-0 top-0 z-40 flex items-center justify-between border-b border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur lg:hidden">
       <div class="flex items-center gap-2">
-        <img src="/icon.png" alt="Tunlify" class="h-5 w-5" />
-        <span class="text-sm font-medium tracking-[0.14em] text-slate-200">TUNLIFY</span>
+        <img src="/icon.png" alt="DockTun" class="h-5 w-5" />
+        <span class="text-sm font-medium tracking-[0.14em] text-slate-200">DOCKTUN</span>
       </div>
       <button @click="mobileOpen = !mobileOpen" class="text-slate-200">
         <Menu v-if="!mobileOpen" class="h-5 w-5" />

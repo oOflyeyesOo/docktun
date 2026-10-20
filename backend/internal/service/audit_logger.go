@@ -1,6 +1,6 @@
 package service
 
-import "github.com/luzyver/tunlify/internal/db"
+import "github.com/luzyver/docktun/internal/db"
 
 type AuditEntry struct {
 	ID        int    `json:"id"`

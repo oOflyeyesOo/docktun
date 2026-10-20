@@ -1,7 +1,7 @@
 @echo off
 setlocal
 echo ========================================================
-echo   Starting Tunlify (Cloudflare Tunnel & Compose Web UI)
+echo   Starting DockTun (Cloudflare Tunnel & Docker Manager)
 echo ========================================================
 
 where docker >nul 2>&1
@@ -18,14 +18,14 @@ docker compose up -d --build
 if %ERRORLEVEL% equ 0 (
     echo.
     echo ========================================================
-    echo   Tunlify is running!
+    echo   DockTun is running!
     echo   URL:      http://localhost:8080
     echo   Username: admin
-    echo   Password: adminpassword123
+    echo   Password: [Configured in .env]
     echo ========================================================
 ) else (
     echo.
-    echo [ERROR] Failed to start Tunlify containers. Make sure Docker Desktop is running.
+    echo [ERROR] Failed to start DockTun containers. Make sure Docker is running.
 )
 
 pause

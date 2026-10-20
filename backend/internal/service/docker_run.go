@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/luzyver/tunlify/internal/db"
+	"github.com/luzyver/docktun/internal/db"
 )
 
 type DockerRunJob struct {
@@ -218,7 +218,7 @@ func (s *DockerRunService) executeAsCompose(jobID int, parsed *ParsedDockerRun, 
 		exitCode = 1
 		s.appendLine(jobID, "[ERROR] Compose completed with error: "+err.Error())
 	} else {
-		s.appendLine(jobID, "[SUCCESS] Container started and running under Tunlify management!")
+		s.appendLine(jobID, "[SUCCESS] Container started and running under DockTun management!")
 	}
 	s.markDone(jobID, exitCode, "")
 

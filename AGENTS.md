@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Tunlify is a self-hosted web dashboard to manage and monitor Cloudflare Tunnel (cloudflared) and Docker Compose projects. It provides tunnel control, realtime logs, config editing, health checks, metrics, notifications, and project deployment through a modern web UI.
+DockTun is a self-hosted web dashboard to manage and monitor Cloudflare Tunnel (cloudflared) and Docker Compose projects. It provides tunnel control, realtime logs, config editing, health checks, metrics, notifications, and project deployment through a modern web UI.
 
 ## Architecture
 
@@ -62,7 +62,7 @@ docker compose up -d
 ## Environment Variables
 
 Required: `JWT_SECRET`, `ADMIN_PASSWORD`
-Optional with defaults: `ADMIN_USERNAME` (admin), `CLOUDFLARED_CONFIG_PATH` (/etc/cloudflared/config.yml), `CLOUDFLARED_CONTAINER` (tunlify-cloudflared), `DB_PATH` (/app/data/app.db), `LISTEN_ADDR` (0.0.0.0:3001)
+Optional with defaults: `ADMIN_USERNAME` (admin), `CLOUDFLARED_CONFIG_PATH` (/etc/cloudflared/config.yml), `CLOUDFLARED_CONTAINER` (docktun-cloudflared), `DB_PATH` (/app/data/app.db), `LISTEN_ADDR` (0.0.0.0:3001)
 
 ## API Pattern
 

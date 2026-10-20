@@ -35,8 +35,8 @@ async function handleLogin() {
     <div class="w-full max-w-sm">
       <div class="cyber-card">
         <div class="text-center mb-8">
-          <img src="/icon.png" alt="Tunlify" class="w-12 h-12 mx-auto mb-3" />
-          <h1 class="font-display text-2xl text-neon text-glow tracking-widest animate-glitch">TUNLIFY</h1>
+          <img src="/icon.png" alt="DockTun" class="w-12 h-12 mx-auto mb-3" />
+          <h1 class="font-display text-2xl text-neon text-glow tracking-widest animate-glitch">DOCKTUN</h1>
           <p class="text-xs text-muted mt-2 tracking-wider">// AUTHENTICATE TO PROCEED</p>
         </div>
 
