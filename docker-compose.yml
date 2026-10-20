@@ -5,8 +5,7 @@ services:
     restart: unless-stopped
     command: tunnel --config /etc/cloudflared/config.yml --metrics 0.0.0.0:2000 --protocol ${TUNNEL_PROTOCOL:-http2} run
     volumes:
-      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
-      - ./cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
+      - ./cloudflared:/etc/cloudflared:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
