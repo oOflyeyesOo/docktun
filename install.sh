@@ -34,6 +34,16 @@ fi
 
 mkdir -p "$CLOUDFLARED_DIR" "$SCRIPT_DIR/data"
 
+# Guard against stale directory collisions that previously broke the installer.
+if [ -d "$CLOUDFLARED_CONFIG" ]; then
+  warn "Detected stale directory at ${CLOUDFLARED_CONFIG}. Moving it aside to preserve it."
+  mv "$CLOUDFLARED_CONFIG" "${CLOUDFLARED_CONFIG}.stale-$(date +%s)"
+fi
+if [ -d "$CLOUDFLARED_CREDS" ]; then
+  warn "Detected stale directory at ${CLOUDFLARED_CREDS}. Moving it aside to preserve it."
+  mv "$CLOUDFLARED_CREDS" "${CLOUDFLARED_CREDS}.stale-$(date +%s)"
+fi
+
 # Load existing .env if present.
 if [ -f "$ENV_FILE" ]; then
   set -a
