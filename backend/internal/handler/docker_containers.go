@@ -131,3 +131,42 @@ func (h *DockerContainers) Logs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"logs": logs})
 }
+
+func (h *DockerContainers) ConnectNetwork(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Network string `json:"network"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := h.svc.ConnectNetwork(id, req.Network); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "action": "connect_network"})
+}
+
+func (h *DockerContainers) DisconnectNetwork(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Network string `json:"network"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := h.svc.DisconnectNetwork(id, req.Network); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "action": "disconnect_network"})
+}
+
+func (h *DockerContainers) EnsureProject(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	projID, err := h.svc.EnsureProjectForContainer(id)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "project_id": projID})
+}

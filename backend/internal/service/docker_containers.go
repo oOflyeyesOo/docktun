@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,41 +36,50 @@ type ContainerMount struct {
 }
 
 type Container struct {
-	ID           string           `json:"id"`
-	Name         string           `json:"name"`
-	Image        string           `json:"image"`
-	Status       string           `json:"status"`
-	State        string           `json:"state"`
-	Ports        string           `json:"ports"`
-	Command      string           `json:"command"`
-	Created      string           `json:"created"`
-	Running      bool             `json:"running"`
-	ExposureMode string           `json:"exposure_mode"`
-	Hostname     string           `json:"hostname,omitempty"`
-	Target       string           `json:"target,omitempty"`
-	PrivateType  string           `json:"private_type,omitempty"`
-	PrivateHost  string           `json:"private_host,omitempty"`
-	PrivatePort  int              `json:"private_port,omitempty"`
-	Notes        string           `json:"notes,omitempty"`
-	CPU          string           `json:"cpu,omitempty"`
-	Memory       string           `json:"memory,omitempty"`
-	Network      string           `json:"network,omitempty"`
-	BlockIO      string           `json:"block_io,omitempty"`
-	PIDs         int              `json:"pids,omitempty"`
-	RestartCount int              `json:"restart_count,omitempty"`
-	Uptime       string           `json:"uptime,omitempty"`
-	Exposure     ExposureSettings `json:"exposure,omitempty"`
+	ID                     string           `json:"id"`
+	Name                   string           `json:"name"`
+	Image                  string           `json:"image"`
+	Status                 string           `json:"status"`
+	State                  string           `json:"state"`
+	Ports                  string           `json:"ports"`
+	Command                string           `json:"command"`
+	Created                string           `json:"created"`
+	Running                bool             `json:"running"`
+	ExposureMode           string           `json:"exposure_mode"`
+	Hostname               string           `json:"hostname,omitempty"`
+	Target                 string           `json:"target,omitempty"`
+	PrivateType            string           `json:"private_type,omitempty"`
+	PrivateHost            string           `json:"private_host,omitempty"`
+	PrivatePort            int              `json:"private_port,omitempty"`
+	Notes                  string           `json:"notes,omitempty"`
+	CPU                    string           `json:"cpu,omitempty"`
+	Memory                 string           `json:"memory,omitempty"`
+	Network                string           `json:"network,omitempty"`
+	BlockIO                string           `json:"block_io,omitempty"`
+	PIDs                   int              `json:"pids,omitempty"`
+	RestartCount           int              `json:"restart_count,omitempty"`
+	Uptime                 string           `json:"uptime,omitempty"`
+	Exposure               ExposureSettings `json:"exposure,omitempty"`
+	ProjectID              int              `json:"project_id,omitempty"`
+	ProjectName            string           `json:"project_name,omitempty"`
+	ProjectPath            string           `json:"project_path,omitempty"`
+	ConnectedToCloudflared bool             `json:"connected_to_cloudflared"`
 }
 
 type ContainerDetail struct {
 	Container
-	Env        []string         `json:"env,omitempty"`
-	Mounts     []ContainerMount `json:"mounts,omitempty"`
-	IPAddress  string           `json:"ip_address,omitempty"`
-	Gateway    string           `json:"gateway,omitempty"`
-	MacAddress string           `json:"mac_address,omitempty"`
-	Networks   []string         `json:"networks,omitempty"`
-	ExitCode   int              `json:"exit_code,omitempty"`
+	ProjectID              int              `json:"project_id,omitempty"`
+	ProjectName            string           `json:"project_name,omitempty"`
+	ProjectPath            string           `json:"project_path,omitempty"`
+	ComposeFile            string           `json:"compose_file,omitempty"`
+	Env                    []string         `json:"env,omitempty"`
+	Mounts                 []ContainerMount `json:"mounts,omitempty"`
+	IPAddress              string           `json:"ip_address,omitempty"`
+	Gateway                string           `json:"gateway,omitempty"`
+	MacAddress             string           `json:"mac_address,omitempty"`
+	Networks               []string         `json:"networks,omitempty"`
+	ExitCode               int              `json:"exit_code,omitempty"`
+	ConnectedToCloudflared bool             `json:"connected_to_cloudflared"`
 }
 
 type cfIngressRule struct {
@@ -109,11 +120,42 @@ type liveStats struct {
 	pids    int
 }
 
+type projRef struct {
+	ID   int
+	Name string
+	Path string
+}
+
+func (s *DockerContainers) loadAllProjectsMap() (map[string]projRef, map[string]projRef) {
+	byPath := make(map[string]projRef)
+	byName := make(map[string]projRef)
+	if s.db == nil {
+		return byPath, byName
+	}
+	rows, err := s.db.Query(`SELECT id, name, path FROM projects`)
+	if err != nil {
+		return byPath, byName
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p projRef
+		if err := rows.Scan(&p.ID, &p.Name, &p.Path); err == nil {
+			if p.Path != "" {
+				byPath[p.Path] = p
+			}
+			if p.Name != "" {
+				byName[strings.ToLower(p.Name)] = p
+			}
+		}
+	}
+	return byPath, byName
+}
+
 func (s *DockerContainers) List() ([]Container, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "docker", "ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.State}}\t{{.Ports}}\t{{.RunningFor}}\t{{.Command}}")
+	cmd := exec.CommandContext(ctx, "docker", "ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.State}}\t{{.Ports}}\t{{.RunningFor}}\t{{.Command}}\t{{.Networks}}\t{{.Labels}}")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("docker ps failed: %w", err)
@@ -127,6 +169,7 @@ func (s *DockerContainers) List() ([]Container, error) {
 	statsMap := s.collectAllStats()
 	ingressMap := s.loadCloudflareIngressMap()
 	dbExposures := s.loadAllExposuresFromDB()
+	projectsByPath, projectsByName := s.loadAllProjectsMap()
 
 	rows := strings.Split(text, "\n")
 	containers := make([]Container, 0, len(rows))
@@ -137,7 +180,7 @@ func (s *DockerContainers) List() ([]Container, error) {
 			continue
 		}
 
-		fields := strings.SplitN(row, "\t", 8)
+		fields := strings.SplitN(row, "\t", 10)
 		if len(fields) < 6 {
 			continue
 		}
@@ -163,6 +206,44 @@ func (s *DockerContainers) List() ([]Container, error) {
 		}
 		c.Name = strings.TrimPrefix(c.Name, "/")
 		c.Running = c.Running || strings.HasPrefix(strings.ToLower(c.Status), "up ")
+
+		if len(fields) >= 9 {
+			networksStr := strings.TrimSpace(fields[8])
+			c.ConnectedToCloudflared = strings.Contains(networksStr, "cloudflared")
+		}
+
+		if len(fields) >= 10 {
+			labelsStr := strings.TrimSpace(fields[9])
+			var compProj, compDir string
+			for _, part := range strings.Split(labelsStr, ",") {
+				kv := strings.SplitN(part, "=", 2)
+				if len(kv) == 2 {
+					k := strings.TrimSpace(kv[0])
+					v := strings.TrimSpace(kv[1])
+					if k == "com.docker.compose.project" {
+						compProj = v
+					} else if k == "com.docker.compose.project.working_dir" {
+						compDir = v
+					}
+				}
+			}
+			if p, ok := projectsByPath[compDir]; ok {
+				c.ProjectID = p.ID
+				c.ProjectName = p.Name
+				c.ProjectPath = p.Path
+			} else if p, ok := projectsByName[strings.ToLower(compProj)]; ok {
+				c.ProjectID = p.ID
+				c.ProjectName = p.Name
+				c.ProjectPath = p.Path
+			}
+		}
+		if c.ProjectID == 0 {
+			if p, ok := projectsByName[strings.ToLower(c.Name)]; ok {
+				c.ProjectID = p.ID
+				c.ProjectName = p.Name
+				c.ProjectPath = p.Path
+			}
+		}
 
 		if c.Running {
 			if st, ok := statsMap[c.Name]; ok {
@@ -443,7 +524,174 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 	detail.Networks = nets
 	detail.ExitCode = inspect.State.ExitCode
 
+	_, hasCloudflared := inspect.NetworkSettings.Networks["cloudflared"]
+	detail.ConnectedToCloudflared = hasCloudflared
+	detail.Container.ConnectedToCloudflared = hasCloudflared
+
+	compProj := inspect.Config.Labels["com.docker.compose.project"]
+	compDir := inspect.Config.Labels["com.docker.compose.project.working_dir"]
+	compFile := inspect.Config.Labels["com.docker.compose.project.config_files"]
+	detail.ComposeFile = compFile
+
+	projectsByPath, projectsByName := s.loadAllProjectsMap()
+	if p, ok := projectsByPath[compDir]; ok {
+		detail.ProjectID = p.ID
+		detail.ProjectName = p.Name
+		detail.ProjectPath = p.Path
+		detail.Container.ProjectID = p.ID
+		detail.Container.ProjectName = p.Name
+		detail.Container.ProjectPath = p.Path
+	} else if p, ok := projectsByName[strings.ToLower(compProj)]; ok {
+		detail.ProjectID = p.ID
+		detail.ProjectName = p.Name
+		detail.ProjectPath = p.Path
+		detail.Container.ProjectID = p.ID
+		detail.Container.ProjectName = p.Name
+		detail.Container.ProjectPath = p.Path
+	} else if p, ok := projectsByName[strings.ToLower(c.Name)]; ok {
+		detail.ProjectID = p.ID
+		detail.ProjectName = p.Name
+		detail.ProjectPath = p.Path
+		detail.Container.ProjectID = p.ID
+		detail.Container.ProjectName = p.Name
+		detail.Container.ProjectPath = p.Path
+	}
+
+	// Auto-register project if working_dir exists on host disk
+	if detail.ProjectID == 0 && compDir != "" && s.db != nil {
+		pName := compProj
+		if pName == "" {
+			pName = filepath.Base(compDir)
+		}
+		_ = s.db.Exec(`INSERT OR IGNORE INTO projects (name, path) VALUES (?, ?)`, pName, compDir)
+		var newID int
+		_ = s.db.QueryRow(`SELECT id FROM projects WHERE path = ?`, compDir).Scan(&newID)
+		if newID > 0 {
+			detail.ProjectID = newID
+			detail.ProjectName = pName
+			detail.ProjectPath = compDir
+			detail.Container.ProjectID = newID
+			detail.Container.ProjectName = pName
+			detail.Container.ProjectPath = compDir
+		}
+	}
+
 	return detail, nil
+}
+
+func (s *DockerContainers) ConnectNetwork(id string, network string) error {
+	if network == "" {
+		network = "cloudflared"
+	}
+	cmd := exec.Command("docker", "network", "connect", network, id)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		outStr := strings.TrimSpace(string(out))
+		if strings.Contains(outStr, "already exists in network") {
+			return nil
+		}
+		return fmt.Errorf("connect network failed: %s", outStr)
+	}
+	return nil
+}
+
+func (s *DockerContainers) DisconnectNetwork(id string, network string) error {
+	if network == "" {
+		network = "cloudflared"
+	}
+	cmd := exec.Command("docker", "network", "disconnect", network, id)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("disconnect network failed: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
+	detail, err := s.Details(id)
+	if err != nil {
+		return 0, err
+	}
+	if detail.ProjectID > 0 {
+		return detail.ProjectID, nil
+	}
+
+	cname := strings.TrimPrefix(detail.Name, "/")
+	if cname == "" {
+		cname = id
+	}
+
+	destDir := filepath.Join("/opt/projects", cname)
+	if s.cfg.SelfPath != "" {
+		destDir = filepath.Join(filepath.Dir(s.cfg.SelfPath), cname)
+	}
+
+	_ = os.MkdirAll(destDir, 0755)
+
+	composePath := filepath.Join(destDir, "docker-compose.yml")
+	if _, err := os.Stat(composePath); os.IsNotExist(err) {
+		img := detail.Image
+		if img == "" {
+			img = "alpine"
+		}
+		var b strings.Builder
+		b.WriteString("services:\n")
+		b.WriteString(fmt.Sprintf("  %s:\n", cname))
+		b.WriteString(fmt.Sprintf("    image: %s\n", img))
+		b.WriteString(fmt.Sprintf("    container_name: %s\n", cname))
+		b.WriteString("    restart: unless-stopped\n")
+		if detail.Command != "" {
+			b.WriteString(fmt.Sprintf("    command: %s\n", detail.Command))
+		}
+		if len(detail.Mounts) > 0 {
+			b.WriteString("    volumes:\n")
+			for _, m := range detail.Mounts {
+				if m.Source != "" && m.Destination != "" {
+					mode := "rw"
+					if !m.RW {
+						mode = "ro"
+					}
+					b.WriteString(fmt.Sprintf("      - %s:%s:%s\n", m.Source, m.Destination, mode))
+				}
+			}
+		}
+		if len(detail.Env) > 0 {
+			b.WriteString("    environment:\n")
+			for _, e := range detail.Env {
+				if !strings.Contains(e, "********") && !strings.HasPrefix(e, "PATH=") {
+					b.WriteString(fmt.Sprintf("      - %s\n", e))
+				}
+			}
+		}
+		b.WriteString("    networks:\n")
+		b.WriteString("      - cloudflared\n\n")
+		b.WriteString("networks:\n")
+		b.WriteString("  cloudflared:\n")
+		b.WriteString("    external: true\n")
+
+		_ = os.WriteFile(composePath, []byte(b.String()), 0644)
+	}
+
+	envPath := filepath.Join(destDir, ".env")
+	if _, err := os.Stat(envPath); os.IsNotExist(err) {
+		_ = os.WriteFile(envPath, []byte("# Environment variables for "+cname+"\n"), 0644)
+	}
+
+	if s.db != nil {
+		res, err := s.db.Exec(`INSERT OR IGNORE INTO projects (name, path) VALUES (?, ?)`, cname, destDir)
+		if err != nil {
+			return 0, err
+		}
+		var projID int
+		_ = s.db.QueryRow(`SELECT id FROM projects WHERE path = ?`, destDir).Scan(&projID)
+		if projID == 0 {
+			lastID, _ := res.LastInsertId()
+			projID = int(lastID)
+		}
+		return projID, nil
+	}
+
+	return 0, fmt.Errorf("database unavailable to register project")
 }
 
 func (s *DockerContainers) Start(id string) error { return dockerCommand("start", id) }
@@ -502,14 +750,19 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 		settings.Mode = "internal"
 	}
 
-	// 1. Update Cloudflare ingress if mode is public or if changing away from public
+	// 1. If public mode, automatically connect container to cloudflared network
+	if settings.Mode == "public" {
+		_ = s.ConnectNetwork(name, "cloudflared")
+	}
+
+	// 2. Update Cloudflare ingress if mode is public or if changing away from public
 	if s.configMgr != nil {
 		if err := s.syncCloudflareIngress(name, settings); err != nil {
 			return fmt.Errorf("sync ingress config: %w", err)
 		}
 	}
 
-	// 2. Persist in database
+	// 3. Persist in database
 	return s.saveExposureToDB(name, settings)
 }
 
