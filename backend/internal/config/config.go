@@ -13,6 +13,8 @@ type Config struct {
 	TunnelName          string `envconfig:"TUNNEL_NAME" default:""`
 	MetricsAddr         string `envconfig:"CLOUDFLARED_METRICS" default:"http://tunlify-cloudflared:2000/metrics"`
 	SelfPath            string `envconfig:"SELF_PATH" default:""`
+	MeshMode            string `envconfig:"MESH_MODE" default:"none"`
+	MeshConfigPath      string `envconfig:"MESH_CONFIG_PATH" default:"/etc/docktun/mesh.json"`
 }
 
 func Load() (*Config, error) {
