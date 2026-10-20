@@ -53,6 +53,7 @@ func main() {
 	}))
 
 	projectsSvc := service.NewProjects(database, cfg.SelfPath)
+	dockerRunSvc := service.NewDockerRun(database, projectsSvc)
 
 	authHandler := handler.NewAuth(cfg, database, auditSvc)
 	statusHandler := handler.NewStatus(cfdSvc, cfg)
@@ -66,6 +67,7 @@ func main() {
 	settingsHandler := handler.NewSettings(database, auditSvc)
 	notifHandler := handler.NewNotifications("./data")
 	projectsHandler := handler.NewProjects(projectsSvc, auditSvc)
+	dockerRunHandler := handler.NewDockerRun(dockerRunSvc, auditSvc)
 
 	r.Post("/auth/login", authHandler.Login)
 	r.Get("/api/logs/ws", logsHandler.Stream)
@@ -108,6 +110,19 @@ func main() {
 		r.Get("/api/projects/{id}/history", projectsHandler.History)
 		r.Get("/api/projects/{id}/output", projectsHandler.Output)
 		r.Post("/api/projects/{id}/{action}", projectsHandler.Action)
+
+		r.Get("/api/projects/{id}/compose", projectsHandler.ComposeGet)
+		r.Put("/api/projects/{id}/compose", projectsHandler.ComposeSave)
+		r.Get("/api/projects/{id}/env", projectsHandler.EnvGet)
+		r.Put("/api/projects/{id}/env", projectsHandler.EnvSave)
+		r.Get("/api/projects/{id}/files", projectsHandler.FilesList)
+		r.Get("/api/projects/{id}/file", projectsHandler.FileGet)
+		r.Put("/api/projects/{id}/file", projectsHandler.FileSave)
+		r.Post("/api/projects/{id}/file", projectsHandler.FileCreate)
+		r.Delete("/api/projects/{id}/file", projectsHandler.FileDelete)
+
+		r.Post("/api/docker/run", dockerRunHandler.Run)
+		r.Get("/api/docker/run/output/{id}", dockerRunHandler.Output)
 	})
 
 	srv := &http.Server{

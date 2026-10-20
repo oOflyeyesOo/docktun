@@ -170,6 +170,193 @@ func (h *Projects) Action(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
+func (h *Projects) ComposeGet(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	filename, content, err := h.svc.GetComposeFile(id)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"filename": filename,
+		"content":  content,
+	})
+}
+
+func (h *Projects) ComposeSave(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	p, err := h.svc.GetByID(id)
+	if err != nil {
+		jsonError(w, "project not found", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Filename string `json:"filename"`
+		Content  string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := h.svc.SaveComposeFile(id, body.Filename, body.Content); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	userID, _ := r.Context().Value("user_id").(int)
+	h.audit.Log(userID, "project_compose_save", p.Name, r.RemoteAddr)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (h *Projects) EnvGet(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	content, err := h.svc.GetEnvFile(id)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"content": content})
+}
+
+func (h *Projects) EnvSave(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	p, err := h.svc.GetByID(id)
+	if err != nil {
+		jsonError(w, "project not found", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := h.svc.SaveEnvFile(id, body.Content); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	userID, _ := r.Context().Value("user_id").(int)
+	h.audit.Log(userID, "project_env_save", p.Name, r.RemoteAddr)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (h *Projects) FilesList(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	relPath := r.URL.Query().Get("path")
+	files, err := h.svc.ListFiles(id, relPath)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(files)
+}
+
+func (h *Projects) FileGet(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	relPath := r.URL.Query().Get("path")
+	if relPath == "" {
+		jsonError(w, "path parameter required", http.StatusBadRequest)
+		return
+	}
+	content, err := h.svc.GetFile(id, relPath)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"path":    relPath,
+		"content": content,
+	})
+}
+
+func (h *Projects) FileSave(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	p, err := h.svc.GetByID(id)
+	if err != nil {
+		jsonError(w, "project not found", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Path == "" {
+		jsonError(w, "path and content required", http.StatusBadRequest)
+		return
+	}
+	if err := h.svc.SaveFile(id, body.Path, body.Content); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	userID, _ := r.Context().Value("user_id").(int)
+	h.audit.Log(userID, "project_file_save", p.Name+": "+body.Path, r.RemoteAddr)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (h *Projects) FileCreate(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	p, err := h.svc.GetByID(id)
+	if err != nil {
+		jsonError(w, "project not found", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+		IsDir   bool   `json:"is_dir"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Path == "" {
+		jsonError(w, "path required", http.StatusBadRequest)
+		return
+	}
+	if err := h.svc.CreateFile(id, body.Path, body.IsDir, body.Content); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	userID, _ := r.Context().Value("user_id").(int)
+	action := "project_file_create"
+	if body.IsDir {
+		action = "project_dir_create"
+	}
+	h.audit.Log(userID, action, p.Name+": "+body.Path, r.RemoteAddr)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (h *Projects) FileDelete(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	p, err := h.svc.GetByID(id)
+	if err != nil {
+		jsonError(w, "project not found", http.StatusNotFound)
+		return
+	}
+	relPath := r.URL.Query().Get("path")
+	if relPath == "" {
+		jsonError(w, "path parameter required", http.StatusBadRequest)
+		return
+	}
+	if err := h.svc.DeleteFile(id, relPath); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	userID, _ := r.Context().Value("user_id").(int)
+	h.audit.Log(userID, "project_file_delete", p.Name+": "+relPath, r.RemoteAddr)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)

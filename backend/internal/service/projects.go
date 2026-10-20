@@ -3,9 +3,13 @@ package service
 import (
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/luzyver/tunlify/internal/db"
 )
@@ -18,6 +22,14 @@ type Project struct {
 	GitUsername string `json:"git_username"`
 	GitToken    string `json:"git_token,omitempty"`
 	CreatedAt   string `json:"created_at"`
+}
+
+type FileInfo struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	IsDir   bool   `json:"is_dir"`
+	Size    int64  `json:"size"`
+	ModTime string `json:"mod_time"`
 }
 
 type Projects struct {
@@ -274,3 +286,184 @@ func maskToken(t string) string {
 	}
 	return "****" + t[len(t)-4:]
 }
+
+func (s *Projects) resolvePath(p Project, relPath string) (string, error) {
+	cleanBase := filepath.Clean(p.Path)
+	cleanRel := filepath.Clean("/" + filepath.ToSlash(relPath))
+	fullPath := filepath.Clean(filepath.Join(cleanBase, cleanRel))
+	rel, err := filepath.Rel(cleanBase, fullPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("invalid path: outside project root")
+	}
+	return fullPath, nil
+}
+
+func (s *Projects) ListFiles(id int, relPath string) ([]FileInfo, error) {
+	p, err := s.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+	targetDir, err := s.resolvePath(p, relPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(targetDir)
+	if err != nil {
+		return nil, err
+	}
+
+	cleanBase := filepath.Clean(p.Path)
+	var files []FileInfo
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		entryFullPath := filepath.Join(targetDir, entry.Name())
+		relEntry, _ := filepath.Rel(cleanBase, entryFullPath)
+		files = append(files, FileInfo{
+			Name:    entry.Name(),
+			Path:    filepath.ToSlash(relEntry),
+			IsDir:   entry.IsDir(),
+			Size:    info.Size(),
+			ModTime: info.ModTime().Format(time.RFC3339),
+		})
+	}
+	if files == nil {
+		files = []FileInfo{}
+	}
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].IsDir != files[j].IsDir {
+			return files[i].IsDir
+		}
+		return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name)
+	})
+	return files, nil
+}
+
+func (s *Projects) GetFile(id int, relPath string) (string, error) {
+	p, err := s.GetByID(id)
+	if err != nil {
+		return "", err
+	}
+	targetFile, err := s.resolvePath(p, relPath)
+	if err != nil {
+		return "", err
+	}
+	stat, err := os.Stat(targetFile)
+	if err != nil {
+		return "", err
+	}
+	if stat.IsDir() {
+		return "", fmt.Errorf("path is a directory, not a file")
+	}
+	if stat.Size() > 5*1024*1024 {
+		return "", fmt.Errorf("file is too large (> 5MB)")
+	}
+	data, err := os.ReadFile(targetFile)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func (s *Projects) SaveFile(id int, relPath string, content string) error {
+	p, err := s.GetByID(id)
+	if err != nil {
+		return err
+	}
+	targetFile, err := s.resolvePath(p, relPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(targetFile), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(targetFile, []byte(content), 0644)
+}
+
+func (s *Projects) DeleteFile(id int, relPath string) error {
+	p, err := s.GetByID(id)
+	if err != nil {
+		return err
+	}
+	targetFile, err := s.resolvePath(p, relPath)
+	if err != nil {
+		return err
+	}
+	cleanBase := filepath.Clean(p.Path)
+	if targetFile == cleanBase {
+		return fmt.Errorf("cannot delete project root directory")
+	}
+	return os.RemoveAll(targetFile)
+}
+
+func (s *Projects) CreateFile(id int, relPath string, isDir bool, content string) error {
+	p, err := s.GetByID(id)
+	if err != nil {
+		return err
+	}
+	targetPath, err := s.resolvePath(p, relPath)
+	if err != nil {
+		return err
+	}
+	if isDir {
+		return os.MkdirAll(targetPath, 0755)
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(targetPath, []byte(content), 0644)
+}
+
+func (s *Projects) GetComposeFile(id int) (string, string, error) {
+	p, err := s.GetByID(id)
+	if err != nil {
+		return "", "", err
+	}
+	candidates := []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
+	for _, c := range candidates {
+		fullPath := filepath.Join(p.Path, c)
+		if data, err := os.ReadFile(fullPath); err == nil {
+			return c, string(data), nil
+		}
+	}
+	defaultTmpl := fmt.Sprintf(`services:
+  %s:
+    image: nginx:alpine
+    container_name: %s
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    networks:
+      - cloudflared
+
+networks:
+  cloudflared:
+    external: true
+`, p.Name, p.Name)
+	return "docker-compose.yml", defaultTmpl, nil
+}
+
+func (s *Projects) SaveComposeFile(id int, filename string, content string) error {
+	if filename == "" {
+		filename = "docker-compose.yml"
+	}
+	return s.SaveFile(id, filename, content)
+}
+
+func (s *Projects) GetEnvFile(id int) (string, error) {
+	content, err := s.GetFile(id, ".env")
+	if err != nil {
+		return "", nil
+	}
+	return content, nil
+}
+
+func (s *Projects) SaveEnvFile(id int, content string) error {
+	return s.SaveFile(id, ".env", content)
+}
+
