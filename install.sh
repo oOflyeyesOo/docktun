@@ -512,6 +512,7 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
     PREV_PORT=$(grep -E '^PORT=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
     PREV_TUNNEL_NAME=$(grep -E '^TUNNEL_NAME=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
     PREV_TUNNEL_ID=$(grep -E '^TUNNEL_ID=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
+    PREV_TUNNEL_PROTOCOL=$(grep -E '^TUNNEL_PROTOCOL=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
     PREV_JWT_SECRET=$(grep -E '^JWT_SECRET=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
 fi
 
@@ -1121,6 +1122,7 @@ PORT=${PORT}
 # Tunnel Configuration
 TUNNEL_NAME=${TUNNEL_NAME}
 TUNNEL_ID=${TUNNEL_ID}
+TUNNEL_PROTOCOL=${TUNNEL_PROTOCOL:-${PREV_TUNNEL_PROTOCOL:-http2}}
 
 # Backend Service Settings
 CLOUDFLARED_CONFIG_PATH=/etc/cloudflared/config.yml
@@ -1140,6 +1142,7 @@ cat > "$SCRIPT_DIR/cloudflared/config.yml" << EOF
 
 tunnel: ${TUNNEL_ID}
 credentials-file: /etc/cloudflared/credentials.json
+protocol: http2
 
 ingress:
   - hostname: ${TUNLIFY_DOMAIN}

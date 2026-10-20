@@ -3,7 +3,7 @@ services:
     image: cloudflare/cloudflared:latest
     container_name: tunlify-cloudflared
     restart: unless-stopped
-    command: tunnel --config /etc/cloudflared/config.yml --metrics 0.0.0.0:2000 run
+    command: tunnel --config /etc/cloudflared/config.yml --metrics 0.0.0.0:2000 run --protocol ${TUNNEL_PROTOCOL:-http2}
     volumes:
       - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
       - ./cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
