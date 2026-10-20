@@ -8,6 +8,7 @@ const router = createRouter({
     { path: '/', component: () => import('../views/DashboardView.vue') },
     { path: '/containers', component: () => import('../views/ContainersView.vue') },
     { path: '/mesh', component: () => import('../views/MeshView.vue') },
+    { path: '/projects', component: () => import('../views/ProjectsView.vue') },
     { path: '/logs', component: () => import('../views/LogsView.vue') },
     { path: '/config', component: () => import('../views/ConfigView.vue') },
     { path: '/health', component: () => import('../views/HealthView.vue') },
@@ -16,7 +17,6 @@ const router = createRouter({
     { path: '/tcp-access', component: () => import('../views/TcpAccessView.vue') },
     { path: '/audit', component: () => import('../views/AuditView.vue') },
     { path: '/notifications', component: () => import('../views/NotificationsView.vue') },
-    { path: '/projects', component: () => import('../views/ProjectsView.vue') },
     { path: '/settings', component: () => import('../views/SettingsView.vue') },
   ],
 })
