@@ -77,8 +77,10 @@ fi
 
 ensure_docker_compose
 
-info "Pulling and rebuilding the DockTun stack..."
-"${COMPOSE_CMD[@]}" pull || true
+info "Pulling latest cloudflared base image..."
+"${COMPOSE_CMD[@]}" pull cloudflared || true
+
+info "Building and launching updated DockTun stack..."
 "${COMPOSE_CMD[@]}" up -d --build --remove-orphans
 
 # Clean up internal containers without Cloudflare ingress from 'cloudflared' network
