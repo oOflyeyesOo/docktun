@@ -13,7 +13,6 @@ services:
 
   backend:
     build: ./backend
-    image: docktun-backend:latest
     container_name: docktun-backend
     restart: unless-stopped
     expose:
@@ -29,7 +28,6 @@ services:
 
   frontend:
     build: ./frontend
-    image: docktun-frontend:latest
     container_name: docktun-frontend
     restart: unless-stopped
     ports:
@@ -46,7 +44,6 @@ services:
   # http://<container_name>.local on port 80 directly to each container's web port (no port numbers needed).
   zeroconf:
     build: ./zeroconf
-    image: docktun-zeroconf:latest
     container_name: docktun-zeroconf
     restart: unless-stopped
     network_mode: host
