@@ -81,6 +81,20 @@ info "Pulling and rebuilding the DockTun stack..."
 "${COMPOSE_CMD[@]}" pull || true
 "${COMPOSE_CMD[@]}" up -d --build --remove-orphans
 
+# Clean up internal containers without Cloudflare ingress from 'cloudflared' network
+if docker network inspect cloudflared >/dev/null 2>&1; then
+  info "Pruning internal containers from 'cloudflared' network (keeping only DockTun & routed services)..."
+  CF_ATTACHED=$(docker network inspect cloudflared -f '{{range $k, $v := .Containers}}{{$v.Name}} {{end}}' 2>/dev/null || true)
+  for c in $CF_ATTACHED; do
+    if [[ ! "$c" =~ ^(docktun-backend|docktun-frontend|docktun-cloudflared|docktun-zeroconf)$ ]]; then
+      if [ -f "$CLOUDFLARED_DIR/config.yml" ] && ! grep -q "$c" "$CLOUDFLARED_DIR/config.yml" 2>/dev/null; then
+        info "Disconnected internal container '$c' from 'cloudflared' network"
+        docker network disconnect cloudflared "$c" 2>/dev/null || true
+      fi
+    fi
+  done
+fi
+
 if [ -f "$ENV_FILE" ]; then
   success "Upgrade completed. Existing tunnel/auth settings were preserved in $ENV_FILE."
 else

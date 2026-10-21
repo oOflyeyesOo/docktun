@@ -958,17 +958,9 @@ else
         INDEX=$((INDEX + 1))
     done <<< "$RUNNING_CONTAINERS"
 
-    echo ""
-    prompt_read "Connect all detected containers to the 'cloudflared' network for internal routing? [Y/n]: " CONNECT_ALL "Y"
+    # Containers remain local by default on their existing networks.
+    # DockTun only connects a container to 'cloudflared' if you explicitly enable Public Cloudflare Ingress.
 
-    if [[ "$CONNECT_ALL" =~ ^[Yy]$ ]]; then
-        for ((i=1; i<INDEX; i++)); do
-            cname="${C_NAMES[$i]}"
-            info "Connecting container '$cname' to 'cloudflared' network..."
-            docker network connect cloudflared "$cname" 2>/dev/null || true
-        done
-        success "All containers connected to 'cloudflared' network."
-    fi
 
     # Import Docker Compose projects and standalone containers into SQLite database & volume mounts
     echo ""

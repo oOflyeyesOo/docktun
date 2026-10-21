@@ -41,9 +41,9 @@ services:
     networks:
       - cloudflared
 
-  # Native ZeroConf mDNS local hostname publisher.
-  # Advertises <container_name>.local on your local LAN so computers and phones on the same Wi-Fi
-  # can access services directly (e.g. http://my-service.local:8080) with zero configuration.
+  # Native ZeroConf mDNS local hostname publisher & HTTP Port 80 local router.
+  # Advertises <container_name>.local on your local LAN and automatically routes
+  # http://<container_name>.local on port 80 directly to each container's web port (no port numbers needed).
   zeroconf:
     build: ./zeroconf
     image: docktun-zeroconf:latest
@@ -54,6 +54,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - DOMAIN=local
+      - HTTP_PORT=80
+      - DOCKTUN_PORT=${PORT:-8080}
 
 networks:
   cloudflared:
