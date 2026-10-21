@@ -914,19 +914,34 @@ onUnmounted(() => {
               </span>
             </div>
 
-            <!-- Public Hostname Link if Exposed -->
-            <div v-if="container.exposure_mode === 'public' && container.hostname" class="flex items-center gap-2 pt-1 text-xs">
-              <span class="text-slate-400">Public Ingress:</span>
-              <a
-                :href="`https://${container.hostname}`"
-                target="_blank"
-                rel="noopener"
-                @click.stop
-                class="inline-flex items-center gap-1 font-mono text-cyan-400 hover:text-cyan-300 hover:underline"
-              >
-                <span>https://{{ container.hostname }}</span>
-                <ExternalLink class="h-3 w-3" />
-              </a>
+            <!-- Local Address (Default) and Public Ingress if Exposed -->
+            <div class="flex flex-wrap items-center gap-3 pt-1 text-xs">
+              <div class="flex items-center gap-1.5 font-mono">
+                <span class="text-slate-500 font-sans text-[11px]">Local:</span>
+                <span class="text-violet-300 font-semibold">http://{{ container.name }}.local:{{ getPrimaryPort(container.ports) }}</span>
+                <button
+                  @click.stop="copyToClipboard('mdns-' + container.id, `http://${container.name}.local:${getPrimaryPort(container.ports)}`)"
+                  class="text-slate-500 hover:text-slate-300 ml-0.5"
+                  title="Copy local .local URL"
+                >
+                  <Check v-if="copiedKey === 'mdns-' + container.id" class="h-3 w-3 text-emerald-400" />
+                  <Copy v-else class="h-3 w-3" />
+                </button>
+              </div>
+
+              <div v-if="container.exposure_mode === 'public' && container.hostname" class="flex items-center gap-1.5 font-mono">
+                <span class="text-slate-500 font-sans text-[11px]">Public:</span>
+                <a
+                  :href="`https://${container.hostname}`"
+                  target="_blank"
+                  rel="noopener"
+                  @click.stop
+                  class="inline-flex items-center gap-1 text-cyan-400 hover:text-cyan-300 hover:underline font-semibold"
+                >
+                  <span>https://{{ container.hostname }}</span>
+                  <ExternalLink class="h-3 w-3" />
+                </a>
+              </div>
             </div>
           </div>
 

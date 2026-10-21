@@ -663,11 +663,41 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 				}
 			}
 		}
-		b.WriteString("    networks:\n")
-		b.WriteString("      - cloudflared\n\n")
-		b.WriteString("networks:\n")
-		b.WriteString("  cloudflared:\n")
-		b.WriteString("    external: true\n")
+		if detail.Ports != "" {
+			var portLines []string
+			seen := make(map[string]bool)
+			for _, part := range strings.Split(detail.Ports, ",") {
+				part = strings.TrimSpace(part)
+				if idx := strings.Index(part, "->"); idx > 0 {
+					hostPart := strings.TrimSpace(part[:idx])
+					containerPart := strings.TrimSpace(part[idx+2:])
+					if hIdx := strings.LastIndex(hostPart, ":"); hIdx >= 0 {
+						hostPart = hostPart[hIdx+1:]
+					}
+					cPort := strings.TrimSuffix(containerPart, "/tcp")
+					mapping := fmt.Sprintf("%s:%s", hostPart, cPort)
+					if !seen[mapping] && hostPart != "" && cPort != "" {
+						seen[mapping] = true
+						portLines = append(portLines, fmt.Sprintf("      - \"%s\"\n", mapping))
+					}
+				}
+			}
+			if len(portLines) > 0 {
+				b.WriteString("    ports:\n")
+				for _, pl := range portLines {
+					b.WriteString(pl)
+				}
+			}
+		}
+
+		if detail.ConnectedToCloudflared {
+			b.WriteString("    networks:\n")
+			b.WriteString("      - default\n")
+			b.WriteString("      - cloudflared\n\n")
+			b.WriteString("networks:\n")
+			b.WriteString("  cloudflared:\n")
+			b.WriteString("    external: true\n")
+		}
 
 		_ = os.WriteFile(composePath, []byte(b.String()), 0644)
 	}
@@ -750,9 +780,11 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 		settings.Mode = "internal"
 	}
 
-	// 1. If public mode, automatically connect container to cloudflared network
+	// 1. If public mode, connect container to cloudflared network; otherwise disconnect
 	if settings.Mode == "public" {
 		_ = s.ConnectNetwork(name, "cloudflared")
+	} else {
+		_ = s.DisconnectNetwork(name, "cloudflared")
 	}
 
 	// 2. Update Cloudflare ingress if mode is public or if changing away from public

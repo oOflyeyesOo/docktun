@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { LayoutDashboard, ScrollText, Settings, Terminal, Shield, LogOut, Activity, BarChart3, Archive, Bell, Cog, Container, Server, Cable } from 'lucide-vue-next'
+import { LayoutDashboard, ScrollText, Globe, Shield, LogOut, Bell, Cog, Container, Server, Cable } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
 import { useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
@@ -12,14 +12,10 @@ const { apiFetch } = useApi()
 const nav = [
   { to: '/', label: 'Status', icon: LayoutDashboard },
   { to: '/containers', label: 'Containers', icon: Server },
-  { to: '/mesh', label: 'Mesh', icon: Cable },
   { to: '/projects', label: 'Projects', icon: Container },
-  { to: '/health', label: 'Health', icon: Activity },
-  { to: '/metrics', label: 'Metrics', icon: BarChart3 },
+  { to: '/config', label: 'Cloudflare', icon: Globe },
+  { to: '/mesh', label: 'Mesh', icon: Cable },
   { to: '/logs', label: 'Logs', icon: ScrollText },
-  { to: '/config', label: 'Ingress', icon: Settings },
-  { to: '/backups', label: 'Backups', icon: Archive },
-  { to: '/tcp-access', label: 'TCP', icon: Terminal },
   { to: '/notifications', label: 'Alerts', icon: Bell },
   { to: '/audit', label: 'Audit', icon: Shield },
   { to: '/settings', label: 'Settings', icon: Cog },
