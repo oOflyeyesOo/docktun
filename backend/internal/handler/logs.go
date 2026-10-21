@@ -1,4 +1,4 @@
-package handler
+﻿package handler
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
-	"github.com/luzyver/docktun/internal/ws"
+	"docktun/internal/ws"
 )
 
 var upgrader = websocket.Upgrader{

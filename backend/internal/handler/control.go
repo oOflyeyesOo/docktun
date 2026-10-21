@@ -1,11 +1,11 @@
-package handler
+﻿package handler
 
 import (
 	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/luzyver/docktun/internal/service"
+	"docktun/internal/service"
 )
 
 type Control struct {

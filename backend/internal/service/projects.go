@@ -1,4 +1,4 @@
-package service
+﻿package service
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/luzyver/docktun/internal/db"
+	"docktun/internal/db"
 )
 
 type Project struct {

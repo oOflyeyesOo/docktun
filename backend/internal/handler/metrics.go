@@ -1,4 +1,4 @@
-package handler
+﻿package handler
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/luzyver/docktun/internal/config"
+	"docktun/internal/config"
 )
 
 type Metrics struct {

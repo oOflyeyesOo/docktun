@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
   "context"
@@ -12,12 +12,12 @@ import (
   "github.com/go-chi/chi/v5"
   chimw "github.com/go-chi/chi/v5/middleware"
   "github.com/go-chi/cors"
-  "github.com/luzyver/docktun/internal/config"
-  "github.com/luzyver/docktun/internal/db"
-  "github.com/luzyver/docktun/internal/handler"
-  "github.com/luzyver/docktun/internal/middleware"
-  "github.com/luzyver/docktun/internal/service"
-  "github.com/luzyver/docktun/internal/ws"
+  "docktun/internal/config"
+  "docktun/internal/db"
+  "docktun/internal/handler"
+  "docktun/internal/middleware"
+  "docktun/internal/service"
+  "docktun/internal/ws"
 )
 
 func main() {

@@ -1,4 +1,4 @@
-package handler
+﻿package handler
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/luzyver/docktun/internal/service"
+	"docktun/internal/service"
 )
 
 type TcpAccess struct {

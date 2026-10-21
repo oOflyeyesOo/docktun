@@ -1,6 +1,6 @@
-package service
+﻿package service
 
-import "github.com/luzyver/docktun/internal/db"
+import "docktun/internal/db"
 
 type AuditEntry struct {
 	ID        int    `json:"id"`

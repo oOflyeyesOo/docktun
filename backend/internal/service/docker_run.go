@@ -1,4 +1,4 @@
-package service
+﻿package service
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/luzyver/docktun/internal/db"
+	"docktun/internal/db"
 )
 
 type DockerRunJob struct {

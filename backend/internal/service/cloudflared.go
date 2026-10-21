@@ -1,4 +1,4 @@
-package service
+﻿package service
 
 import (
 	"encoding/json"
@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/luzyver/docktun/internal/config"
-	"github.com/luzyver/docktun/internal/ws"
+	"docktun/internal/config"
+	"docktun/internal/ws"
 )
 
 type ProcessState struct {

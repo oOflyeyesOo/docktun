@@ -1,10 +1,10 @@
-package service
+﻿package service
 
 import (
 	"os"
 
-	"github.com/luzyver/docktun/internal/config"
-	"github.com/luzyver/docktun/internal/db"
+	"docktun/internal/config"
+	"docktun/internal/db"
 	"gopkg.in/yaml.v3"
 )
 

@@ -1,4 +1,4 @@
-package handler
+﻿package handler
 
 import (
 	"encoding/json"
@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/luzyver/docktun/internal/config"
-	"github.com/luzyver/docktun/internal/service"
+	"docktun/internal/config"
+	"docktun/internal/service"
 	"gopkg.in/yaml.v3"
 )
 

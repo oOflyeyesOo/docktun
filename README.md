@@ -43,8 +43,8 @@ Self-hosted web dashboard to manage and monitor Cloudflare Tunnel (cloudflared) 
 ### Setup
 
 ```bash
-git clone https://github.com/luzyver/DockTun.git
-cd DockTun
+git clone https://github.com/oOflyeyesOo/tunlify.git
+cd tunlify
 
 # Configure environment
 cp .env.example .env

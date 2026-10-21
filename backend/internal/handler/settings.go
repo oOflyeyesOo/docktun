@@ -1,11 +1,11 @@
-package handler
+﻿package handler
 
 import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/luzyver/docktun/internal/db"
-	"github.com/luzyver/docktun/internal/service"
+	"docktun/internal/db"
+	"docktun/internal/service"
 	"golang.org/x/crypto/bcrypt"
 )
 

@@ -1,10 +1,10 @@
-package handler
+﻿package handler
 
 import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/luzyver/docktun/internal/service"
+	"docktun/internal/service"
 )
 
 type Mesh struct {

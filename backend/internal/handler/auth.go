@@ -1,4 +1,4 @@
-package handler
+﻿package handler
 
 import (
 	"encoding/json"
@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/luzyver/docktun/internal/config"
-	"github.com/luzyver/docktun/internal/db"
-	"github.com/luzyver/docktun/internal/service"
+	"docktun/internal/config"
+	"docktun/internal/db"
+	"docktun/internal/service"
 	"golang.org/x/crypto/bcrypt"
 )
 

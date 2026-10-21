@@ -1,11 +1,11 @@
-package handler
+﻿package handler
 
 import (
 	"encoding/json"
 	"net/http"
 	"strconv"
 
-	"github.com/luzyver/docktun/internal/service"
+	"docktun/internal/service"
 )
 
 type Audit struct {
