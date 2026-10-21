@@ -58,6 +58,16 @@ mkdir -p cloudflared
 docker compose up -d
 ```
 
+### Automated Installation & Reset
+
+```bash
+# Automated install (sets up cloudflared, containers, and web UI)
+sudo ./install.sh
+
+# Reset / Uninstall (wipes containers, DB, and credentials while keeping Cloudflare tunnel config)
+sudo ./uninstall.sh
+```
+
 ### Environment Variables
 
 | Variable | Description | Default |

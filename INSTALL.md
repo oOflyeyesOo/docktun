@@ -103,4 +103,20 @@ docker compose down
 
 # Check Cloudflare tunnels via CLI
 cloudflared tunnel list
+
+# Reset / Uninstall DockTun (preserving Cloudflare config & credentials)
+sudo ./uninstall.sh
 ```
+
+---
+
+## 🔄 Fresh Reinstall / Reset
+
+If you wish to wipe the database, containers, and credentials for a clean slate while **keeping your Cloudflare Tunnel configuration**:
+
+```bash
+sudo ./uninstall.sh
+sudo ./install.sh
+```
+When running `install.sh`, press `Enter` to resume with your preserved tunnel, and enter fresh admin credentials!
+
