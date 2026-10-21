@@ -563,7 +563,7 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		if pName == "" {
 			pName = filepath.Base(compDir)
 		}
-		_ = s.db.Exec(`INSERT OR IGNORE INTO projects (name, path) VALUES (?, ?)`, pName, compDir)
+		_, _ = s.db.Exec(`INSERT OR IGNORE INTO projects (name, path) VALUES (?, ?)`, pName, compDir)
 		var newID int
 		_ = s.db.QueryRow(`SELECT id FROM projects WHERE path = ?`, compDir).Scan(&newID)
 		if newID > 0 {
