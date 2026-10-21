@@ -106,7 +106,7 @@ function copyText(key: string, text: string) {
 }
 
 function isDocktunRule(rule: IngressRule) {
-  return rule.service.includes('docktun-frontend') || rule.service.includes('tunlify-frontend')
+  return rule.service.includes('docktun-frontend')
 }
 
 // Load YAML Config
@@ -254,6 +254,19 @@ async function loadBackups() {
     backups.value = (await apiFetch<BackupItem[]>('/api/config/backups')) || []
   } catch {
     backups.value = []
+  } finally {
+    backupsLoading.value = false
+  }
+}
+
+async function createManualBackup() {
+  backupsLoading.value = true
+  try {
+    await apiFetch('/api/config/backups', { method: 'POST' })
+    message.value = { type: 'success', text: 'Config backup snapshot created.' }
+    await loadBackups()
+  } catch (e: any) {
+    message.value = { type: 'error', text: 'Failed to create backup: ' + e.message }
   } finally {
     backupsLoading.value = false
   }
@@ -930,14 +943,24 @@ onUnmounted(() => {
           </p>
         </div>
 
-        <button
-          @click="loadBackups"
-          :disabled="backupsLoading"
-          class="cyber-btn-secondary text-xs flex items-center gap-1.5"
-        >
-          <RefreshCw class="h-3 w-3" :class="backupsLoading ? 'animate-spin' : ''" />
-          <span>Refresh Backups</span>
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            @click="loadBackups"
+            :disabled="backupsLoading"
+            class="cyber-btn-secondary text-xs flex items-center gap-1.5"
+          >
+            <RefreshCw class="h-3 w-3" :class="backupsLoading ? 'animate-spin' : ''" />
+            <span>Refresh</span>
+          </button>
+          <button
+            @click="createManualBackup"
+            :disabled="backupsLoading"
+            class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-300 border-cyan-700 bg-cyan-950/40 hover:bg-cyan-900/50"
+          >
+            <Plus class="h-3 w-3" />
+            <span>Create Snapshot</span>
+          </button>
+        </div>
       </div>
 
       <div v-if="backups.length === 0 && !backupsLoading" class="cyber-card p-8 text-center text-xs text-slate-500">

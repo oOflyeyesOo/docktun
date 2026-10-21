@@ -9,8 +9,14 @@ const loading = ref(false)
 
 async function check() {
   loading.value = true
-  try { results.value = await apiFetch('/api/health') } catch {}
-  finally { loading.value = false }
+  try {
+    const res = await apiFetch<any[]>('/api/health')
+    results.value = Array.isArray(res) ? res : []
+  } catch {
+    results.value = []
+  } finally {
+    loading.value = false
+  }
 }
 check()
 </script>

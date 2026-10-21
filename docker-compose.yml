@@ -41,11 +41,12 @@ services:
     networks:
       - cloudflared
 
-  # ZeroConf mDNS local hostname publisher (Winand/zeroconf-local-hostnames).
+  # Native ZeroConf mDNS local hostname publisher.
   # Advertises <container_name>.local on your local LAN so computers and phones on the same Wi-Fi
   # can access services directly (e.g. http://my-service.local:8080) with zero configuration.
   zeroconf:
-    image: winand/zeroconf-local-hostnames:latest
+    build: ./zeroconf
+    image: docktun-zeroconf:latest
     container_name: docktun-zeroconf
     restart: unless-stopped
     network_mode: host

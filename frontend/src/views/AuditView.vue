@@ -10,11 +10,16 @@ const limit = 20
 const filterAction = ref('')
 
 async function fetchAudit() {
-  const params = new URLSearchParams({ limit: String(limit), offset: String(page.value * limit) })
-  if (filterAction.value) params.set('action', filterAction.value)
-  const data = await apiFetch<{ entries: any[]; total: number }>(`/api/audit?${params}`)
-  entries.value = data.entries || []
-  total.value = data.total
+  try {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(page.value * limit) })
+    if (filterAction.value) params.set('action', filterAction.value)
+    const data = await apiFetch<{ entries: any[]; total: number }>(`/api/audit?${params}`)
+    entries.value = data?.entries || []
+    total.value = data?.total || 0
+  } catch (err) {
+    entries.value = []
+    total.value = 0
+  }
 }
 
 watch([page, filterAction], fetchAudit)

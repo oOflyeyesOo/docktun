@@ -48,9 +48,6 @@ type MeshService struct {
 func NewMeshService(dataDir string) *MeshService {
 	customPath := os.Getenv("DOCKTUN_MESH_CONFIG")
 	if customPath == "" {
-		customPath = os.Getenv("TUNLIFY_MESH_CONFIG")
-	}
-	if customPath == "" {
 		customPath = filepath.Join(dataDir, "mesh.json")
 	}
 	return &MeshService{storagePath: customPath}

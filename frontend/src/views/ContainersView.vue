@@ -114,6 +114,32 @@ const exposeDrawerId = ref<string | null>(null)
 const exposeForm = ref<Record<string, ExposureSettings>>({})
 const exposeSaving = ref<Record<string, boolean>>({})
 
+function getExpose(id?: string): ExposureSettings {
+  if (!id) {
+    return {
+      mode: 'internal',
+      hostname: '',
+      target: '',
+      private_type: 'tailscale',
+      private_host: '',
+      private_port: 80,
+      notes: '',
+    }
+  }
+  if (!exposeForm.value[id]) {
+    exposeForm.value[id] = {
+      mode: 'internal',
+      hostname: '',
+      target: '',
+      private_type: 'tailscale',
+      private_host: '',
+      private_port: 80,
+      notes: '',
+    }
+  }
+  return exposeForm.value[id]
+}
+
 // ==========================================
 // Container Detail & Control Center State
 // ==========================================
@@ -322,7 +348,7 @@ function toggleExposeDrawer(container: ContainerItem) {
 async function saveExposure(container: ContainerItem) {
   exposeSaving.value[container.id] = true
   try {
-    const payload = exposeForm.value[container.id]
+    const payload = getExpose(container.id)
     await apiFetch(`/api/docker/containers/${container.id}/exposure`, {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -1087,7 +1113,7 @@ onUnmounted(() => {
               <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
                 Access Mode
               </label>
-              <select v-model="exposeForm[container.id].mode" class="cyber-input">
+              <select v-model="getExpose(container.id).mode" class="cyber-input">
                 <option value="internal">Internal (No Ingress)</option>
                 <option value="public">Public (Cloudflare Tunnel)</option>
                 <option value="private">Private (Tailscale / WireGuard)</option>
@@ -1095,13 +1121,13 @@ onUnmounted(() => {
             </div>
 
             <!-- Public Mode Inputs -->
-            <template v-if="exposeForm[container.id].mode === 'public'">
+            <template v-if="getExpose(container.id).mode === 'public'">
               <div>
                 <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
                   Public Hostname (FQDN)
                 </label>
                 <input
-                  v-model="exposeForm[container.id].hostname"
+                  v-model="getExpose(container.id).hostname"
                   type="text"
                   placeholder="app.yourdomain.com"
                   class="cyber-input"
@@ -1112,7 +1138,7 @@ onUnmounted(() => {
                   Service Target URL
                 </label>
                 <input
-                  v-model="exposeForm[container.id].target"
+                  v-model="getExpose(container.id).target"
                   type="text"
                   :placeholder="`http://${container.name}:80`"
                   class="cyber-input"
@@ -1121,12 +1147,12 @@ onUnmounted(() => {
             </template>
 
             <!-- Private Mode Inputs -->
-            <template v-if="exposeForm[container.id].mode === 'private'">
+            <template v-if="getExpose(container.id).mode === 'private'">
               <div>
                 <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
                   Private Mesh Type
                 </label>
-                <select v-model="exposeForm[container.id].private_type" class="cyber-input">
+                <select v-model="getExpose(container.id).private_type" class="cyber-input">
                   <option value="tailscale">Tailscale</option>
                   <option value="wireguard">WireGuard</option>
                   <option value="mesh">Custom Mesh</option>
@@ -1137,7 +1163,7 @@ onUnmounted(() => {
                   Private Host / IP
                 </label>
                 <input
-                  v-model="exposeForm[container.id].private_host"
+                  v-model="getExpose(container.id).private_host"
                   type="text"
                   placeholder="100.x.y.z or 10.0.0.x"
                   class="cyber-input"
@@ -1148,7 +1174,7 @@ onUnmounted(() => {
                   Private Port
                 </label>
                 <input
-                  v-model.number="exposeForm[container.id].private_port"
+                  v-model.number="getExpose(container.id).private_port"
                   type="number"
                   placeholder="8080"
                   class="cyber-input"
@@ -1159,10 +1185,10 @@ onUnmounted(() => {
 
           <div class="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-slate-900">
             <p class="text-xs text-slate-400">
-              <span v-if="exposeForm[container.id].mode === 'public'" class="text-cyan-300">
+              <span v-if="getExpose(container.id).mode === 'public'" class="text-cyan-300">
                 Saving public mode automatically connects the container to 'cloudflared' network and configures tunnel routing.
               </span>
-              <span v-else-if="exposeForm[container.id].mode === 'private'" class="text-violet-300">
+              <span v-else-if="getExpose(container.id).mode === 'private'" class="text-violet-300">
                 Routes traffic privately through your encrypted mesh network.
               </span>
               <span v-else class="text-slate-500">
@@ -1535,27 +1561,27 @@ onUnmounted(() => {
               <div class="grid gap-4 md:grid-cols-3">
                 <div>
                   <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Exposure Mode</label>
-                  <select v-model="exposeForm[selectedContainer.id].mode" class="cyber-input text-xs">
+                  <select v-model="getExpose(selectedContainer.id).mode" class="cyber-input text-xs">
                     <option value="internal">Internal Only (No Ingress)</option>
                     <option value="public">Public (Cloudflare Tunnel)</option>
                     <option value="private">Private Mesh (Tailscale/WireGuard)</option>
                   </select>
                 </div>
 
-                <div v-if="exposeForm[selectedContainer.id].mode === 'public'">
+                <div v-if="getExpose(selectedContainer.id).mode === 'public'">
                   <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Public Hostname (FQDN)</label>
                   <input
-                    v-model="exposeForm[selectedContainer.id].hostname"
+                    v-model="getExpose(selectedContainer.id).hostname"
                     type="text"
                     placeholder="app.yourdomain.com"
                     class="cyber-input text-xs font-mono"
                   />
                 </div>
 
-                <div v-if="exposeForm[selectedContainer.id].mode === 'public'">
+                <div v-if="getExpose(selectedContainer.id).mode === 'public'">
                   <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Tunnel Service Target</label>
                   <input
-                    v-model="exposeForm[selectedContainer.id].target"
+                    v-model="getExpose(selectedContainer.id).target"
                     type="text"
                     :placeholder="`http://${selectedContainer.name}:80`"
                     class="cyber-input text-xs font-mono"
@@ -1686,11 +1712,11 @@ onUnmounted(() => {
 
                 <div class="text-xs text-slate-400 space-y-1">
                   <p>
-                    DockTun includes native support for <strong class="text-slate-200">winand/zeroconf-local-hostnames</strong>.
+                    DockTun includes a built-in native ZeroConf mDNS daemon (<code class="text-violet-300">docktun-zeroconf</code>).
                     It automatically broadcasts <code class="text-violet-300">&lt;container&gt;.local</code> over Multicast DNS (RFC 6762).
                   </p>
-                  <p class="text-slate-500 text-[11px]">
-                    To enable the ZeroConf daemon on your server: run <code class="text-slate-300 bg-slate-950 px-1 py-0.5 rounded font-mono">docker compose --profile mdns up -d</code>.
+                  <p class="text-emerald-400/90 text-[11px]">
+                    ✓ Running natively with zero external dependencies or login requirements.
                   </p>
                 </div>
               </div>

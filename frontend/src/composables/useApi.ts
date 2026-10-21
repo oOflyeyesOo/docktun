@@ -19,7 +19,11 @@ export const useApi = () => {
 
     if (res.status === 401) {
       authStore.logout()
-      router.push('/login')
+      if (router && typeof router.push === 'function') {
+        router.push('/login')
+      } else {
+        window.location.href = '/login'
+      }
       throw new Error('Unauthorized')
     }
 

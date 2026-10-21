@@ -550,7 +550,7 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
     PREV_TUNNEL_ID=$(grep -E '^TUNNEL_ID=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
     PREV_TUNNEL_PROTOCOL=$(grep -E '^TUNNEL_PROTOCOL=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
     PREV_JWT_SECRET=$(grep -E '^JWT_SECRET=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
-    PREV_DOMAIN=$(grep -E '^(DOCKTUN_DOMAIN|TUNLIFY_DOMAIN)=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
+    PREV_DOMAIN=$(grep -E '^DOCKTUN_DOMAIN=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
 fi
 
 # 2. Check local credentials.json
@@ -585,7 +585,7 @@ if [ -f "$SCRIPT_DIR/cloudflared/config.yml" ]; then
         [ -z "$PREV_TUNNEL_ID" ] && PREV_TUNNEL_ID="$cfg_tid"
     fi
     cfg_dom=$(grep -E '^\s*-\s*hostname:' "$SCRIPT_DIR/cloudflared/config.yml" 2>/dev/null | head -n1 | awk '{print $NF}' | tr -d '\r')
-    if [ -n "$cfg_dom" ] && [ "$cfg_dom" != "docktun.example.com" ] && [ "$cfg_dom" != "tunlify.example.com" ]; then
+    if [ -n "$cfg_dom" ] && [ "$cfg_dom" != "docktun.example.com" ]; then
         PREV_DOMAIN="$cfg_dom"
     fi
 fi
@@ -640,7 +640,7 @@ if [ "$RESUME_PREVIOUS" = true ]; then
 
     success "Tunnel configuration restored: ${TUNNEL_NAME} (${TUNNEL_ID})"
 
-    if [ -z "$DOCKTUN_DOMAIN" ] || [ "$DOCKTUN_DOMAIN" = "docktun.example.com" ] || [ "$DOCKTUN_DOMAIN" = "tunlify.example.com" ]; then
+    if [ -z "$DOCKTUN_DOMAIN" ] || [ "$DOCKTUN_DOMAIN" = "docktun.example.com" ]; then
         prompt_read "Enter the public domain/hostname for DockTun Web UI (e.g. docktun.example.com): " DOCKTUN_DOMAIN "docktun.example.com"
     fi
 else
@@ -902,8 +902,8 @@ else
     success "Docker network 'cloudflared' is already available."
 fi
 
-# Find all running containers excluding DockTun and legacy Tunlify
-RUNNING_CONTAINERS=$(docker ps --format '{{.Names}}' | grep -vE '^(docktun-backend|docktun-frontend|docktun-cloudflared|tunlify-backend|tunlify-frontend|tunlify-cloudflared)$' || true)
+# Find all running containers excluding DockTun
+RUNNING_CONTAINERS=$(docker ps --format '{{.Names}}' | grep -vE '^(docktun-backend|docktun-frontend|docktun-cloudflared|docktun-zeroconf)$' || true)
 
 CONTAINER_COUNT=0
 if [ -n "$RUNNING_CONTAINERS" ]; then
@@ -1062,7 +1062,7 @@ EOF
         while IFS= read -r rline; do
             if [[ "$rline" =~ ^[[:space:]]*-[[:space:]]*hostname:[[:space:]]*([^[:space:]]+) ]]; then
                 rh="${BASH_REMATCH[1]}"
-                if [ "$rh" != "$DOCKTUN_DOMAIN" ] && [ "$rh" != "docktun.example.com" ] && [ "$rh" != "tunlify.example.com" ]; then
+                if [ "$rh" != "$DOCKTUN_DOMAIN" ] && [ "$rh" != "docktun.example.com" ]; then
                     read -r sline || true
                     IMPORTED_INGRESS+=("$rline"$'\n'"$sline")
                 fi

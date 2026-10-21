@@ -103,9 +103,11 @@ const dockerRunEl = ref<HTMLElement | null>(null)
 async function load() {
   loading.value = true
   try {
-    projects.value = await apiFetch('/api/projects')
-  } catch {}
-  finally {
+    const res = await apiFetch<Project[]>('/api/projects')
+    projects.value = Array.isArray(res) ? res : []
+  } catch {
+    projects.value = []
+  } finally {
     loading.value = false
   }
 }
