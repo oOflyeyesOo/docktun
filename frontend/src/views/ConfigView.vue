@@ -311,14 +311,85 @@ async function generateTcpCommand() {
   }
 }
 
-// Cloudflare Remote API Integration
+// Cloudflare Remote API Integration & Automated DNS
+const syncLoading = ref(false)
+const wildcardDomainInput = ref('')
+const wildcardLoading = ref(false)
+const syncResults = ref<any[] | null>(null)
+
+async function loadBackendCfSettings() {
+  try {
+    const s = await apiFetch<any>('/api/cloudflare/settings')
+    if (s.account_id && !cfAccountId.value) cfAccountId.value = s.account_id
+    if (s.zone_id && !cfZoneId.value) cfZoneId.value = s.zone_id
+  } catch {}
+}
+
 async function saveCfApiCredentials() {
-  localStorage.setItem('docktun_cf_api_token', cfApiToken.value)
-  localStorage.setItem('docktun_cf_account_id', cfAccountId.value)
-  localStorage.setItem('docktun_cf_zone_id', cfZoneId.value)
-  cfApiSuccess.value = true
-  setTimeout(() => (cfApiSuccess.value = false), 3000)
-  fetchRemoteTunnelInfo()
+  cfApiLoading.value = true
+  cfApiError.value = ''
+  try {
+    localStorage.setItem('docktun_cf_api_token', cfApiToken.value)
+    localStorage.setItem('docktun_cf_account_id', cfAccountId.value)
+    localStorage.setItem('docktun_cf_zone_id', cfZoneId.value)
+
+    await apiFetch('/api/cloudflare/settings', {
+      method: 'POST',
+      body: JSON.stringify({
+        api_token: cfApiToken.value,
+        account_id: cfAccountId.value,
+        zone_id: cfZoneId.value,
+      }),
+    })
+
+    cfApiSuccess.value = true
+    setTimeout(() => (cfApiSuccess.value = false), 3500)
+    await fetchRemoteTunnelInfo()
+  } catch (err: any) {
+    cfApiError.value = 'Failed to save settings: ' + err.message
+  } finally {
+    cfApiLoading.value = false
+  }
+}
+
+async function syncAllDnsRoutes() {
+  syncLoading.value = true
+  syncResults.value = null
+  try {
+    const res = await apiFetch<any>('/api/cloudflare/sync-all', { method: 'POST' })
+    syncResults.value = res.synced || []
+    const successCount = res.synced?.filter((s: any) => s.success).length || 0
+    message.value = {
+      type: 'success',
+      text: `Successfully synced ${successCount} DNS routes in Cloudflare!`,
+    }
+    setTimeout(() => (message.value = null), 6000)
+  } catch (err: any) {
+    message.value = { type: 'error', text: 'Cloudflare DNS sync failed: ' + err.message }
+  } finally {
+    syncLoading.value = false
+  }
+}
+
+async function createWildcardRoute() {
+  const dom = wildcardDomainInput.value.trim()
+  if (!dom) {
+    alert('Please enter your root domain (e.g. yourdomain.com)')
+    return
+  }
+  wildcardLoading.value = true
+  try {
+    const res = await apiFetch<any>('/api/cloudflare/create-wildcard', {
+      method: 'POST',
+      body: JSON.stringify({ domain: dom }),
+    })
+    message.value = { type: 'success', text: res.message || `Wildcard *.${dom} created in Cloudflare!` }
+    setTimeout(() => (message.value = null), 6000)
+  } catch (err: any) {
+    message.value = { type: 'error', text: 'Failed to create wildcard: ' + err.message }
+  } finally {
+    wildcardLoading.value = false
+  }
 }
 
 async function fetchRemoteTunnelInfo() {
@@ -351,6 +422,7 @@ let metricsTimer: any = null
 
 onMounted(async () => {
   await loadConfig()
+  await loadBackendCfSettings()
   fetchStatus()
   fetchMetrics()
   fetchHealth()
@@ -678,6 +750,15 @@ onUnmounted(() => {
             <span>Add Rule</span>
           </button>
           <button
+            @click="syncAllDnsRoutes"
+            :disabled="syncLoading"
+            class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-cyan-300 border-cyan-800 bg-cyan-950/30 hover:bg-cyan-900/50"
+            title="Automatically create or verify DNS CNAME records in Cloudflare for all hostnames above"
+          >
+            <RefreshCw class="h-3.5 w-3.5" :class="syncLoading ? 'animate-spin' : ''" />
+            <span>{{ syncLoading ? 'Syncing DNS…' : 'Sync to Cloudflare DNS' }}</span>
+          </button>
+          <button
             @click="save(true)"
             :disabled="saving"
             class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-300 border-emerald-600 bg-emerald-950/40 hover:bg-emerald-900/50 font-medium"
@@ -947,6 +1028,54 @@ onUnmounted(() => {
 
         <div v-if="cfApiError" class="rounded-lg border border-red-500/40 bg-red-950/20 p-3 text-xs text-red-300 font-mono">
           {{ cfApiError }}
+        </div>
+
+        <!-- Automated DNS Management Actions Card -->
+        <div class="rounded-xl border border-cyan-900/40 bg-cyan-950/20 p-4 space-y-3">
+          <div class="flex items-center gap-2">
+            <Zap class="h-4 w-4 text-cyan-400" />
+            <h3 class="text-xs font-bold uppercase tracking-wider text-cyan-300">Automated DNS Route Management</h3>
+          </div>
+          <p class="text-xs text-slate-400">
+            DockTun automatically uses your API Token to create or update Cloudflare CNAME records (<code class="text-cyan-300 font-mono">{{ tunnelId || 'tunnel-id' }}.cfargotunnel.com</code>) whenever you expose containers or save ingress routes.
+          </p>
+
+          <div class="flex flex-wrap items-center gap-3 pt-1">
+            <button
+              @click="syncAllDnsRoutes"
+              :disabled="syncLoading || !cfApiToken"
+              class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-300 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/60"
+            >
+              <RefreshCw class="h-3.5 w-3.5" :class="syncLoading ? 'animate-spin' : ''" />
+              <span>{{ syncLoading ? 'Syncing DNS…' : 'Sync All Ingress Routes to Cloudflare DNS' }}</span>
+            </button>
+          </div>
+
+          <!-- Wildcard Route Creator -->
+          <div class="pt-3 border-t border-cyan-900/30 space-y-2">
+            <div class="text-[11px] font-semibold text-slate-300">
+              1-Click Wildcard Route (*.yourdomain.com):
+            </div>
+            <p class="text-[11px] text-slate-400">
+              Creates a wildcard CNAME in Cloudflare DNS so any subdomain you ever add routes to this tunnel automatically with zero configuration.
+            </p>
+            <div class="flex flex-col sm:flex-row sm:items-center gap-2.5">
+              <input
+                v-model="wildcardDomainInput"
+                type="text"
+                placeholder="e.g. yourdomain.com"
+                class="cyber-input text-xs font-mono max-w-xs"
+              />
+              <button
+                @click="createWildcardRoute"
+                :disabled="wildcardLoading || !cfApiToken || !wildcardDomainInput"
+                class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-300 border-emerald-600 bg-emerald-950/40 hover:bg-emerald-900/60"
+              >
+                <CheckCircle2 class="h-3.5 w-3.5" :class="wildcardLoading ? 'animate-spin' : ''" />
+                <span>{{ wildcardLoading ? 'Creating…' : 'Create Wildcard DNS (*.domain)' }}</span>
+              </button>
+            </div>
+          </div>
         </div>
 
         <!-- Remote Tunnel Details from Cloudflare API -->

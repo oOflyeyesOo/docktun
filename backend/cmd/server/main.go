@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
   "context"
@@ -56,9 +56,10 @@ func main() {
   }))
 
   dataDir := filepath.Dir(cfg.DBPath)
+  cfAPISvc := service.NewCloudflareAPI(database)
   projectsSvc := service.NewProjects(database, cfg.SelfPath)
   dockerRunSvc := service.NewDockerRun(database, projectsSvc)
-  dockerContainersSvc := service.NewDockerContainers(cfg, database, configSvc, cfdSvc)
+  dockerContainersSvc := service.NewDockerContainers(cfg, database, configSvc, cfdSvc, cfAPISvc)
   meshSvc := service.NewMeshService(dataDir)
 
   statusHandler := handler.NewStatus(cfdSvc, cfg)
@@ -75,6 +76,7 @@ func main() {
   dockerRunHandler := handler.NewDockerRun(dockerRunSvc, auditSvc)
   dockerContainersHandler := handler.NewDockerContainers(dockerContainersSvc)
   meshHandler := handler.NewMesh(meshSvc)
+  cloudflareHandler := handler.NewCloudflareHandler(cfAPISvc, configSvc)
 
   r.Post("/auth/login", authHandler.Login)
   r.Get("/api/logs/ws", logsHandler.Stream)
@@ -147,6 +149,11 @@ func main() {
 
     r.Post("/api/docker/run", dockerRunHandler.Run)
     r.Get("/api/docker/run/output/{id}", dockerRunHandler.Output)
+
+    r.Get("/api/cloudflare/settings", cloudflareHandler.GetSettings)
+    r.Post("/api/cloudflare/settings", cloudflareHandler.SaveSettings)
+    r.Post("/api/cloudflare/sync-all", cloudflareHandler.SyncAllRoutes)
+    r.Post("/api/cloudflare/create-wildcard", cloudflareHandler.CreateWildcard)
   })
 
   srv := &http.Server{

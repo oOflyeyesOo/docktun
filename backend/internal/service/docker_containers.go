@@ -1,4 +1,4 @@
-﻿package service
+package service
 
 import (
 	"context"
@@ -108,14 +108,16 @@ type DockerContainers struct {
 	db          *db.DB
 	configMgr   *ConfigManager
 	cloudflared *Cloudflared
+	cfAPI       *CloudflareAPI
 }
 
-func NewDockerContainers(cfg *config.Config, db *db.DB, configMgr *ConfigManager, cloudflared *Cloudflared) *DockerContainers {
+func NewDockerContainers(cfg *config.Config, db *db.DB, configMgr *ConfigManager, cloudflared *Cloudflared, cfAPI *CloudflareAPI) *DockerContainers {
 	return &DockerContainers{
 		cfg:         cfg,
 		db:          db,
 		configMgr:   configMgr,
 		cloudflared: cloudflared,
+		cfAPI:       cfAPI,
 	}
 }
 
@@ -959,6 +961,15 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 		if err := s.cloudflared.Restart(); err != nil {
 			log.Printf("[docktun] cloudflared restart error: %v", err)
 		}
+	}
+
+	// Automatically create or verify DNS CNAME record in Cloudflare
+	if settings.Mode == "public" && cleanHost != "" && s.cfAPI != nil && doc.Tunnel != "" {
+		go func(host, tid string) {
+			if err := s.cfAPI.SyncDNSRecord(host, tid); err != nil {
+				log.Printf("[docktun] Cloudflare DNS sync notice for %s: %v", host, err)
+			}
+		}(cleanHost, doc.Tunnel)
 	}
 
 	return nil
