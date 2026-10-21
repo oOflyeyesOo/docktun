@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"strings"
 
 	"github.com/luzyver/docktun/internal/config"
 	"github.com/luzyver/docktun/internal/service"
@@ -22,10 +24,11 @@ func NewStatus(cfd *service.Cloudflared, cfg *config.Config) *Status {
 
 type statusResponse struct {
 	service.ProcessState
-	TunnelName   string   `json:"tunnel_name"`
-	Hostnames    []string `json:"hostnames"`
-	IngressCount int      `json:"ingress_count"`
-	Metrics      string   `json:"metrics,omitempty"`
+	TunnelName     string   `json:"tunnel_name"`
+	Hostnames      []string `json:"hostnames"`
+	IngressCount   int      `json:"ingress_count"`
+	Metrics        string   `json:"metrics,omitempty"`
+	ZeroconfStatus string   `json:"zeroconf_status,omitempty"`
 }
 
 func (h *Status) Get(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +46,13 @@ func (h *Status) Get(w http.ResponseWriter, r *http.Request) {
 			body, _ := io.ReadAll(metricsResp.Body)
 			resp.Metrics = string(body)
 		}
+	}
+
+	// Check Zeroconf proxy container status
+	if zcOut, err := exec.Command("docker", "inspect", "-f", "{{.State.Status}}", "docktun-zeroconf").Output(); err == nil {
+		resp.ZeroconfStatus = strings.TrimSpace(string(zcOut))
+	} else {
+		resp.ZeroconfStatus = "not found"
 	}
 
 	w.Header().Set("Content-Type", "application/json")

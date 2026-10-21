@@ -737,14 +737,20 @@ func (s *DockerContainers) Remove(id string, force bool) error {
 	return dockerCommand(args...)
 }
 
-func (s *DockerContainers) Logs(id string, tail int) (string, error) {
+func (s *DockerContainers) Logs(id string, tail int, timestamps bool) (string, error) {
 	if tail <= 0 {
 		tail = 100
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "docker", "logs", "--tail", strconv.Itoa(tail), id)
+	args := []string{"logs", "--tail", strconv.Itoa(tail)}
+	if timestamps {
+		args = append(args, "--timestamps")
+	}
+	args = append(args, id)
+
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("docker logs failed: %w", err)

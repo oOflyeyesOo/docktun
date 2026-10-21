@@ -118,11 +118,12 @@ func (h *DockerContainers) Remove(w http.ResponseWriter, r *http.Request) {
 func (h *DockerContainers) Logs(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
+	timestamps := r.URL.Query().Get("timestamps") == "true"
 	if tail <= 0 {
 		tail = 100
 	}
 
-	logs, err := h.svc.Logs(id, tail)
+	logs, err := h.svc.Logs(id, tail, timestamps)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

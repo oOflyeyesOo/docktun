@@ -8,6 +8,7 @@ import {
   Trash2,
   ScrollText,
   Shield,
+  ShieldAlert,
   ShieldCheck,
   Globe,
   Lock,
@@ -179,7 +180,28 @@ const modalLogsLoading = ref(false)
 const modalLogsTail = ref(200)
 const modalLogsWrap = ref(true)
 const modalLogsAutoRefresh = ref(false)
+const modalLogsTimestamps = ref(false)
+const modalLogsFilter = ref('')
 let modalLogsTimer: any = null
+
+const filteredModalLogs = computed(() => {
+  if (!modalLogsText.value) return ''
+  if (!modalLogsFilter.value.trim()) return modalLogsText.value
+  const query = modalLogsFilter.value.toLowerCase()
+  return modalLogsText.value
+    .split('\n')
+    .filter((line) => line.toLowerCase().includes(query))
+    .join('\n')
+})
+
+const matchingLinesCount = computed(() => {
+  if (!modalLogsText.value || !modalLogsFilter.value.trim()) return null
+  const total = modalLogsText.value.split('\n').length
+  const matched = filteredModalLogs.value ? filteredModalLogs.value.split('\n').length : 0
+  return { matched, total }
+})
+
+const disconnectingNetwork = ref<Record<string, boolean>>({})
 
 // Copied feedback helper
 const copiedKey = ref<string | null>(null)
@@ -642,12 +664,34 @@ async function fetchModalLogs() {
   if (!selectedContainer.value) return
   modalLogsLoading.value = true
   try {
-    const res = await apiFetch<{ logs: string }>(`/api/docker/containers/${selectedContainer.value.id}/logs?tail=${modalLogsTail.value}`)
+    const res = await apiFetch<{ logs: string }>(
+      `/api/docker/containers/${selectedContainer.value.id}/logs?tail=${modalLogsTail.value}&timestamps=${modalLogsTimestamps.value}`
+    )
     modalLogsText.value = res.logs || 'No logs recorded.'
   } catch (error: any) {
     modalLogsText.value = 'Failed to load logs: ' + error.message
   } finally {
     modalLogsLoading.value = false
+  }
+}
+
+async function disconnectFromCloudflared(container: any) {
+  if (!container) return
+  disconnectingNetwork.value[container.id] = true
+  try {
+    await apiFetch(`/api/docker/containers/${container.id}/network/disconnect`, {
+      method: 'POST',
+      body: JSON.stringify({ network: 'cloudflared' }),
+    })
+    container.connected_to_cloudflared = false
+    if (selectedContainer.value && selectedContainer.value.id === container.id) {
+      selectedContainer.value.connected_to_cloudflared = false
+    }
+    await fetchContainers()
+  } catch (e: any) {
+    alert('Failed to disconnect from Cloudflare network: ' + e.message)
+  } finally {
+    disconnectingNetwork.value[container.id] = false
   }
 }
 
@@ -937,9 +981,19 @@ onUnmounted(() => {
             <div class="flex flex-wrap items-center gap-3 pt-1 text-xs">
               <div class="flex items-center gap-1.5 font-mono">
                 <span class="text-slate-500 font-sans text-[11px]">Local:</span>
-                <span class="text-violet-300 font-semibold">http://{{ container.name }}.local:{{ getPrimaryPort(container.ports) }}</span>
+                <a
+                  :href="`http://${container.name}.local`"
+                  target="_blank"
+                  rel="noopener"
+                  @click.stop
+                  class="inline-flex items-center gap-1 text-violet-300 hover:text-violet-200 hover:underline font-semibold"
+                  title="Open local .local address"
+                >
+                  <span>http://{{ container.name }}.local</span>
+                  <ExternalLink class="h-3 w-3 text-violet-400/80" />
+                </a>
                 <button
-                  @click.stop="copyToClipboard('mdns-' + container.id, `http://${container.name}.local:${getPrimaryPort(container.ports)}`)"
+                  @click.stop="copyToClipboard('mdns-' + container.id, `http://${container.name}.local`)"
                   class="text-slate-500 hover:text-slate-300 ml-0.5"
                   title="Copy local .local URL"
                 >
@@ -1567,39 +1621,48 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <!-- Internal Network & Ports Info Row -->
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-                <!-- Internal Docker Address -->
-                <div class="rounded-lg border border-slate-800/80 bg-slate-900/60 p-3 space-y-1">
-                  <div class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                    <Network class="h-3.5 w-3.5 text-emerald-400" />
-                    <span>Internal Docker Network</span>
+              <!-- Compact Internal Networking Details -->
+              <div class="rounded-lg border border-slate-800/80 bg-slate-900/40 p-3 space-y-2">
+                <div class="flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+                  <div class="flex items-center gap-2">
+                    <span class="text-slate-500 font-sans text-[11px] uppercase tracking-wider font-semibold">Docker DNS:</span>
+                    <span class="text-emerald-400 font-bold">http://{{ selectedContainer.name }}:{{ getPrimaryPort(selectedContainer.ports) || '80' }}</span>
                   </div>
-                  <div class="font-mono text-xs text-emerald-300">
-                    http://{{ selectedContainer.name }}:{{ getPrimaryPort(selectedContainer.ports) || '80' }}
+                  <div class="flex items-center gap-2">
+                    <span class="text-slate-500 font-sans text-[11px] uppercase tracking-wider font-semibold">Host Port Mapping:</span>
+                    <span :class="selectedContainer.ports ? 'text-amber-300 font-bold' : 'text-slate-500 font-sans'">
+                      {{ selectedContainer.ports || 'None (mDNS proxy only)' }}
+                    </span>
                   </div>
-                  <p class="text-[11px] text-slate-500">
-                    Used for container-to-container calls inside Docker (e.g. linked services in docker-compose.yml).
-                  </p>
                 </div>
-
-                <!-- Host Port Mapping -->
-                <div class="rounded-lg border border-slate-800/80 bg-slate-900/60 p-3 space-y-1">
-                  <div class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                    <HardDrive class="h-3.5 w-3.5 text-amber-400" />
-                    <span>Host Port Mapping</span>
-                  </div>
-                  <div v-if="selectedContainer.ports" class="font-mono text-xs text-amber-300 truncate" :title="selectedContainer.ports">
-                    {{ selectedContainer.ports }}
-                  </div>
-                  <div v-else class="text-xs text-slate-500">
-                    No direct host ports mapped (routes via .local or internal network).
-                  </div>
-                  <p class="text-[11px] text-slate-500">
-                    Port bindings exposed directly on the Docker host server.
-                  </p>
-                </div>
+                <p class="text-[11px] text-slate-500 font-sans border-t border-slate-800/60 pt-2 leading-relaxed">
+                  <span class="text-slate-400 font-semibold">Note:</span> Docker DNS & host port mappings are internal routing details for container-to-container links. On your local network, browse directly with zero port numbers via <span class="text-violet-300 font-mono font-bold">http://{{ selectedContainer.name }}.local</span>.
+                </p>
               </div>
+            </div>
+
+            <!-- Cloudflared Network Pruning Notice (If connected without public route) -->
+            <div
+              v-if="selectedContainer.connected_to_cloudflared && getExpose(selectedContainer.id).mode !== 'public'"
+              class="rounded-xl border border-amber-900/40 bg-amber-950/20 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+            >
+              <div class="space-y-1">
+                <div class="flex items-center gap-1.5 text-xs font-bold text-amber-300">
+                  <ShieldAlert class="h-4 w-4" />
+                  <span>Attached to Cloudflared Network (No Public Ingress)</span>
+                </div>
+                <p class="text-xs text-slate-400 leading-relaxed">
+                  This container is attached to the Docker <code class="text-slate-300 font-mono">cloudflared</code> network, but has no public tunnel route configured. Disconnect it to keep it completely internal.
+                </p>
+              </div>
+              <button
+                @click="disconnectFromCloudflared(selectedContainer)"
+                :disabled="disconnectingNetwork[selectedContainer.id]"
+                class="cyber-btn-secondary text-xs text-amber-300 border-amber-800 hover:bg-amber-900/40 whitespace-nowrap self-start sm:self-auto flex items-center gap-1.5"
+              >
+                <RotateCcw v-if="disconnectingNetwork[selectedContainer.id]" class="h-3 w-3 animate-spin" />
+                <span>{{ disconnectingNetwork[selectedContainer.id] ? 'Disconnecting…' : 'Disconnect from Cloudflare' }}</span>
+              </button>
             </div>
 
             <!-- 2. OPTIONAL PUBLIC INGRESS (Cloudflare Tunnel) -->
@@ -2077,22 +2140,37 @@ onUnmounted(() => {
           <!-- ============================================== -->
           <!-- TAB 6: REALTIME LOGS                           -->
           <!-- ============================================== -->
-          <div v-else-if="selectedTab === 'logs'" class="space-y-4">
-            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
-              <div class="flex items-center gap-2">
-                <ScrollText class="h-4 w-4 text-cyan-400" />
-                <span class="text-xs font-mono text-slate-300">Container Output Stream</span>
+          <div v-else-if="selectedTab === 'logs'" class="space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+              <div class="space-y-0.5">
+                <div class="flex flex-wrap items-center gap-2">
+                  <ScrollText class="h-4 w-4 text-cyan-400" />
+                  <span class="text-sm font-bold text-slate-100 font-mono">{{ selectedContainer.name }}</span>
+                  <span class="rounded bg-slate-800 px-2 py-0.5 text-[10px] text-slate-400 font-mono">{{ selectedContainer.image }}</span>
+                  <span class="inline-flex items-center gap-1 rounded bg-emerald-950/60 border border-emerald-800/50 px-2 py-0.5 text-[10px] text-emerald-400 font-medium">
+                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    Isolated Service Logs
+                  </span>
+                </div>
+                <p class="text-[11px] text-slate-500 font-mono">
+                  Streaming stdout & stderr exclusively for container <span class="text-slate-400 font-bold">{{ selectedContainer.id?.slice(0, 12) }}</span>
+                </p>
               </div>
 
-              <div class="flex items-center gap-3">
+              <div class="flex flex-wrap items-center gap-2">
                 <label class="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
                   <input type="checkbox" v-model="modalLogsAutoRefresh" class="rounded bg-slate-950" />
-                  <span>Live Stream (3s)</span>
+                  <span>Live (3s)</span>
+                </label>
+
+                <label class="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
+                  <input type="checkbox" v-model="modalLogsTimestamps" @change="fetchModalLogs" class="rounded bg-slate-950" />
+                  <span>Timestamps</span>
                 </label>
 
                 <label class="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
                   <input type="checkbox" v-model="modalLogsWrap" class="rounded bg-slate-950" />
-                  <span>Wrap Text</span>
+                  <span>Wrap</span>
                 </label>
 
                 <select
@@ -2107,7 +2185,7 @@ onUnmounted(() => {
                 </select>
 
                 <button
-                  @click="copyToClipboard('logs', modalLogsText)"
+                  @click="copyToClipboard('logs', filteredModalLogs)"
                   class="cyber-btn-secondary text-xs flex items-center gap-1"
                   title="Copy logs"
                 >
@@ -2127,18 +2205,44 @@ onUnmounted(() => {
               </div>
             </div>
 
+            <!-- Filter Input Strip -->
+            <div class="flex items-center justify-between gap-3 bg-slate-900/60 border border-slate-800/80 rounded-lg px-3 py-1.5">
+              <div class="flex items-center gap-2 flex-1">
+                <Search class="h-3.5 w-3.5 text-slate-500" />
+                <input
+                  v-model="modalLogsFilter"
+                  type="text"
+                  placeholder="Filter service logs (case-insensitive substring)..."
+                  class="w-full bg-transparent text-xs text-slate-200 placeholder-slate-500 focus:outline-none font-mono"
+                />
+              </div>
+              <span v-if="matchingLinesCount" class="text-[10px] text-cyan-400 font-mono whitespace-nowrap">
+                {{ matchingLinesCount.matched }} / {{ matchingLinesCount.total }} lines
+              </span>
+              <button
+                v-if="modalLogsFilter"
+                @click="modalLogsFilter = ''"
+                class="text-slate-500 hover:text-slate-300 text-xs"
+              >
+                Clear
+              </button>
+            </div>
+
             <!-- Terminal Output Box -->
             <div
               class="max-h-[58vh] overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-4 font-mono text-xs leading-5 text-slate-300"
             >
               <div v-if="modalLogsLoading" class="text-slate-500 flex items-center gap-2">
-                <RotateCcw class="h-3.5 w-3.5 animate-spin" /> Fetching latest logs…
+                <RotateCcw class="h-3.5 w-3.5 animate-spin" /> Fetching latest logs for {{ selectedContainer.name }}…
+              </div>
+              <div v-else-if="!filteredModalLogs" class="text-slate-500 text-center py-6">
+                {{ modalLogsFilter ? 'No lines matching filter query.' : 'No logs recorded for this service container.' }}
               </div>
               <pre
                 v-else
                 class="font-mono text-[11px] leading-relaxed"
                 :class="modalLogsWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-auto'"
-              >{{ modalLogsText }}</pre>
+              >{{ filteredModalLogs }}</pre>
             </div>
           </div>
         </div>
