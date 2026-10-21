@@ -74,6 +74,13 @@ const message = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 const metrics = ref<MetricsData | null>(null)
 const health = ref<HealthItem[]>([])
 const healthLoading = ref(false)
+const tunnelStatus = ref<any>(null)
+
+async function fetchStatus() {
+  try {
+    tunnelStatus.value = await apiFetch('/api/status')
+  } catch {}
+}
 
 // Backups State
 const backups = ref<BackupItem[]>([])
@@ -344,6 +351,7 @@ let metricsTimer: any = null
 
 onMounted(async () => {
   await loadConfig()
+  fetchStatus()
   fetchMetrics()
   fetchHealth()
   loadBackups()
@@ -351,9 +359,10 @@ onMounted(async () => {
     fetchRemoteTunnelInfo()
   }
 
-  // Poll metrics every 10s
+  // Poll telemetry every 10s
   metricsTimer = setInterval(() => {
     if (document.visibilityState === 'visible') {
+      fetchStatus()
       fetchMetrics()
     }
   }, 10000)
@@ -481,9 +490,15 @@ onUnmounted(() => {
           </div>
           <div class="flex items-center gap-2 text-[11px] text-slate-400">
             <span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-300 font-mono">{{ protocol }}</span>
-            <span class="flex items-center gap-1 text-emerald-400">
-              <span class="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              Active
+            <span
+              class="flex items-center gap-1 font-semibold"
+              :class="tunnelStatus?.running ? 'text-emerald-400' : 'text-red-400'"
+            >
+              <span
+                class="h-2 w-2 rounded-full"
+                :class="tunnelStatus?.running ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'"
+              ></span>
+              {{ tunnelStatus?.running ? 'Active' : (tunnelStatus?.status ? `Degraded (${tunnelStatus.status})` : 'Degraded') }}
             </span>
           </div>
         </div>
@@ -495,7 +510,7 @@ onUnmounted(() => {
             <Activity class="h-4 w-4 text-emerald-400" />
           </div>
           <div class="text-2xl font-bold font-mono text-emerald-400">
-            {{ metrics?.total_requests?.toLocaleString() || '0' }}
+            {{ tunnelStatus?.running ? (metrics?.total_requests?.toLocaleString() || '0') : '0' }}
           </div>
           <p class="text-[11px] text-slate-500">Cumulative ingress proxy traffic</p>
         </div>
@@ -507,7 +522,7 @@ onUnmounted(() => {
             <Network class="h-4 w-4 text-violet-400" />
           </div>
           <div class="text-2xl font-bold font-mono text-violet-300">
-            {{ metrics?.active_connections || '4' }}
+            {{ tunnelStatus?.running ? (metrics?.active_connections ?? 0) : 0 }}
           </div>
           <p class="text-[11px] text-slate-500">QUIC / HTTP2 streams to Cloudflare edge</p>
         </div>
@@ -523,6 +538,35 @@ onUnmounted(() => {
           </div>
           <p class="text-[11px] text-slate-500">Active ingress mappings</p>
         </div>
+      </div>
+
+      <!-- Diagnostic Alert Banner when Tunnel is Degraded -->
+      <div
+        v-if="tunnelStatus && !tunnelStatus.running"
+        class="rounded-lg border border-red-900/60 bg-red-950/40 p-4 text-xs text-red-200 flex flex-col sm:flex-row sm:items-start justify-between gap-3"
+      >
+        <div class="flex items-start gap-2.5">
+          <AlertCircle class="h-4 w-4 text-red-400 mt-0.5 shrink-0" />
+          <div class="space-y-1.5">
+            <p class="font-semibold text-red-300">
+              Cloudflare Tunnel Daemon is {{ tunnelStatus.status || 'degraded' }}
+            </p>
+            <p v-if="tunnelStatus.last_error" class="font-mono text-[11px] text-red-300/90 bg-red-950/70 p-2.5 rounded border border-red-900/40 whitespace-pre-wrap leading-relaxed">
+              {{ tunnelStatus.last_error }}
+            </p>
+            <p v-else class="text-slate-400 text-[11px]">
+              The container is not active. Check credentials in /etc/cloudflared/credentials.json or restart the tunnel daemon.
+            </p>
+          </div>
+        </div>
+        <button
+          @click="restartTunnel"
+          :disabled="saving"
+          class="cyber-btn text-xs flex items-center gap-1.5 py-1 px-3 border-red-800 bg-red-950/60 hover:bg-red-900/70 text-red-200 shrink-0 self-start sm:self-auto"
+        >
+          <RotateCcw class="h-3 w-3" :class="saving ? 'animate-spin' : ''" />
+          <span>Restart Daemon</span>
+        </button>
       </div>
 
       <!-- HTTP Status Code Breakdown -->

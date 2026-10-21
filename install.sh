@@ -637,11 +637,27 @@ if [ "$RESUME_PREVIOUS" = true ]; then
         fi
     fi
     [ -f "$SCRIPT_DIR/cloudflared/credentials.json" ] && chmod 644 "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true
+    if [ -f "$CF_CERT_PATH" ]; then
+        cp "$CF_CERT_PATH" "$SCRIPT_DIR/cloudflared/cert.pem" 2>/dev/null || true
+        chmod 600 "$SCRIPT_DIR/cloudflared/cert.pem" 2>/dev/null || true
+        LOGIN_SUCCESSFUL=true
+    fi
 
     success "Tunnel configuration restored: ${TUNNEL_NAME} (${TUNNEL_ID})"
 
     if [ -z "$DOCKTUN_DOMAIN" ] || [ "$DOCKTUN_DOMAIN" = "docktun.example.com" ]; then
         prompt_read "Enter the public domain/hostname for DockTun Web UI (e.g. docktun.example.com): " DOCKTUN_DOMAIN "docktun.example.com"
+    fi
+
+    # Register DNS route in Cloudflare if certificate is present
+    if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_ID" ] && [ -n "$DOCKTUN_DOMAIN" ] && [ "$DOCKTUN_DOMAIN" != "docktun.example.com" ]; then
+        info "Ensuring DNS route in Cloudflare: $DOCKTUN_DOMAIN -> $TUNNEL_ID..."
+        if dns_res=$(cloudflared tunnel route dns "$TUNNEL_ID" "$DOCKTUN_DOMAIN" 2>&1); then
+            success "Cloudflare DNS route configured: $DOCKTUN_DOMAIN"
+        else
+            warn "Cloudflare CLI returned: $dns_res"
+            info "If the DNS record already exists, you can safely continue."
+        fi
     fi
 else
     # Discover all existing tunnels across ~/.cloudflared, /root/.cloudflared, and Cloudflare account
@@ -843,10 +859,14 @@ else
     prompt_read "Enter the public domain/hostname for DockTun Web UI (Default: ${DEFAULT_DOM}): " DOCKTUN_DOMAIN "$DEFAULT_DOM"
 
     # Automatically create DNS CNAME if logged in
-    if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_NAME" ] && [ -n "$DOCKTUN_DOMAIN" ]; then
-        info "Registering DNS route in Cloudflare: $DOCKTUN_DOMAIN -> $TUNNEL_NAME..."
-        cloudflared tunnel route dns "$TUNNEL_NAME" "$DOCKTUN_DOMAIN" 2>/dev/null || true
-        success "DNS route configured in Cloudflare."
+    if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_ID" ] && [ -n "$DOCKTUN_DOMAIN" ] && [ "$DOCKTUN_DOMAIN" != "docktun.example.com" ]; then
+        info "Registering DNS route in Cloudflare: $DOCKTUN_DOMAIN -> $TUNNEL_ID..."
+        if dns_res=$(cloudflared tunnel route dns "$TUNNEL_ID" "$DOCKTUN_DOMAIN" 2>&1); then
+            success "Cloudflare DNS route configured: $DOCKTUN_DOMAIN"
+        else
+            warn "Cloudflare CLI returned: $dns_res"
+            info "If the DNS record already exists, you can safely continue."
+        fi
     fi
 fi
 
@@ -1102,9 +1122,13 @@ EOF
 
                     if [ -n "$C_HOST" ]; then
                         IMPORTED_INGRESS+=("  - hostname: $C_HOST"$'\n'"    service: http://$cname:$C_PORT")
-                        if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_NAME" ]; then
-                            info "Configuring Cloudflare DNS route: $C_HOST -> $TUNNEL_NAME..."
-                            cloudflared tunnel route dns "$TUNNEL_NAME" "$C_HOST" 2>/dev/null || true
+                        if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_ID" ]; then
+                            info "Configuring Cloudflare DNS route: $C_HOST -> $TUNNEL_ID..."
+                            if dns_c_res=$(cloudflared tunnel route dns "$TUNNEL_ID" "$C_HOST" 2>&1); then
+                                success "DNS route configured in Cloudflare: $C_HOST"
+                            else
+                                warn "Cloudflare CLI returned: $dns_c_res"
+                            fi
                         fi
                         success "Added ingress rule for $C_HOST -> http://$cname:$C_PORT"
                     fi
@@ -1275,6 +1299,15 @@ if [ ${#IMPORTED_INGRESS[@]} -gt 0 ]; then
     done
     echo ""
 fi
+
+echo -e "${C_CYAN}${C_BOLD}⭐ AUTOMATIC CLOUDFLARE ROUTING (RECOMMENDED):${C_RESET}"
+echo -e "  To route any container or project automatically without manual DNS edits, add a Wildcard CNAME in Cloudflare DNS:"
+echo -e "    • Type:         ${C_YELLOW}CNAME${C_RESET}"
+echo -e "    • Name:         ${C_YELLOW}*${C_RESET} (or *.yourdomain.com)"
+echo -e "    • Target:       ${C_CYAN}${TUNNEL_ID}.cfargotunnel.com${C_RESET}"
+echo -e "    • Proxy Status: ${C_GREEN}Proxied (Orange Cloud ON)${C_RESET}"
+echo -e "  Once set, all subdomains added in DockTun route to your containers immediately!"
+echo ""
 
 echo -e "${C_BOLD}Useful Management Commands:${C_RESET}"
 echo -e "  View logs:          ${C_CYAN}$DOCKER_COMPOSE_CMD logs -f${C_RESET}"

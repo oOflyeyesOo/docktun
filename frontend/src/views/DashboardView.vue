@@ -224,6 +224,35 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- Tunnel Degraded Diagnostic Banner -->
+    <div
+      v-if="!isTunnelRunning && status"
+      class="rounded-lg border border-red-900/60 bg-red-950/40 p-3.5 text-xs text-red-200 flex flex-col sm:flex-row sm:items-start justify-between gap-3"
+    >
+      <div class="flex items-start gap-2.5">
+        <AlertCircle class="h-4 w-4 text-red-400 mt-0.5 shrink-0" />
+        <div class="space-y-1">
+          <p class="font-semibold text-red-300">
+            Cloudflare Tunnel daemon is {{ status?.status || 'degraded' }}
+          </p>
+          <p v-if="status?.last_error" class="font-mono text-[11px] text-red-300/80 bg-red-950/70 p-2 rounded border border-red-900/40 whitespace-pre-wrap">
+            {{ status.last_error }}
+          </p>
+          <p v-else class="text-slate-400 text-[11px]">
+            Check <code class="text-slate-300 font-mono">docker logs docktun-cloudflared</code> or check credentials in ./cloudflared/credentials.json.
+          </p>
+        </div>
+      </div>
+      <button
+        @click="controlTunnel('restart')"
+        :disabled="!!actionLoading"
+        class="cyber-btn text-xs flex items-center gap-1.5 py-1 px-3 border-red-800 bg-red-950/50 hover:bg-red-900/60 text-red-200 shrink-0 self-start sm:self-auto"
+      >
+        <RotateCcw class="h-3 w-3" :class="actionLoading === 'restart' ? 'animate-spin' : ''" />
+        <span>Restart Daemon</span>
+      </button>
+    </div>
+
     <!-- 4 Balanced Telemetry Metric Cards -->
     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <!-- 1. Cloudflare Tunnel Card -->

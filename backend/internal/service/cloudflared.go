@@ -1,4 +1,4 @@
-﻿package service
+package service
 
 import (
 	"encoding/json"
@@ -20,6 +20,7 @@ type ProcessState struct {
 	Status      string `json:"status"`
 	Version     string `json:"version,omitempty"`
 	MemoryUsage string `json:"memory_usage,omitempty"`
+	LastError   string `json:"last_error,omitempty"`
 }
 
 type Cloudflared struct {
@@ -59,7 +60,7 @@ func (s *Cloudflared) Status() ProcessState {
 	cName := s.findContainer()
 	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Status}} {{.State.StartedAt}}", cName).Output()
 	if err != nil {
-		return ProcessState{Running: false, Status: "not found"}
+		return ProcessState{Running: false, Status: "not found", LastError: fmt.Sprintf("Cloudflared container '%s' was not found", cName)}
 	}
 
 	parts := strings.Fields(strings.TrimSpace(string(out)))
@@ -94,6 +95,12 @@ func (s *Cloudflared) Status() ProcessState {
 	mem := s.cachedMem
 	s.mu.RUnlock()
 
+	var lastErr string
+	if !running {
+		logOut, _ := exec.Command("docker", "logs", "--tail", "6", cName).CombinedOutput()
+		lastErr = strings.TrimSpace(string(logOut))
+	}
+
 	return ProcessState{
 		Running:     running,
 		StartTime:   parts[1],
@@ -101,6 +108,7 @@ func (s *Cloudflared) Status() ProcessState {
 		Status:      status,
 		Version:     s.cachedVer,
 		MemoryUsage: mem,
+		LastError:   lastErr,
 	}
 }
 
