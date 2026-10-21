@@ -349,19 +349,22 @@ async function removeContainer(container: ContainerItem) {
   }
 }
 
+const exposeMsg = ref<Record<string, { type: 'success' | 'error'; text: string }>>({})
+
 function toggleExposeDrawer(container: ContainerItem) {
   if (exposeDrawerId.value === container.id) {
     exposeDrawerId.value = null
   } else {
     exposeDrawerId.value = container.id
+    const pPort = getPrimaryPort(container.ports)
     if (!exposeForm.value[container.id]) {
       exposeForm.value[container.id] = {
         mode: container.exposure_mode || 'internal',
         hostname: container.hostname || '',
-        target: container.target || `http://${container.name}:80`,
+        target: container.target || `http://${container.name}:${pPort}`,
         private_type: container.private_type || 'tailscale',
         private_host: container.private_host || '',
-        private_port: container.private_port || 80,
+        private_port: container.private_port || parseInt(pPort, 10) || 80,
         notes: container.notes || '',
       }
     }
@@ -377,8 +380,24 @@ async function saveExposure(container: ContainerItem) {
       body: JSON.stringify(payload),
     })
     await fetchContainers()
+    if (selectedContainer.value && selectedContainer.value.id === container.id) {
+      selectedContainer.value.connected_to_cloudflared = payload.mode === 'public'
+      selectedContainer.value.exposure_mode = payload.mode
+      selectedContainer.value.hostname = payload.hostname
+      selectedContainer.value.target = payload.target
+    }
+    exposeMsg.value[container.id] = {
+      type: 'success',
+      text: payload.mode === 'public'
+        ? `Tunnel route applied! Service live on Cloudflare.`
+        : 'Access mode saved successfully!',
+    }
+    setTimeout(() => {
+      delete exposeMsg.value[container.id]
+    }, 6000)
     exposeDrawerId.value = null
   } catch (error: any) {
+    exposeMsg.value[container.id] = { type: 'error', text: 'Save failed: ' + error.message }
     alert(error.message || 'Failed to save exposure settings')
   } finally {
     exposeSaving.value[container.id] = false
@@ -393,14 +412,15 @@ async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' |
   selectedTab.value = tab
   detailLoading.value = true
 
+  const pPort = getPrimaryPort(c.ports)
   if (!exposeForm.value[c.id]) {
     exposeForm.value[c.id] = {
       mode: c.exposure_mode || 'internal',
       hostname: c.hostname || '',
-      target: c.target || `http://${c.name}:80`,
+      target: c.target || `http://${c.name}:${pPort}`,
       private_type: c.private_type || 'tailscale',
       private_host: c.private_host || '',
-      private_port: c.private_port || 80,
+      private_port: c.private_port || parseInt(pPort, 10) || 80,
       notes: c.notes || '',
     }
   }
@@ -408,6 +428,9 @@ async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' |
   try {
     const detail = await apiFetch<ContainerDetail>(`/api/docker/containers/${c.id}`)
     selectedContainer.value = detail
+    if (detail.connected_to_cloudflared !== undefined) {
+      c.connected_to_cloudflared = detail.connected_to_cloudflared
+    }
   } catch (err: any) {
     console.error('Failed to load container details:', err)
   } finally {
@@ -1710,9 +1733,12 @@ onUnmounted(() => {
                   <input
                     v-model="getExpose(selectedContainer.id).target"
                     type="text"
-                    :placeholder="`http://${selectedContainer.name}:80`"
+                    :placeholder="`http://${selectedContainer.name}:${getPrimaryPort(selectedContainer.ports)}`"
                     class="cyber-input text-xs font-mono"
                   />
+                  <p class="text-[10px] text-slate-500 font-mono mt-1">
+                    Internal target on cloudflared network: http://{{ selectedContainer.name }}:{{ getPrimaryPort(selectedContainer.ports) }}
+                  </p>
                 </div>
 
                 <!-- Private Mesh Options -->
@@ -1751,6 +1777,17 @@ onUnmounted(() => {
                 This container is kept private to your local network. It is not connected to Cloudflare and has no public internet route.
               </div>
 
+              <!-- DNS Requirement Note for Public Mode -->
+              <div v-if="getExpose(selectedContainer.id).mode === 'public'" class="rounded-lg border border-cyan-900/40 bg-cyan-950/20 p-3.5 text-xs text-slate-400 space-y-1.5">
+                <div class="flex items-center gap-1.5 text-cyan-300 font-semibold">
+                  <Globe class="h-4 w-4" />
+                  <span>Cloudflare DNS Requirement</span>
+                </div>
+                <p class="text-[11px] leading-relaxed">
+                  For your public URL to work, you must have a <strong class="text-cyan-300">CNAME</strong> record in your Cloudflare DNS dashboard pointing <strong class="text-slate-200 font-mono">{{ getExpose(selectedContainer.id).hostname || 'your-hostname' }}</strong> to your tunnel (<code class="text-cyan-400 font-mono">&lt;tunnel-id&gt;.cfargotunnel.com</code>) with the orange cloud (<strong class="text-cyan-300">Proxied</strong>) enabled.
+                </p>
+              </div>
+
               <!-- Active Public Link preview -->
               <div v-if="getExpose(selectedContainer.id).mode === 'public' && getExpose(selectedContainer.id).hostname" class="rounded border border-cyan-900/50 bg-cyan-950/30 p-3 flex items-center justify-between">
                 <div class="flex items-center gap-2 text-xs">
@@ -1775,22 +1812,31 @@ onUnmounted(() => {
                 </button>
               </div>
 
-              <div class="flex items-center justify-between pt-2 border-t border-slate-900">
-                <span class="text-xs text-slate-500">
-                  <span v-if="getExpose(selectedContainer.id).mode === 'public'">
-                    Connecting this container to Cloudflare Tunnel and applying routing.
-                  </span>
-                  <span v-else>
-                    Disconnects container from Cloudflare tunnel network.
-                  </span>
-                </span>
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-900">
+                <div class="space-y-0.5">
+                  <div v-if="exposeMsg[selectedContainer.id]" class="flex items-center gap-1.5 text-xs font-semibold" :class="exposeMsg[selectedContainer.id].type === 'success' ? 'text-emerald-400' : 'text-red-400'">
+                    <CheckCircle2 v-if="exposeMsg[selectedContainer.id].type === 'success'" class="h-3.5 w-3.5" />
+                    <AlertCircle v-else class="h-3.5 w-3.5" />
+                    <span>{{ exposeMsg[selectedContainer.id].text }}</span>
+                  </div>
+                  <div v-else class="text-xs text-slate-500">
+                    <span v-if="getExpose(selectedContainer.id).mode === 'public'">
+                      Public mode attaches container to <code class="text-slate-400">cloudflared</code> and applies tunnel routing.
+                    </span>
+                    <span v-else>
+                      Keeps container internal to local mDNS (.local) network only.
+                    </span>
+                  </div>
+                </div>
+
                 <button
                   @click="saveExposure(selectedContainer)"
                   :disabled="exposeSaving[selectedContainer.id]"
-                  class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-300 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/50"
+                  class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-300 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/50 self-start sm:self-auto"
                 >
-                  <ShieldCheck class="h-3.5 w-3.5" />
-                  <span>{{ exposeSaving[selectedContainer.id] ? 'Saving…' : 'Save Access Mode' }}</span>
+                  <RotateCcw v-if="exposeSaving[selectedContainer.id]" class="h-3.5 w-3.5 animate-spin" />
+                  <ShieldCheck v-else class="h-3.5 w-3.5" />
+                  <span>{{ exposeSaving[selectedContainer.id] ? 'Saving & Applying…' : 'Save Access Mode' }}</span>
                 </button>
               </div>
             </div>

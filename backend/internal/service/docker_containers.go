@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,10 +83,16 @@ type ContainerDetail struct {
 	ConnectedToCloudflared bool             `json:"connected_to_cloudflared"`
 }
 
+type cfOriginRequest struct {
+	NoTLSVerify    bool   `yaml:"noTLSVerify,omitempty"`
+	HTTPHostHeader string `yaml:"httpHostHeader,omitempty"`
+}
+
 type cfIngressRule struct {
-	Hostname string `yaml:"hostname,omitempty"`
-	Service  string `yaml:"service"`
-	Path     string `yaml:"path,omitempty"`
+	Hostname      string           `yaml:"hostname,omitempty"`
+	Service       string           `yaml:"service"`
+	Path          string           `yaml:"path,omitempty"`
+	OriginRequest *cfOriginRequest `yaml:"originRequest,omitempty"`
 }
 
 type cfConfigDoc struct {
@@ -776,6 +783,87 @@ func (s *DockerContainers) GetExposure(id string) (ExposureSettings, error) {
 	return s.getExposureFromDB(name), nil
 }
 
+func cleanHostname(h string) string {
+	h = strings.TrimSpace(h)
+	h = strings.TrimPrefix(h, "https://")
+	h = strings.TrimPrefix(h, "http://")
+	h = strings.TrimRight(h, "/")
+	if idx := strings.Index(h, ":"); idx != -1 {
+		h = h[:idx]
+	}
+	return strings.ToLower(h)
+}
+
+func (s *DockerContainers) detectPrimaryPort(nameOrID string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{json .NetworkSettings.Ports}}", nameOrID)
+	out, err := cmd.Output()
+	if err == nil {
+		var ports map[string]interface{}
+		if err := json.Unmarshal(out, &ports); err == nil {
+			commonPorts := []string{"80/tcp", "8080/tcp", "3000/tcp", "5000/tcp", "8000/tcp", "8888/tcp", "9000/tcp"}
+			for _, cp := range commonPorts {
+				if _, ok := ports[cp]; ok {
+					return strings.TrimSuffix(cp, "/tcp")
+				}
+			}
+			for p := range ports {
+				if strings.HasSuffix(p, "/tcp") {
+					return strings.TrimSuffix(p, "/tcp")
+				}
+			}
+		}
+	}
+	return "80"
+}
+
+func (s *DockerContainers) normalizeTarget(containerName, rawTarget string) string {
+	target := strings.TrimSpace(rawTarget)
+	defaultPort := s.detectPrimaryPort(containerName)
+	if target == "" {
+		return fmt.Sprintf("http://%s:%s", containerName, defaultPort)
+	}
+
+	scheme := "http://"
+	rest := target
+	if strings.HasPrefix(target, "http://") {
+		rest = strings.TrimPrefix(target, "http://")
+	} else if strings.HasPrefix(target, "https://") {
+		scheme = "https://"
+		rest = strings.TrimPrefix(target, "https://")
+	} else if strings.HasPrefix(target, "tcp://") {
+		scheme = "tcp://"
+		rest = strings.TrimPrefix(target, "tcp://")
+	}
+
+	hostPart := rest
+	portPart := ""
+	if idx := strings.Index(rest, "/"); idx != -1 {
+		hostPart = rest[:idx]
+	}
+	if strings.Contains(hostPart, ":") {
+		parts := strings.Split(hostPart, ":")
+		hostPart = parts[0]
+		portPart = parts[1]
+	}
+
+	if strings.HasSuffix(hostPart, ".local") {
+		hostPart = strings.TrimSuffix(hostPart, ".local")
+	}
+
+	if hostPart == "localhost" || hostPart == "127.0.0.1" {
+		hostPart = "host.docker.internal"
+	}
+
+	if portPart == "" {
+		portPart = defaultPort
+	}
+
+	return fmt.Sprintf("%s%s:%s", scheme, hostPart, portPart)
+}
+
 func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) error {
 	name, err := s.containerName(id)
 	if err != nil {
@@ -788,7 +876,9 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 
 	// 1. If public mode, connect container to cloudflared network; otherwise disconnect
 	if settings.Mode == "public" {
-		_ = s.ConnectNetwork(name, "cloudflared")
+		if err := s.ConnectNetwork(name, "cloudflared"); err != nil {
+			log.Printf("[docktun] connect network cloudflared for %s: %v", name, err)
+		}
 	} else {
 		_ = s.DisconnectNetwork(name, "cloudflared")
 	}
@@ -801,7 +891,12 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 	}
 
 	// 3. Persist in database
-	return s.saveExposureToDB(name, settings)
+	cleanSettings := settings
+	cleanSettings.Hostname = cleanHostname(settings.Hostname)
+	if cleanSettings.Mode == "public" {
+		cleanSettings.Target = s.normalizeTarget(name, settings.Target)
+	}
+	return s.saveExposureToDB(name, cleanSettings)
 }
 
 func (s *DockerContainers) syncCloudflareIngress(containerName string, settings ExposureSettings) error {
@@ -815,7 +910,9 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 		return fmt.Errorf("unmarshal cloudflared config: %w", err)
 	}
 
-	// Filter out any existing rule for this container
+	cleanHost := cleanHostname(settings.Hostname)
+
+	// Filter out any existing rule for this container or hostname
 	newIngress := make([]cfIngressRule, 0, len(doc.Ingress)+1)
 	for _, rule := range doc.Ingress {
 		// Ignore catch-all rule during filter
@@ -823,24 +920,21 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 			continue
 		}
 		// If rule matches container name or hostname
-		if strings.Contains(rule.Service, containerName) || (settings.Hostname != "" && rule.Hostname == settings.Hostname) {
+		if strings.Contains(rule.Service, containerName) || (cleanHost != "" && cleanHostname(rule.Hostname) == cleanHost) {
 			continue
 		}
 		newIngress = append(newIngress, rule)
 	}
 
 	// If public mode, add new rule
-	if settings.Mode == "public" && settings.Hostname != "" {
-		target := settings.Target
-		if target == "" {
-			target = fmt.Sprintf("http://%s:80", containerName)
-		}
-		if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") && !strings.HasPrefix(target, "tcp://") {
-			target = "http://" + target
-		}
+	if settings.Mode == "public" && cleanHost != "" {
+		target := s.normalizeTarget(containerName, settings.Target)
 		newIngress = append(newIngress, cfIngressRule{
-			Hostname: settings.Hostname,
+			Hostname: cleanHost,
 			Service:  target,
+			OriginRequest: &cfOriginRequest{
+				NoTLSVerify: true,
+			},
 		})
 	}
 
@@ -860,11 +954,11 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 		return err
 	}
 
-	// Reload cloudflared if running
+	// Reload cloudflared synchronously so changes take effect immediately
 	if s.cloudflared != nil {
-		go func() {
-			_ = s.cloudflared.Restart()
-		}()
+		if err := s.cloudflared.Restart(); err != nil {
+			log.Printf("[docktun] cloudflared restart error: %v", err)
+		}
 	}
 
 	return nil

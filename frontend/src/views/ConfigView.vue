@@ -63,6 +63,7 @@ const activeTab = ref<'overview' | 'ingress' | 'tcp' | 'api' | 'backups'>('overv
 // Config & Rules State
 const rules = ref<IngressRule[]>([])
 const tunnelId = ref('')
+const credentialsFile = ref('/etc/cloudflared/credentials.json')
 const protocol = ref('http2')
 const rawYaml = ref('')
 const isRawEditor = ref(false)
@@ -126,6 +127,8 @@ function parseYaml(content: string) {
   for (const line of lines) {
     const m = line.match(/^tunnel:\s*(.+)/)
     if (m) tunnelId.value = m[1].trim()
+    const cm = line.match(/^credentials-file:\s*(.+)/)
+    if (cm) credentialsFile.value = cm[1].trim()
     const pm = line.match(/^protocol:\s*(.+)/)
     if (pm) protocol.value = pm[1].trim()
   }
@@ -169,19 +172,28 @@ function parseYaml(content: string) {
 }
 
 function generateYaml(): string {
-  let y = `tunnel: ${tunnelId.value}\ncredentials-file: /etc/cloudflared/credentials.json\nprotocol: ${protocol.value || 'http2'}\n\ningress:\n`
+  let y = `tunnel: ${tunnelId.value}\ncredentials-file: ${credentialsFile.value || '/etc/cloudflared/credentials.json'}\nprotocol: ${protocol.value || 'http2'}\n\ningress:\n`
   for (const r of rules.value) {
     if (!r.hostname || !r.service) continue
-    y += `  - hostname: ${r.hostname}\n    service: ${r.service}\n`
-    if (r.noTLSVerify) {
-      y += `    originRequest:\n      noTLSVerify: true\n`
+    // Clean hostname: remove https:// and trailing slashes
+    let cleanH = r.hostname.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '')
+    let target = r.service.trim()
+    // Normalize .local to direct container name:
+    if (target.includes('.local')) {
+      target = target.replace('.local', '')
     }
+    // Normalize localhost / 127.0.0.1 to host.docker.internal:
+    if (target.includes('localhost') || target.includes('127.0.0.1')) {
+      target = target.replace('localhost', 'host.docker.internal').replace('127.0.0.1', 'host.docker.internal')
+    }
+    y += `  - hostname: ${cleanH}\n    service: ${target}\n`
+    y += `    originRequest:\n      noTLSVerify: true\n`
   }
   return y + `  - service: http_status:404\n`
 }
 
 function addRule() {
-  rules.value.push({ hostname: '', service: '', noTLSVerify: false })
+  rules.value.push({ hostname: '', service: '', noTLSVerify: true })
 }
 
 function removeRule(i: number) {
@@ -189,7 +201,7 @@ function removeRule(i: number) {
   rules.value.splice(i, 1)
 }
 
-async function save(restart = false) {
+async function save(restart = true) {
   saving.value = true
   message.value = null
   const contentToSave = isRawEditor.value ? rawYaml.value : generateYaml()
@@ -203,11 +215,11 @@ async function save(restart = false) {
 
     if (restart) {
       await apiFetch('/api/control/restart', { method: 'POST' })
-      message.value = { type: 'success', text: 'Config saved and Cloudflare tunnel restarted!' }
+      message.value = { type: 'success', text: 'Config saved and Cloudflare tunnel restarted! Routes are now active.' }
     } else {
       message.value = { type: 'success', text: 'Ingress configuration saved successfully!' }
     }
-    setTimeout(() => (message.value = null), 4000)
+    setTimeout(() => (message.value = null), 6000)
     loadBackups()
   } catch (e: any) {
     message.value = { type: 'error', text: e.message }
@@ -622,20 +634,21 @@ onUnmounted(() => {
             <span>Add Rule</span>
           </button>
           <button
-            @click="save(false)"
-            :disabled="saving"
-            class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-300 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/50"
-          >
-            <span>Save</span>
-          </button>
-          <button
             @click="save(true)"
             :disabled="saving"
-            class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-300 border-emerald-600 bg-emerald-950/40 hover:bg-emerald-900/50"
-            title="Save config and restart tunnel container"
+            class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-300 border-emerald-600 bg-emerald-950/40 hover:bg-emerald-900/50 font-medium"
+            title="Save config and restart tunnel container so changes are active immediately"
           >
-            <RotateCcw class="h-3.5 w-3.5" />
-            <span>Save & Restart</span>
+            <RotateCcw class="h-3.5 w-3.5" :class="saving ? 'animate-spin' : ''" />
+            <span>{{ saving ? 'Saving & Applying...' : 'Save & Apply to Tunnel' }}</span>
+          </button>
+          <button
+            @click="save(false)"
+            :disabled="saving"
+            class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-slate-400"
+            title="Save YAML config without restarting the tunnel"
+          >
+            <span>Save Only</span>
           </button>
         </div>
       </div>

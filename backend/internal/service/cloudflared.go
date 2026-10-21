@@ -35,8 +35,29 @@ func NewCloudflared(cfg *config.Config, hub *ws.Hub) *Cloudflared {
 	return &Cloudflared{cfg: cfg, hub: hub}
 }
 
+func (s *Cloudflared) findContainer() string {
+	name := s.cfg.CloudflaredContainer
+	if name == "" {
+		name = "docktun-cloudflared"
+	}
+	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Status}}", name).Output()
+	if err == nil && len(strings.TrimSpace(string(out))) > 0 {
+		return name
+	}
+	// Fallback: look for any container running cloudflared
+	psOut, err := exec.Command("docker", "ps", "-a", "--filter", "ancestor=cloudflare/cloudflared", "--format", "{{.Names}}").Output()
+	if err == nil {
+		lines := strings.Split(strings.TrimSpace(string(psOut)), "\n")
+		if len(lines) > 0 && strings.TrimSpace(lines[0]) != "" {
+			return strings.Fields(lines[0])[0]
+		}
+	}
+	return name
+}
+
 func (s *Cloudflared) Status() ProcessState {
-	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Status}} {{.State.StartedAt}}", s.cfg.CloudflaredContainer).Output()
+	cName := s.findContainer()
+	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Status}} {{.State.StartedAt}}", cName).Output()
 	if err != nil {
 		return ProcessState{Running: false, Status: "not found"}
 	}
@@ -84,7 +105,8 @@ func (s *Cloudflared) Status() ProcessState {
 }
 
 func (s *Cloudflared) getVersion() string {
-	out, err := exec.Command("docker", "exec", s.cfg.CloudflaredContainer, "cloudflared", "--version").Output()
+	cName := s.findContainer()
+	out, err := exec.Command("docker", "exec", cName, "cloudflared", "--version").Output()
 	if err != nil {
 		return ""
 	}
@@ -92,7 +114,8 @@ func (s *Cloudflared) getVersion() string {
 }
 
 func (s *Cloudflared) getMemory() string {
-	out, err := exec.Command("docker", "stats", "--no-stream", "--format", "{{.MemUsage}}", s.cfg.CloudflaredContainer).Output()
+	cName := s.findContainer()
+	out, err := exec.Command("docker", "stats", "--no-stream", "--format", "{{.MemUsage}}", cName).Output()
 	if err != nil {
 		return ""
 	}
@@ -108,31 +131,31 @@ func (s *Cloudflared) Stop() error {
 }
 
 func (s *Cloudflared) Restart() error {
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		s.dockerCmd("restart")
-	}()
-	return nil
+	return s.dockerCmd("restart")
 }
 
 func (s *Cloudflared) dockerCmd(action string) error {
-	cmd := exec.Command("docker", action, s.cfg.CloudflaredContainer)
+	cName := s.findContainer()
+	cmd := exec.Command("docker", action, cName)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s failed: %s", action, strings.TrimSpace(string(out)))
+		return fmt.Errorf("%s failed on %s: %s", action, cName, strings.TrimSpace(string(out)))
 	}
 
 	entry, _ := json.Marshal(map[string]string{
 		"time":    time.Now().Format(time.RFC3339),
-		"message": fmt.Sprintf("[docktun] cloudflared %s", action),
+		"message": fmt.Sprintf("[docktun] %s %s", cName, action),
 	})
-	s.hub.Broadcast <- entry
+	if s.hub != nil {
+		s.hub.Broadcast <- entry
+	}
 
 	return nil
 }
 
 func (s *Cloudflared) Logs() error {
-	cmd := exec.Command("docker", "logs", "-f", "--tail", "100", s.cfg.CloudflaredContainer)
+	cName := s.findContainer()
+	cmd := exec.Command("docker", "logs", "-f", "--tail", "100", cName)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
