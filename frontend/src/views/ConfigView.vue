@@ -873,22 +873,21 @@ onUnmounted(() => {
         ></textarea>
       </div>
 
-      <!-- Security & Cloudflare Access Advice -->
-      <div class="rounded-xl border border-cyan-800/40 bg-slate-950 p-4 flex flex-col sm:flex-row items-start gap-3.5">
-        <ShieldCheck class="h-5 w-5 text-cyan-400 mt-0.5 flex-shrink-0" />
-        <div class="space-y-1 text-xs">
-          <div class="font-bold text-slate-200">Exposing Admin Panels & Security Hardening</div>
-          <p class="text-slate-400 leading-relaxed">
-            If you expose the DockTun management dashboard publicly, we strongly recommend placing it behind
-            <strong class="text-cyan-300">Cloudflare Zero Trust (Access)</strong> in your Cloudflare dashboard (Applications &rarr; Add an Application).
-            Access requires One-Time PIN email verification or Google/GitHub SSO at the Cloudflare edge before any traffic reaches your server.
-            Alternatively, you can safely <strong class="text-amber-300">delete the DockTun rule below</strong> to keep DockTun internal-only and access it via your local network (<code class="text-slate-300 font-mono">http://&lt;lan-ip&gt;:8080</code> or <code class="text-slate-300 font-mono">http://docktun.local</code>).
-          </p>
-        </div>
-      </div>
-
       <!-- Visual Rules Cards View -->
       <div v-else class="space-y-3">
+        <!-- Security & Cloudflare Access Advice -->
+        <div class="rounded-xl border border-cyan-800/40 bg-slate-950 p-4 flex flex-col sm:flex-row items-start gap-3.5">
+          <ShieldCheck class="h-5 w-5 text-cyan-400 mt-0.5 flex-shrink-0" />
+          <div class="space-y-1 text-xs">
+            <div class="font-bold text-slate-200">Exposing Admin Panels & Security Hardening</div>
+            <p class="text-slate-400 leading-relaxed">
+              If you expose the DockTun management dashboard publicly, we strongly recommend placing it behind
+              <strong class="text-cyan-300">Cloudflare Zero Trust (Access)</strong> in your Cloudflare dashboard (Applications &rarr; Add an Application).
+              Access requires One-Time PIN email verification or Google/GitHub SSO at the Cloudflare edge before any traffic reaches your server.
+              Alternatively, you can safely <strong class="text-amber-300">delete the DockTun rule below</strong> to keep DockTun internal-only and access it via your local network (<code class="text-slate-300 font-mono">http://&lt;lan-ip&gt;:8080</code> or <code class="text-slate-300 font-mono">http://docktun.local</code>).
+            </p>
+          </div>
+        </div>
         <div
           v-for="(rule, i) in rules"
           :key="i"
