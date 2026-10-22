@@ -43,7 +43,7 @@ Self-hosted web dashboard to manage and monitor Cloudflare Tunnel (cloudflared) 
 ### Setup
 
 ```bash
-git clone https://github.com/oOflyeyesOo/tunlify.git /opt/docktun
+git clone https://github.com/oOflyeyesOo/docktun.git /opt/docktun
 cd /opt/docktun
 
 # Configure environment
@@ -58,11 +58,14 @@ mkdir -p cloudflared
 docker compose up -d
 ```
 
-### Automated Installation & Reset
+### Automated Installation, Updates & Reset
 
 ```bash
 # Automated install (sets up cloudflared, containers, and web UI)
 sudo ./install.sh
+
+# Update DockTun (creates backup of .env/db/config and rebuilds containers)
+sudo ./upgrade.sh
 
 # Reset / Uninstall (wipes containers, DB, and credentials while keeping Cloudflare tunnel config)
 sudo ./uninstall.sh

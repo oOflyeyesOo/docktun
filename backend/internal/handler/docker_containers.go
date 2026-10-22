@@ -1,4 +1,4 @@
-﻿package handler
+package handler
 
 import (
 	"encoding/json"
@@ -171,3 +171,112 @@ func (h *DockerContainers) EnsureProject(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "project_id": projID})
 }
+
+func (h *DockerContainers) Exec(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Command string `json:"command"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Command == "" {
+		jsonError(w, "command is required", http.StatusBadRequest)
+		return
+	}
+
+	out, exitCode, err := h.svc.Exec(id, req.Command)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"output":    out,
+		"exit_code": exitCode,
+	})
+}
+
+func (h *DockerContainers) SystemDF(w http.ResponseWriter, r *http.Request) {
+	df, err := h.svc.SystemDF()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(df)
+}
+
+func (h *DockerContainers) SystemPrune(w http.ResponseWriter, r *http.Request) {
+	out, err := h.svc.SystemPrune()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "ok",
+		"output": out,
+	})
+}
+
+func (h *DockerContainers) ProbeTarget(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Service string `json:"service"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Service == "" {
+		jsonError(w, "service is required", http.StatusBadRequest)
+		return
+	}
+
+	res, err := h.svc.ProbeTarget(req.Service)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
+}
+
+func (h *DockerContainers) CheckUpdate(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	res, err := h.svc.CheckContainerUpdate(id)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
+}
+
+func (h *DockerContainers) CheckAllUpdates(w http.ResponseWriter, r *http.Request) {
+	results, err := h.svc.CheckAllUpdates()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
+}
+
+func (h *DockerContainers) Update(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	userID, _ := r.Context().Value("user_id").(int)
+	ip := r.RemoteAddr
+
+	out, err := h.svc.UpdateContainer(id, userID, ip)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":  err.Error(),
+			"output": out,
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "ok",
+		"output": out,
+	})
+}
+

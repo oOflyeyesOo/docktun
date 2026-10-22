@@ -1,4 +1,4 @@
-﻿package handler
+package handler
 
 import (
 	"encoding/json"
@@ -13,10 +13,11 @@ import (
 type Config struct {
 	mgr   *service.ConfigManager
 	audit *service.AuditLogger
+	cfAPI *service.CloudflareAPI
 }
 
-func NewConfig(mgr *service.ConfigManager, audit *service.AuditLogger) *Config {
-	return &Config{mgr: mgr, audit: audit}
+func NewConfig(mgr *service.ConfigManager, audit *service.AuditLogger, cfAPI *service.CloudflareAPI) *Config {
+	return &Config{mgr: mgr, audit: audit, cfAPI: cfAPI}
 }
 
 func (h *Config) Get(w http.ResponseWriter, r *http.Request) {
@@ -52,6 +53,11 @@ func (h *Config) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.audit.Log(userID, "config_edit", "", r.RemoteAddr)
+
+	// Automatically sync all ingress routes with Cloudflare DNS
+	if h.cfAPI != nil {
+		go h.cfAPI.AutoSyncIngressDNS(h.mgr)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

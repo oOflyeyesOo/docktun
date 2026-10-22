@@ -8,7 +8,7 @@ DockTun is a self-hosted web dashboard to manage and monitor Cloudflare Tunnel (
 
 - **Backend**: Go 1.22, Chi router, gorilla/websocket, SQLite (modernc.org/sqlite), JWT auth
 - **Frontend**: Vue 3, Vite, TypeScript, Tailwind CSS, Pinia, Vue Router
-- **Deploy**: Docker Compose with 3 services (cloudflared, backend, frontend/nginx)
+- **Deploy**: Docker Compose with 2 core services (`docktun` unified app + `docktun-cloudflared` tunnel)
 - **Network**: All services communicate via external Docker network `cloudflared`
 
 ## Project Structure
@@ -32,8 +32,7 @@ frontend/
 │   ├── stores/          # Pinia stores (auth)
 │   ├── router/          # Vue Router config
 │   └── assets/          # Tailwind CSS
-├── nginx.conf           # Production reverse proxy config
-└── Dockerfile           # Multi-stage build (node → nginx)
+└── Dockerfile           # Multi-stage unified build (node → go → alpine runtime)
 ```
 
 ## Key Conventions
@@ -75,7 +74,7 @@ Optional with defaults: `ADMIN_USERNAME` (admin), `CLOUDFLARED_CONFIG_PATH` (/et
 ## Important Notes
 
 - Backend communicates with Docker daemon via mounted `/var/run/docker.sock`
-- Frontend in production is served by nginx which reverse-proxies `/api` and `/auth` to backend:3001
+- Frontend in production is compiled into static assets and served directly by Go on `/*` with SPA fallback, eliminating Nginx and WebSocket timeouts
 - SQLite database stored at `/app/data/app.db` (persisted via Docker volume)
 - Cloudflared config mounted read-only to tunnel container, read-write to backend for editing
 - No ORM — raw SQL with modernc.org/sqlite (pure Go, no CGO)

@@ -166,3 +166,37 @@ func (h *CloudflareHandler) CreateWildcard(w http.ResponseWriter, r *http.Reques
 		"message": "Wildcard CNAME (*." + domain + ") created in Cloudflare DNS pointing to " + doc.Tunnel + ".cfargotunnel.com",
 	})
 }
+
+func (h *CloudflareHandler) GetTunnelStatus(w http.ResponseWriter, r *http.Request) {
+	if h.configMgr == nil {
+		http.Error(w, `{"error":"config manager not ready"}`, http.StatusInternalServerError)
+		return
+	}
+
+	rawYaml, err := h.configMgr.Read()
+	if err != nil {
+		http.Error(w, `{"error":"failed to read config"}`, http.StatusInternalServerError)
+		return
+	}
+
+	var doc struct {
+		Tunnel string `yaml:"tunnel"`
+	}
+	_ = yaml.Unmarshal([]byte(rawYaml), &doc)
+	if doc.Tunnel == "" || doc.Tunnel == "YOUR_TUNNEL_ID" || doc.Tunnel == "your-tunnel-uuid" {
+		http.Error(w, `{"error":"no valid tunnel ID configured"}`, http.StatusBadRequest)
+		return
+	}
+
+	status, err := h.cfAPI.GetRemoteTunnel(doc.Tunnel)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
+}
+

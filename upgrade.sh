@@ -46,6 +46,12 @@ if [ ! -d "$SCRIPT_DIR" ]; then
   exit 1
 fi
 
+# Check for git updates if deployed from git repository
+if [ -d "$SCRIPT_DIR/.git" ] && command -v git >/dev/null 2>&1; then
+  info "Checking for latest DockTun updates from git..."
+  git -C "$SCRIPT_DIR" pull --ff-only 2>/dev/null || warn "git pull skipped (local changes detected or no upstream set). Continuing with local files."
+fi
+
 info "Preparing upgrade preserving tunnel and auth settings..."
 mkdir -p "$BACKUP_ROOT" "$CLOUDFLARED_DIR" "$DATA_DIR"
 
@@ -58,6 +64,7 @@ fi
 backup_file "$ENV_FILE"
 backup_file "$CLOUDFLARED_DIR/config.yml"
 backup_file "$CLOUDFLARED_DIR/credentials.json"
+backup_file "$CLOUDFLARED_DIR/token"
 backup_file "$SCRIPT_DIR/data/app.db"
 backup_file "$SCRIPT_DIR/docker-compose.override.yml"
 
@@ -88,7 +95,7 @@ if docker network inspect cloudflared >/dev/null 2>&1; then
   info "Pruning internal containers from 'cloudflared' network (keeping only DockTun & routed services)..."
   CF_ATTACHED=$(docker network inspect cloudflared -f '{{range $k, $v := .Containers}}{{$v.Name}} {{end}}' 2>/dev/null || true)
   for c in $CF_ATTACHED; do
-    if [[ ! "$c" =~ ^(docktun-backend|docktun-frontend|docktun-cloudflared|docktun-zeroconf)$ ]]; then
+    if [[ ! "$c" =~ ^(docktun|docktun-backend|docktun-frontend|docktun-cloudflared|docktun-zeroconf)$ ]]; then
       if [ -f "$CLOUDFLARED_DIR/config.yml" ] && ! grep -q "$c" "$CLOUDFLARED_DIR/config.yml" 2>/dev/null; then
         info "Disconnected internal container '$c' from 'cloudflared' network"
         docker network disconnect cloudflared "$c" 2>/dev/null || true

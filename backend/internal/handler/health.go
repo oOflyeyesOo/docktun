@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -21,10 +22,11 @@ func NewHealthCheck(configPath string) *HealthCheck {
 }
 
 type serviceHealth struct {
-	Hostname string `json:"hostname"`
-	Service  string `json:"service"`
-	Status   string `json:"status"`
-	Latency  string `json:"latency"`
+	Hostname  string `json:"hostname"`
+	Service   string `json:"service"`
+	Status    string `json:"status"`
+	Latency   string `json:"latency"`
+	LatencyMs int64  `json:"latency_ms"`
 }
 
 func (h *HealthCheck) Check(w http.ResponseWriter, r *http.Request) {
@@ -40,43 +42,63 @@ func (h *HealthCheck) Check(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"cannot read config"}`, http.StatusInternalServerError)
 		return
 	}
-	yaml.Unmarshal(data, &cfg)
+	_ = yaml.Unmarshal(data, &cfg)
 
-	var results []serviceHealth
-	for _, ing := range cfg.Ingress {
-		if ing.Hostname == "" {
-			continue
-		}
-		s := serviceHealth{Hostname: ing.Hostname, Service: ing.Service}
-		start := time.Now()
-
-		u, err := url.Parse(ing.Service)
-		if err != nil {
-			s.Status = "invalid"
-			results = append(results, s)
-			continue
-		}
-
-		host := u.Host
-		if !strings.Contains(host, ":") {
-			if u.Scheme == "https" {
-				host += ":443"
-			} else {
-				host += ":80"
-			}
-		}
-
-		conn, err := net.DialTimeout("tcp", host, 3*time.Second)
-		if err != nil {
-			s.Status = "down"
-			s.Latency = "timeout"
-		} else {
-			conn.Close()
-			s.Status = "up"
-			s.Latency = time.Since(start).Truncate(time.Millisecond).String()
-		}
-		results = append(results, s)
+	type ruleTarget struct {
+		Hostname string
+		Service  string
 	}
+	var targets []ruleTarget
+	for _, ing := range cfg.Ingress {
+		hname := strings.TrimSpace(ing.Hostname)
+		svc := strings.TrimSpace(ing.Service)
+		if hname == "" || svc == "http_status:404" {
+			continue
+		}
+		targets = append(targets, ruleTarget{Hostname: hname, Service: svc})
+	}
+
+	results := make([]serviceHealth, len(targets))
+	var wg sync.WaitGroup
+	for i, t := range targets {
+		wg.Add(1)
+		go func(idx int, target ruleTarget) {
+			defer wg.Done()
+			s := serviceHealth{Hostname: target.Hostname, Service: target.Service}
+			start := time.Now()
+
+			u, err := url.Parse(target.Service)
+			if err != nil {
+				s.Status = "invalid"
+				results[idx] = s
+				return
+			}
+
+			host := u.Host
+			if !strings.Contains(host, ":") {
+				if u.Scheme == "https" {
+					host += ":443"
+				} else {
+					host += ":80"
+				}
+			}
+
+			conn, err := net.DialTimeout("tcp", host, 3*time.Second)
+			dur := time.Since(start)
+			if err != nil {
+				s.Status = "down"
+				s.Latency = "timeout"
+				s.LatencyMs = -1
+			} else {
+				conn.Close()
+				s.Status = "up"
+				s.Latency = dur.Truncate(time.Millisecond).String()
+				s.LatencyMs = dur.Milliseconds()
+			}
+			results[idx] = s
+		}(i, t)
+	}
+	wg.Wait()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)

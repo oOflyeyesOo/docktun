@@ -88,6 +88,17 @@ func (d *DB) migrate() error {
 			value TEXT NOT NULL,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
+
+		CREATE TABLE IF NOT EXISTS container_updates (
+			container_id TEXT PRIMARY KEY,
+			container_name TEXT NOT NULL,
+			image TEXT NOT NULL,
+			current_digest TEXT DEFAULT '',
+			latest_digest TEXT DEFAULT '',
+			update_available INTEGER DEFAULT 0,
+			checked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			error TEXT DEFAULT ''
+		);
 	`)
 	return err
 }

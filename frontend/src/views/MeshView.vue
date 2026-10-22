@@ -1,14 +1,28 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { Globe, Lock, RotateCcw, Shield, ShieldCheck, CheckCircle2, AlertCircle } from 'lucide-vue-next'
+import {
+  Globe,
+  Lock,
+  RotateCcw,
+  Shield,
+  ShieldCheck,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
+  Radio,
+  ExternalLink,
+  Sliders,
+  Check
+} from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
 const { apiFetch } = useApi()
 
 const mode = ref<'none' | 'public' | 'tailscale' | 'wireguard'>('public')
 const tunnelName = ref('')
+const tunnelId = ref('')
 const hostname = ref('')
-const service = ref('http://docktun-frontend:80')
+const service = ref('http://docktun:3001')
 const tailscaleAuthKey = ref('')
 const tailscaleHostname = ref('docktun-node')
 const tailscaleLoginServer = ref('https://controlplane.tailscale.com')
@@ -16,18 +30,31 @@ const wireguardPrivateKey = ref('')
 const wireguardInterface = ref('wg0')
 const wireguardListenPort = ref(51820)
 const saving = ref(false)
+const syncingTunnel = ref(false)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
+const activeStatus = ref<any>(null)
 
 async function loadMesh() {
   try {
-    const cfg = await apiFetch<any>('/api/mesh')
+    const [cfg, stat] = await Promise.all([
+      apiFetch<any>('/api/mesh').catch(() => null),
+      apiFetch<any>('/api/status').catch(() => null),
+    ])
+
+    if (stat) {
+      activeStatus.value = stat
+      if (stat.tunnel_name) tunnelName.value = stat.tunnel_name
+      if (stat.tunnel_id) tunnelId.value = stat.tunnel_id
+    }
+
     if (cfg) {
       mode.value = cfg.mode || 'public'
-      tunnelName.value = cfg.tunnel_name || ''
+      if (cfg.tunnel_name) tunnelName.value = cfg.tunnel_name
+      if (cfg.tunnel_id) tunnelId.value = cfg.tunnel_id
       if (cfg.public) {
-        hostname.value = cfg.public.hostname || ''
-        service.value = cfg.public.service || 'http://docktun-frontend:80'
+        if (cfg.public.hostname) hostname.value = cfg.public.hostname
+        if (cfg.public.service) service.value = cfg.public.service
       }
       if (cfg.tailscale) {
         tailscaleAuthKey.value = cfg.tailscale.auth_key || ''
@@ -40,8 +67,65 @@ async function loadMesh() {
         wireguardListenPort.value = cfg.wireguard.listen_port || 51820
       }
     }
+
+    // Auto-fill from active tunnel config if fields are still blank
+    if (!hostname.value || !tunnelName.value) {
+      await syncFromActiveTunnel(false)
+    }
   } catch {
     mode.value = 'public'
+  }
+}
+
+async function syncFromActiveTunnel(showFeedback = true) {
+  syncingTunnel.value = true
+  try {
+    const [stat, cfgRes] = await Promise.all([
+      apiFetch<any>('/api/status').catch(() => null),
+      apiFetch<any>('/api/config').catch(() => null),
+    ])
+
+    if (stat) {
+      activeStatus.value = stat
+      if (stat.tunnel_name) tunnelName.value = stat.tunnel_name
+      else if (stat.tunnel_id) tunnelName.value = stat.tunnel_id
+      if (stat.tunnel_id) tunnelId.value = stat.tunnel_id
+    }
+
+    if (cfgRes && cfgRes.content) {
+      // Parse ingress rules from active yaml
+      const lines = cfgRes.content.split('\n')
+      let foundHost = ''
+      let foundSvc = ''
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim()
+        const hostMatch = line.match(/^-\s*hostname:\s*["']?([^"'\s]+)["']?/)
+        if (hostMatch && !foundHost) {
+          foundHost = hostMatch[1]
+        }
+        const svcMatch = line.match(/^service:\s*["']?([^"'\s]+)["']?/)
+        if (svcMatch && !foundSvc && svcMatch[1] !== 'http_status:404') {
+          foundSvc = svcMatch[1]
+        }
+        if (foundHost && foundSvc) break
+      }
+
+      if (foundHost) hostname.value = foundHost
+      if (foundSvc) service.value = foundSvc
+    }
+
+    if (showFeedback) {
+      messageType.value = 'success'
+      message.value = 'Parameters successfully auto-filled from active Cloudflare Tunnel configuration!'
+      setTimeout(() => (message.value = ''), 4000)
+    }
+  } catch (e: any) {
+    if (showFeedback) {
+      messageType.value = 'error'
+      message.value = 'Failed to sync parameters: ' + e.message
+    }
+  } finally {
+    syncingTunnel.value = false
   }
 }
 
@@ -55,6 +139,7 @@ async function saveMesh() {
       body: JSON.stringify({
         mode: mode.value,
         tunnel_name: tunnelName.value,
+        tunnel_id: tunnelId.value,
         public: { hostname: hostname.value, service: service.value },
         tailscale: {
           auth_key: tailscaleAuthKey.value,
@@ -70,6 +155,7 @@ async function saveMesh() {
     })
     messageType.value = 'success'
     message.value = 'Mesh & network access configuration saved successfully.'
+    setTimeout(() => (message.value = ''), 4000)
   } catch (error: any) {
     messageType.value = 'error'
     message.value = error.message || 'Failed to save configuration.'
@@ -157,22 +243,54 @@ onMounted(() => loadMesh())
     <!-- Active Mode Configuration Panel -->
     <div class="cyber-card space-y-4">
       <div v-if="mode === 'public'" class="space-y-4">
-        <div class="border-b border-slate-800 pb-3">
-          <h2 class="text-xs font-bold uppercase tracking-[0.2em] text-cyan-400">Cloudflare Tunnel Parameters</h2>
-          <p class="mt-1 text-xs text-slate-400">Default fallback ingress settings for incoming tunnel traffic.</p>
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+          <div>
+            <h2 class="text-xs font-bold uppercase tracking-[0.2em] text-cyan-400">Cloudflare Tunnel Parameters</h2>
+            <p class="mt-1 text-xs text-slate-400">Auto-filled from your active Cloudflare Tunnel configuration & environment.</p>
+          </div>
+          <button
+            @click="syncFromActiveTunnel(true)"
+            :disabled="syncingTunnel"
+            class="flex items-center gap-1.5 self-start sm:self-auto rounded border border-cyan-500/40 bg-cyan-950/40 px-3 py-1.5 text-xs font-semibold text-cyan-300 hover:bg-cyan-900/50 transition"
+            title="Auto-fill values from active Cloudflare Tunnel configuration"
+          >
+            <RefreshCw class="h-3.5 w-3.5" :class="syncingTunnel ? 'animate-spin' : ''" />
+            <span>Sync from Active Tunnel</span>
+          </button>
         </div>
+
+        <!-- Live Tunnel Connection Badge -->
+        <div v-if="activeStatus" class="flex flex-wrap items-center gap-3 rounded-lg border border-cyan-900/40 bg-cyan-950/20 p-3 text-xs">
+          <div class="flex items-center gap-1.5">
+            <Radio class="h-3.5 w-3.5 text-emerald-400 animate-pulse" />
+            <span class="text-slate-400">Tunnel Status:</span>
+            <span class="font-bold text-emerald-400 font-mono uppercase">{{ activeStatus.status || 'Active' }}</span>
+          </div>
+          <div v-if="activeStatus.tunnel_id" class="flex items-center gap-1.5 text-slate-400 font-mono">
+            <span>UUID:</span>
+            <span class="text-cyan-300">{{ activeStatus.tunnel_id }}</span>
+          </div>
+          <div v-if="activeStatus.protocol" class="flex items-center gap-1.5 text-slate-400 font-mono">
+            <span>Protocol:</span>
+            <span class="text-slate-300">{{ activeStatus.protocol }}</span>
+          </div>
+        </div>
+
         <div class="grid gap-4 md:grid-cols-2">
           <div>
-            <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Tunnel Name</label>
-            <input v-model="tunnelName" class="cyber-input" placeholder="docktun-tunnel" />
+            <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Tunnel Name or UUID</label>
+            <input v-model="tunnelName" class="cyber-input font-mono" placeholder="docktun-tunnel" />
+            <p class="mt-1 text-[10px] text-slate-500">Auto-populated from active cloudflared credentials/environment.</p>
           </div>
           <div>
-            <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Default Public Hostname</label>
-            <input v-model="hostname" class="cyber-input" placeholder="app.yourdomain.com" />
+            <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Default Public Ingress Hostname</label>
+            <input v-model="hostname" class="cyber-input font-mono" placeholder="app.yourdomain.com" />
+            <p class="mt-1 text-[10px] text-slate-500">Auto-populated from first active ingress rule in cloudflared config.</p>
           </div>
           <div class="md:col-span-2">
             <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Default Upstream Service Target</label>
-            <input v-model="service" class="cyber-input" placeholder="http://docktun-frontend:80" />
+            <input v-model="service" class="cyber-input font-mono" placeholder="http://docktun:3001" />
+            <p class="mt-1 text-[10px] text-slate-500">Internal Docker container address or port routed to by Cloudflare edge.</p>
           </div>
         </div>
       </div>
@@ -219,8 +337,9 @@ onMounted(() => loadMesh())
         </div>
       </div>
 
-      <div v-else class="py-4 text-center text-xs text-slate-400">
-        Overlay networking disabled. All containers operate within isolated Docker network bridges.
+      <div v-else class="py-4 text-center text-xs text-slate-400 space-y-2">
+        <p class="font-semibold text-slate-300">Local Only & Isolated Mode Active</p>
+        <p class="text-slate-500 max-w-md mx-auto">Overlay networking and public Cloudflare tunnels are disabled for the core dashboard. All containers operate within isolated Docker network bridges and local LAN access.</p>
       </div>
     </div>
   </div>

@@ -11,12 +11,17 @@ services:
     networks:
       - cloudflared
 
-  backend:
-    build: ./backend
-    container_name: docktun-backend
+  docktun:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: docktun
     restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:3001"
     expose:
       - "3001"
+      - "80"
     env_file: .env
     volumes:
       - ./data:/app/data
@@ -24,25 +29,15 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${PROJECTS_ROOT:-./projects}:/opt/projects
     networks:
-      - cloudflared
+      cloudflared:
+        aliases:
+          - docktun
+          - docktun-backend
+          - docktun-frontend
 
-  frontend:
-    build: ./frontend
-    container_name: docktun-frontend
-    restart: unless-stopped
-    ports:
-      - "${PORT:-8080}:80"
-    expose:
-      - "80"
-    depends_on:
-      - backend
-    networks:
-      - cloudflared
-
-  # Native ZeroConf mDNS local hostname publisher & HTTP Port 80 local router.
-  # Advertises <container_name>.local on your local LAN and automatically routes
-  # http://<container_name>.local on port 80 directly to each container's web port (no port numbers needed).
+  # Optional local ZeroConf mDNS router (run with: docker compose --profile zeroconf up -d)
   zeroconf:
+    profiles: ["zeroconf"]
     build: ./zeroconf
     container_name: docktun-zeroconf
     restart: unless-stopped

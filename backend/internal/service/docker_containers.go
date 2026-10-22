@@ -5,13 +5,17 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"docktun/internal/config"
@@ -65,6 +69,11 @@ type Container struct {
 	ProjectName            string           `json:"project_name,omitempty"`
 	ProjectPath            string           `json:"project_path,omitempty"`
 	ConnectedToCloudflared bool             `json:"connected_to_cloudflared"`
+	UpdateAvailable        bool             `json:"update_available"`
+	LatestDigest           string           `json:"latest_digest,omitempty"`
+	CurrentDigest          string           `json:"current_digest,omitempty"`
+	UpdateCheckedAt        string           `json:"update_checked_at,omitempty"`
+	UpdateError            string           `json:"update_error,omitempty"`
 }
 
 type ContainerDetail struct {
@@ -109,15 +118,18 @@ type DockerContainers struct {
 	configMgr   *ConfigManager
 	cloudflared *Cloudflared
 	cfAPI       *CloudflareAPI
+	audit       *AuditLogger
+	updateMu    sync.RWMutex
 }
 
-func NewDockerContainers(cfg *config.Config, db *db.DB, configMgr *ConfigManager, cloudflared *Cloudflared, cfAPI *CloudflareAPI) *DockerContainers {
+func NewDockerContainers(cfg *config.Config, db *db.DB, configMgr *ConfigManager, cloudflared *Cloudflared, cfAPI *CloudflareAPI, audit *AuditLogger) *DockerContainers {
 	return &DockerContainers{
 		cfg:         cfg,
 		db:          db,
 		configMgr:   configMgr,
 		cloudflared: cloudflared,
 		cfAPI:       cfAPI,
+		audit:       audit,
 	}
 }
 
@@ -179,6 +191,7 @@ func (s *DockerContainers) List() ([]Container, error) {
 	ingressMap := s.loadCloudflareIngressMap()
 	dbExposures := s.loadAllExposuresFromDB()
 	projectsByPath, projectsByName := s.loadAllProjectsMap()
+	cachedUpdates := s.loadAllUpdatesFromDB()
 
 	rows := strings.Split(text, "\n")
 	containers := make([]Container, 0, len(rows))
@@ -305,6 +318,20 @@ func (s *DockerContainers) List() ([]Container, error) {
 
 		if c.Status == "" {
 			c.Status = c.State
+		}
+
+		if u, ok := cachedUpdates[c.ID]; ok {
+			c.UpdateAvailable = u.UpdateAvailable
+			c.LatestDigest = u.LatestDigest
+			c.CurrentDigest = u.CurrentDigest
+			c.UpdateCheckedAt = u.CheckedAt
+			c.UpdateError = u.Error
+		} else if u, ok := cachedUpdates[c.Name]; ok {
+			c.UpdateAvailable = u.UpdateAvailable
+			c.LatestDigest = u.LatestDigest
+			c.CurrentDigest = u.CurrentDigest
+			c.UpdateCheckedAt = u.CheckedAt
+			c.UpdateError = u.Error
 		}
 
 		containers = append(containers, c)
@@ -585,6 +612,30 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		}
 	}
 
+	if u, ok := s.getUpdateFromDB(detail.ID); ok {
+		detail.UpdateAvailable = u.UpdateAvailable
+		detail.LatestDigest = u.LatestDigest
+		detail.CurrentDigest = u.CurrentDigest
+		detail.UpdateCheckedAt = u.CheckedAt
+		detail.UpdateError = u.Error
+		detail.Container.UpdateAvailable = u.UpdateAvailable
+		detail.Container.LatestDigest = u.LatestDigest
+		detail.Container.CurrentDigest = u.CurrentDigest
+		detail.Container.UpdateCheckedAt = u.CheckedAt
+		detail.Container.UpdateError = u.Error
+	} else if u, ok := s.getUpdateFromDB(detail.Name); ok {
+		detail.UpdateAvailable = u.UpdateAvailable
+		detail.LatestDigest = u.LatestDigest
+		detail.CurrentDigest = u.CurrentDigest
+		detail.UpdateCheckedAt = u.CheckedAt
+		detail.UpdateError = u.Error
+		detail.Container.UpdateAvailable = u.UpdateAvailable
+		detail.Container.LatestDigest = u.LatestDigest
+		detail.Container.CurrentDigest = u.CurrentDigest
+		detail.Container.UpdateCheckedAt = u.CheckedAt
+		detail.Container.UpdateError = u.Error
+	}
+
 	return detail, nil
 }
 
@@ -699,7 +750,7 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 			}
 		}
 
-		if detail.ConnectedToCloudflared {
+		if detail.ExposureMode == "public" {
 			b.WriteString("    networks:\n")
 			b.WriteString("      - default\n")
 			b.WriteString("      - cloudflared\n\n")
@@ -931,13 +982,16 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 	// If public mode, add new rule
 	if settings.Mode == "public" && cleanHost != "" {
 		target := s.normalizeTarget(containerName, settings.Target)
-		newIngress = append(newIngress, cfIngressRule{
+		rule := cfIngressRule{
 			Hostname: cleanHost,
 			Service:  target,
-			OriginRequest: &cfOriginRequest{
+		}
+		if strings.HasPrefix(target, "https://") {
+			rule.OriginRequest = &cfOriginRequest{
 				NoTLSVerify: true,
-			},
-		})
+			}
+		}
+		newIngress = append(newIngress, rule)
 	}
 
 	// Always ensure catch-all 404 is at the end
@@ -1122,4 +1176,615 @@ func dockerCommand(args ...string) error {
 		return fmt.Errorf("docker %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func (s *DockerContainers) Exec(id string, command string) (string, int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "docker", "exec", id, "sh", "-c", command)
+	out, err := cmd.CombinedOutput()
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+	return string(out), exitCode, nil
+}
+
+func (s *DockerContainers) SystemDF() (map[string]interface{}, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "docker", "system", "df", "--format", "{{json .}}")
+	out, err := cmd.Output()
+	result := make(map[string]interface{})
+	if err == nil {
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		var items []interface{}
+		for _, line := range lines {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			var m map[string]interface{}
+			if err := json.Unmarshal([]byte(line), &m); err == nil {
+				items = append(items, m)
+			}
+		}
+		result["items"] = items
+	} else {
+		cmdPlain := exec.CommandContext(ctx, "docker", "system", "df")
+		plainOut, _ := cmdPlain.CombinedOutput()
+		result["raw"] = string(plainOut)
+	}
+	return result, nil
+}
+
+func (s *DockerContainers) SystemPrune() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "docker", "system", "prune", "-f")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("docker prune failed: %s (%w)", strings.TrimSpace(string(out)), err)
+	}
+	return string(out), nil
+}
+
+func (s *DockerContainers) ProbeTarget(targetURL string) (map[string]interface{}, error) {
+	result := map[string]interface{}{
+		"reachable":   false,
+		"status_code": 0,
+		"latency_ms":  0,
+		"error":       "",
+	}
+	if targetURL == "" {
+		result["error"] = "Target URL is empty"
+		return result, nil
+	}
+
+	raw := targetURL
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		result["error"] = fmt.Sprintf("Invalid target URL: %v", err)
+		return result, nil
+	}
+
+	start := time.Now()
+	client := &http.Client{
+		Timeout: 4 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	resp, err := client.Get(parsed.String())
+	latency := time.Since(start).Milliseconds()
+	result["latency_ms"] = latency
+
+	if err != nil {
+		result["error"] = err.Error()
+		return result, nil
+	}
+	defer resp.Body.Close()
+
+	result["reachable"] = true
+	result["status_code"] = resp.StatusCode
+	return result, nil
+}
+
+type UpdateCheckResult struct {
+	ContainerID     string `json:"container_id"`
+	ContainerName   string `json:"container_name"`
+	Image           string `json:"image"`
+	CurrentDigest   string `json:"current_digest"`
+	LatestDigest    string `json:"latest_digest"`
+	UpdateAvailable bool   `json:"update_available"`
+	CheckedAt       string `json:"checked_at"`
+	Error           string `json:"error,omitempty"`
+}
+
+func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, error) {
+	detail, err := s.Details(id)
+	if err != nil {
+		return UpdateCheckResult{}, err
+	}
+
+	res := UpdateCheckResult{
+		ContainerID:   detail.ID,
+		ContainerName: detail.Name,
+		Image:         detail.Image,
+		CheckedAt:     time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if detail.Image == "" {
+		res.Error = "no image specified"
+		s.saveUpdateToDB(res)
+		return res, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// 1. Inspect local image RepoDigests and ID
+	inspectCmd := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}\t{{.Id}}", detail.Image)
+	var localDigests []string
+	if out, err := inspectCmd.Output(); err == nil {
+		parts := strings.Split(strings.TrimSpace(string(out)), "\t")
+		if len(parts) >= 1 {
+			var repoDigests []string
+			if json.Unmarshal([]byte(parts[0]), &repoDigests) == nil {
+				for _, rd := range repoDigests {
+					if idx := strings.Index(rd, "@"); idx != -1 {
+						localDigests = append(localDigests, rd[idx+1:])
+					} else {
+						localDigests = append(localDigests, rd)
+					}
+				}
+			}
+		}
+		if len(parts) >= 2 {
+			localId := strings.TrimSpace(parts[1])
+			if localId != "" {
+				localDigests = append(localDigests, localId)
+			}
+		}
+	}
+
+	if len(localDigests) > 0 {
+		res.CurrentDigest = localDigests[0]
+	}
+
+	// 2. Fetch remote manifest digest
+	reg, repo, tag := parseImageRef(detail.Image)
+	latestDigest, subDigests, err := fetchRemoteManifestDigest(ctx, reg, repo, tag)
+	if err != nil {
+		// Fallback: use docker manifest inspect CLI
+		manifestCmd := exec.CommandContext(ctx, "docker", "manifest", "inspect", detail.Image)
+		if mOut, mErr := manifestCmd.Output(); mErr == nil {
+			var mDoc struct {
+				Manifests []struct {
+					Digest string `json:"digest"`
+				} `json:"manifests"`
+				Config struct {
+					Digest string `json:"digest"`
+				} `json:"config"`
+			}
+			if json.Unmarshal(mOut, &mDoc) == nil {
+				for _, m := range mDoc.Manifests {
+					if m.Digest != "" {
+						subDigests = append(subDigests, m.Digest)
+					}
+				}
+				if len(subDigests) > 0 {
+					latestDigest = subDigests[0]
+					err = nil
+				} else if mDoc.Config.Digest != "" {
+					latestDigest = mDoc.Config.Digest
+					err = nil
+				}
+			}
+		}
+	}
+
+	if err != nil {
+		res.Error = fmt.Sprintf("unable to check registry: %v", err)
+		s.saveUpdateToDB(res)
+		return res, nil
+	}
+
+	res.LatestDigest = latestDigest
+
+	// 3. Compare local digests with remote digests
+	allRemote := append([]string{latestDigest}, subDigests...)
+	matched := false
+	for _, rem := range allRemote {
+		if rem == "" {
+			continue
+		}
+		for _, loc := range localDigests {
+			if strings.EqualFold(loc, rem) || strings.HasSuffix(loc, rem) || strings.HasSuffix(rem, loc) {
+				matched = true
+				break
+			}
+		}
+		if matched {
+			break
+		}
+	}
+
+	res.UpdateAvailable = !matched && (latestDigest != "")
+	s.saveUpdateToDB(res)
+	return res, nil
+}
+
+func (s *DockerContainers) CheckAllUpdates() ([]UpdateCheckResult, error) {
+	containers, err := s.List()
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]UpdateCheckResult, len(containers))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 5)
+
+	for i, c := range containers {
+		wg.Add(1)
+		go func(idx int, cont Container) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			res, err := s.CheckContainerUpdate(cont.ID)
+			if err != nil {
+				results[idx] = UpdateCheckResult{
+					ContainerID:   cont.ID,
+					ContainerName: cont.Name,
+					Image:         cont.Image,
+					Error:         err.Error(),
+					CheckedAt:     time.Now().UTC().Format(time.RFC3339),
+				}
+			} else {
+				results[idx] = res
+			}
+		}(i, c)
+	}
+
+	wg.Wait()
+	return results, nil
+}
+
+func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (string, error) {
+	detail, err := s.Details(id)
+	if err != nil {
+		return "", fmt.Errorf("failed to get container details: %w", err)
+	}
+
+	cname := detail.Name
+	image := detail.Image
+	if image == "" {
+		return "", fmt.Errorf("container has no image specified")
+	}
+
+	var logOutput strings.Builder
+	appendLog := func(msg string) {
+		log.Printf("[docktun-update] %s", msg)
+		logOutput.WriteString(msg + "\n")
+	}
+
+	appendLog(fmt.Sprintf("[STEP 1/4] Pulling latest image: %s...", image))
+	pullCtx, pullCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer pullCancel()
+
+	pullCmd := exec.CommandContext(pullCtx, "docker", "pull", image)
+	pullOut, err := pullCmd.CombinedOutput()
+	appendLog(strings.TrimSpace(string(pullOut)))
+	if err != nil {
+		return logOutput.String(), fmt.Errorf("failed to pull image %s: %s (%w)", image, strings.TrimSpace(string(pullOut)), err)
+	}
+
+	wasConnectedToCloudflared := detail.ConnectedToCloudflared
+
+	// Check if compose managed
+	compDir := ""
+	compFile := ""
+	compService := ""
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	inspectCmd := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{json .Config.Labels}}", id)
+	if out, err := inspectCmd.Output(); err == nil {
+		var labels map[string]string
+		if err := json.Unmarshal(out, &labels); err == nil {
+			compDir = labels["com.docker.compose.project.working_dir"]
+			compFile = labels["com.docker.compose.project.config_files"]
+			compService = labels["com.docker.compose.service"]
+		}
+	}
+
+	if compService == "" {
+		compService = cname
+	}
+
+	if compDir != "" {
+		if _, err := os.Stat(compDir); err == nil {
+			appendLog(fmt.Sprintf("[STEP 2/4] Updating via Docker Compose in %s (service: %s)...", compDir, compService))
+			var composeArgs []string
+			if compFile != "" {
+				composeArgs = append(composeArgs, "-f", compFile)
+			} else {
+				composeArgs = append(composeArgs, "--project-directory", compDir)
+			}
+			composeArgs = append(composeArgs, "up", "-d", "--no-deps", compService)
+
+			upCmd := exec.Command("docker", append([]string{"compose"}, composeArgs...)...)
+			upCmd.Dir = compDir
+			upOut, upErr := upCmd.CombinedOutput()
+			appendLog(strings.TrimSpace(string(upOut)))
+			if upErr != nil {
+				return logOutput.String(), fmt.Errorf("docker compose up failed: %s (%w)", strings.TrimSpace(string(upOut)), upErr)
+			}
+		} else {
+			compDir = ""
+		}
+	}
+
+	if compDir == "" {
+		appendLog(fmt.Sprintf("[STEP 2/4] Standalone container detected. Scaffolding compose configuration..."))
+		_, projErr := s.EnsureProjectForContainer(id)
+		if projErr != nil {
+			return logOutput.String(), fmt.Errorf("failed to scaffold compose project for %s: %w", cname, projErr)
+		}
+
+		destDir := filepath.Join("/opt/projects", cname)
+		if s.cfg.SelfPath != "" {
+			destDir = filepath.Join(filepath.Dir(s.cfg.SelfPath), cname)
+		}
+		composeFilePath := filepath.Join(destDir, "docker-compose.yml")
+
+		appendLog(fmt.Sprintf("[STEP 3/4] Stopping and removing old container %s...", cname))
+		_ = exec.Command("docker", "stop", id).Run()
+		_ = exec.Command("docker", "rm", id).Run()
+
+		appendLog(fmt.Sprintf("[STEP 4/4] Starting updated container with new image..."))
+		upCmd := exec.Command("docker", "compose", "-f", composeFilePath, "up", "-d")
+		upCmd.Dir = destDir
+		upOut, upErr := upCmd.CombinedOutput()
+		appendLog(strings.TrimSpace(string(upOut)))
+		if upErr != nil {
+			return logOutput.String(), fmt.Errorf("failed to recreate container: %s (%w)", strings.TrimSpace(string(upOut)), upErr)
+		}
+	}
+
+	if detail.ExposureMode == "public" {
+		appendLog("[NETWORK] Ensuring connection to cloudflared network...")
+		_ = s.ConnectNetwork(cname, "cloudflared")
+	}
+
+	s.setContainerUpToDate(id, cname, image)
+
+	if s.audit != nil {
+		s.audit.Log(userID, "container_update", fmt.Sprintf("Updated container %s (%s) to latest image", cname, image), ip)
+	}
+
+	appendLog(fmt.Sprintf("✔ [SUCCESS] Container %s updated and running successfully!", cname))
+	return logOutput.String(), nil
+}
+
+func (s *DockerContainers) setContainerUpToDate(id, name, image string) {
+	if s.db == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image)
+	newDigest := ""
+	if out, err := cmd.Output(); err == nil {
+		var digests []string
+		if json.Unmarshal(out, &digests) == nil && len(digests) > 0 {
+			if idx := strings.Index(digests[0], "@"); idx != -1 {
+				newDigest = digests[0][idx+1:]
+			}
+		}
+	}
+
+	_, _ = s.db.Exec(`
+		INSERT INTO container_updates (container_id, container_name, image, current_digest, latest_digest, update_available, checked_at, error)
+		VALUES (?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, '')
+		ON CONFLICT(container_id) DO UPDATE SET
+			container_name = excluded.container_name,
+			image = excluded.image,
+			current_digest = excluded.current_digest,
+			latest_digest = excluded.latest_digest,
+			update_available = 0,
+			checked_at = CURRENT_TIMESTAMP,
+			error = ''
+	`, id, name, image, newDigest, newDigest)
+}
+
+func (s *DockerContainers) loadAllUpdatesFromDB() map[string]UpdateCheckResult {
+	res := make(map[string]UpdateCheckResult)
+	if s.db == nil {
+		return res
+	}
+	rows, err := s.db.Query(`SELECT container_id, container_name, image, current_digest, latest_digest, update_available, checked_at, error FROM container_updates`)
+	if err != nil {
+		return res
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var u UpdateCheckResult
+		var avail int
+		if err := rows.Scan(&u.ContainerID, &u.ContainerName, &u.Image, &u.CurrentDigest, &u.LatestDigest, &avail, &u.CheckedAt, &u.Error); err == nil {
+			u.UpdateAvailable = avail == 1
+			if u.ContainerID != "" {
+				res[u.ContainerID] = u
+			}
+			if u.ContainerName != "" {
+				res[u.ContainerName] = u
+			}
+		}
+	}
+	return res
+}
+
+func (s *DockerContainers) getUpdateFromDB(idOrName string) (UpdateCheckResult, bool) {
+	if s.db == nil {
+		return UpdateCheckResult{}, false
+	}
+	var u UpdateCheckResult
+	var avail int
+	err := s.db.QueryRow(`
+		SELECT container_id, container_name, image, current_digest, latest_digest, update_available, checked_at, error
+		FROM container_updates WHERE container_id = ? OR container_name = ?
+	`, idOrName, idOrName).Scan(&u.ContainerID, &u.ContainerName, &u.Image, &u.CurrentDigest, &u.LatestDigest, &avail, &u.CheckedAt, &u.Error)
+	if err != nil {
+		return UpdateCheckResult{}, false
+	}
+	u.UpdateAvailable = avail == 1
+	return u, true
+}
+
+func (s *DockerContainers) saveUpdateToDB(u UpdateCheckResult) {
+	if s.db == nil {
+		return
+	}
+	avail := 0
+	if u.UpdateAvailable {
+		avail = 1
+	}
+	_, _ = s.db.Exec(`
+		INSERT INTO container_updates (container_id, container_name, image, current_digest, latest_digest, update_available, checked_at, error)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+		ON CONFLICT(container_id) DO UPDATE SET
+			container_name = excluded.container_name,
+			image = excluded.image,
+			current_digest = excluded.current_digest,
+			latest_digest = excluded.latest_digest,
+			update_available = excluded.update_available,
+			checked_at = CURRENT_TIMESTAMP,
+			error = excluded.error
+	`, u.ContainerID, u.ContainerName, u.Image, u.CurrentDigest, u.LatestDigest, avail, u.Error)
+}
+
+func parseImageRef(image string) (registry, repo, tag string) {
+	tag = "latest"
+	if idx := strings.LastIndex(image, ":"); idx != -1 {
+		slashIdx := strings.LastIndex(image, "/")
+		if idx > slashIdx {
+			tag = image[idx+1:]
+			image = image[:idx]
+		}
+	}
+
+	parts := strings.Split(image, "/")
+	if len(parts) == 1 {
+		registry = "registry-1.docker.io"
+		repo = "library/" + parts[0]
+	} else if len(parts) == 2 {
+		if strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":") {
+			registry = parts[0]
+			repo = parts[1]
+		} else {
+			registry = "registry-1.docker.io"
+			repo = parts[0] + "/" + parts[1]
+		}
+	} else {
+		if strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":") {
+			registry = parts[0]
+			repo = strings.Join(parts[1:], "/")
+		} else {
+			registry = "registry-1.docker.io"
+			repo = strings.Join(parts, "/")
+		}
+	}
+	return
+}
+
+func parseAuthHeader(header string) map[string]string {
+	params := make(map[string]string)
+	parts := strings.Split(header, ",")
+	for _, part := range parts {
+		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(kv) == 2 {
+			k := strings.TrimSpace(kv[0])
+			v := strings.Trim(strings.TrimSpace(kv[1]), `"`)
+			params[k] = v
+		}
+	}
+	return params
+}
+
+func fetchRemoteManifestDigest(ctx context.Context, registry, repo, tag string) (string, []string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	manifestURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s", registry, repo, tag)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", manifestURL, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		authHeader := resp.Header.Get("Www-Authenticate")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			params := parseAuthHeader(authHeader[7:])
+			realm := params["realm"]
+			service := params["service"]
+			scope := params["scope"]
+			if scope == "" {
+				scope = fmt.Sprintf("repository:%s:pull", repo)
+			}
+
+			tokenURL := fmt.Sprintf("%s?service=%s&scope=%s", realm, url.QueryEscape(service), url.QueryEscape(scope))
+			tReq, tErr := http.NewRequestWithContext(ctx, "GET", tokenURL, nil)
+			if tErr == nil {
+				tResp, tErr := client.Do(tReq)
+				if tErr == nil && tResp.StatusCode == http.StatusOK {
+					var tokenData struct {
+						Token       string `json:"token"`
+						AccessToken string `json:"access_token"`
+					}
+					_ = json.NewDecoder(tResp.Body).Decode(&tokenData)
+					tResp.Body.Close()
+
+					tok := tokenData.Token
+					if tok == "" {
+						tok = tokenData.AccessToken
+					}
+					if tok != "" {
+						req2, _ := http.NewRequestWithContext(ctx, "GET", manifestURL, nil)
+						req2.Header.Set("Accept", "application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json")
+						req2.Header.Set("Authorization", "Bearer "+tok)
+						resp2, err2 := client.Do(req2)
+						if err2 == nil {
+							resp = resp2
+							defer resp.Body.Close()
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", nil, fmt.Errorf("registry returned HTTP %d", resp.StatusCode)
+	}
+
+	mainDigest := resp.Header.Get("Docker-Content-Digest")
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	var subDigests []string
+	var indexDoc struct {
+		Manifests []struct {
+			Digest   string `json:"digest"`
+			Platform struct {
+				Architecture string `json:"architecture"`
+				OS           string `json:"os"`
+			} `json:"platform"`
+		} `json:"manifests"`
+	}
+	if err := json.Unmarshal(bodyBytes, &indexDoc); err == nil && len(indexDoc.Manifests) > 0 {
+		for _, m := range indexDoc.Manifests {
+			if m.Digest != "" {
+				subDigests = append(subDigests, m.Digest)
+			}
+		}
+	}
+
+	return mainDigest, subDigests, nil
 }

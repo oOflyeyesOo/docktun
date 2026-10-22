@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
-import { RotateCcw, Copy, Check, ScrollText } from 'lucide-vue-next'
+import { RotateCcw, Copy, Check, ScrollText, Download } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
 import { useApi } from '../composables/useApi'
 
@@ -147,6 +147,19 @@ function copyAllLogs() {
   setTimeout(() => (copied.value = false), 2000)
 }
 
+function downloadLogs() {
+  const text = selectedSource.value === 'cloudflared'
+    ? filteredWsLogs.value.map(l => `${l.time} ${l.message}`).join('\n')
+    : filteredContainerLogs.value.join('\n')
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${selectedSource.value === 'cloudflared' ? 'tunnel' : 'container'}-logs-${new Date().toISOString().slice(0, 10)}.log`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 const currentSourceLabel = computed(() => {
   if (selectedSource.value === 'cloudflared') return 'Cloudflare Tunnel (cloudflared)'
   const c = containers.value.find(item => item.id === selectedSource.value)
@@ -213,6 +226,14 @@ const currentSourceLabel = computed(() => {
           <Check v-if="copied" class="h-3.5 w-3.5 text-emerald-400" />
           <Copy v-else class="h-3.5 w-3.5" />
           <span>{{ copied ? 'Copied' : 'Copy' }}</span>
+        </button>
+        <button
+          @click="downloadLogs"
+          class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-1 text-cyan-300"
+          title="Download logs as .log file"
+        >
+          <Download class="h-3.5 w-3.5" />
+          <span>Download</span>
         </button>
         <button
           v-if="selectedSource !== 'cloudflared'"

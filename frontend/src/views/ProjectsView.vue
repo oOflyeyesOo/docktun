@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { ref, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import {
+  Server,
   Plus,
   Trash2,
   Play,
@@ -20,7 +22,11 @@ import {
   FileText,
   Save,
   Folder,
-  HardDrive
+  HardDrive,
+  Sparkles,
+  Package,
+  Search,
+  Layers
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
@@ -463,8 +469,342 @@ async function runDockerCommand() {
   }
 }
 
-onMounted(() => {
-  load()
+const route = useRoute()
+
+function checkRouteParams() {
+  if (route.query.id) {
+    const targetId = Number(route.query.id)
+    const p = projects.value.find((item) => item.id === targetId)
+    if (p) {
+      openProjectManager(p, (route.query.tab as any) || 'compose')
+    }
+  }
+}
+
+watch(() => route.query, () => {
+  checkRouteParams()
+})
+
+// -------------------------------------------------------------
+// App Templates / App Catalog Store
+// -------------------------------------------------------------
+interface AppTemplate {
+  id: string
+  name: string
+  title: string
+  category: string
+  description: string
+  defaultPort: number
+  compose: string
+}
+
+const showCatalog = ref(false)
+const selectedTemplate = ref<AppTemplate | null>(null)
+const catalogSearch = ref('')
+const catalogCategory = ref('All')
+const templateForm = ref({ name: '', path: '', compose: '' })
+const deployingTemplate = ref(false)
+
+const appTemplates: AppTemplate[] = [
+  {
+    id: 'vaultwarden',
+    name: 'vaultwarden',
+    title: 'Vaultwarden',
+    category: 'Security',
+    description: 'Lightweight Bitwarden-compatible password & secrets manager in Rust.',
+    defaultPort: 80,
+    compose: `services:
+  vaultwarden:
+    image: vaultwarden/server:latest
+    container_name: vaultwarden
+    restart: unless-stopped
+    environment:
+      - WEBSOCKET_ENABLED=true
+    volumes:
+      - ./data:/data
+    networks:
+      - cloudflared
+
+networks:
+  cloudflared:
+    external: true`,
+  },
+  {
+    id: 'uptime-kuma',
+    name: 'uptime-kuma',
+    title: 'Uptime Kuma',
+    category: 'Monitoring',
+    description: 'Self-hosted monitoring tool with status pages, alerts, and ping charts.',
+    defaultPort: 3001,
+    compose: `services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    networks:
+      - cloudflared
+
+networks:
+  cloudflared:
+    external: true`,
+  },
+  {
+    id: 'it-tools',
+    name: 'it-tools',
+    title: 'IT-Tools',
+    category: 'Utilities',
+    description: '50+ handy tools for developers and sysadmins (JWT, Hash, UUID, Base64).',
+    defaultPort: 80,
+    compose: `services:
+  it-tools:
+    image: corentinth/it-tools:latest
+    container_name: it-tools
+    restart: unless-stopped
+    networks:
+      - cloudflared
+
+networks:
+  cloudflared:
+    external: true`,
+  },
+  {
+    id: 'nextcloud',
+    name: 'nextcloud',
+    title: 'Nextcloud Hub',
+    category: 'Productivity',
+    description: 'Self-hosted productivity suite for cloud files, docs, calendar, and contacts.',
+    defaultPort: 80,
+    compose: `services:
+  nextcloud:
+    image: nextcloud:apache
+    container_name: nextcloud
+    restart: unless-stopped
+    environment:
+      - OVERWRITEPROTOCOL=https
+    volumes:
+      - ./data:/var/www/html
+    networks:
+      - cloudflared
+
+networks:
+  cloudflared:
+    external: true`,
+  },
+  {
+    id: 'nginx-proxy-manager',
+    name: 'nginx-proxy-manager',
+    title: 'Nginx Proxy Manager',
+    category: 'Networking',
+    description: 'Reverse proxy management dashboard with free Let’s Encrypt SSL UI.',
+    defaultPort: 81,
+    compose: `services:
+  npm:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "81:81"
+      - "443:443"
+    volumes:
+      - ./data:/data
+      - ./letsencrypt:/etc/letsencrypt
+    networks:
+      - cloudflared
+
+networks:
+  cloudflared:
+    external: true`,
+  },
+  {
+    id: 'jellyfin',
+    name: 'jellyfin',
+    title: 'Jellyfin Media System',
+    category: 'Media',
+    description: 'The free software media system for movies, shows, music, and live TV.',
+    defaultPort: 8096,
+    compose: `services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+    volumes:
+      - ./config:/config
+      - ./cache:/cache
+      - ./media:/media
+    networks:
+      - cloudflared
+
+networks:
+  cloudflared:
+    external: true`,
+  },
+  {
+    id: 'homeassistant',
+    name: 'homeassistant',
+    title: 'Home Assistant',
+    category: 'Smart Home',
+    description: 'Open source home automation putting local control and privacy first.',
+    defaultPort: 8123,
+    compose: `services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    restart: unless-stopped
+    volumes:
+      - ./config:/config
+    networks:
+      - cloudflared
+
+networks:
+  cloudflared:
+    external: true`,
+  },
+  {
+    id: 'dozzle',
+    name: 'dozzle',
+    title: 'Dozzle Log Viewer',
+    category: 'Monitoring',
+    description: 'Simple, lightweight real-time log viewer for Docker containers.',
+    defaultPort: 8080,
+    compose: `services:
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: dozzle
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - cloudflared
+
+networks:
+  cloudflared:
+    external: true`,
+  },
+  {
+    id: 'filebrowser',
+    name: 'filebrowser',
+    title: 'FileBrowser',
+    category: 'Utilities',
+    description: 'Web-based file manager to upload, download, and share files securely.',
+    defaultPort: 80,
+    compose: `services:
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    container_name: filebrowser
+    restart: unless-stopped
+    volumes:
+      - ./srv:/srv
+      - ./data/filebrowser.db:/database/filebrowser.db
+      - ./data/settings.json:/config/settings.json
+    networks:
+      - cloudflared
+
+networks:
+  cloudflared:
+    external: true`,
+  },
+  {
+    id: 'ghost',
+    name: 'ghost',
+    title: 'Ghost CMS',
+    category: 'Publishing',
+    description: 'Professional publishing platform for independent creators & blogs.',
+    defaultPort: 2368,
+    compose: `services:
+  ghost:
+    image: ghost:5-alpine
+    container_name: ghost
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./content:/var/lib/ghost/content
+    networks:
+      - cloudflared
+
+networks:
+  cloudflared:
+    external: true`,
+  },
+]
+
+const catalogCategories = ['All', 'Security', 'Monitoring', 'Utilities', 'Productivity', 'Media', 'Smart Home', 'Publishing', 'Networking']
+
+const filteredTemplates = computed(() => {
+  return appTemplates.filter((t) => {
+    if (catalogCategory.value !== 'All' && t.category !== catalogCategory.value) return false
+    if (!catalogSearch.value.trim()) return true
+    const q = catalogSearch.value.toLowerCase()
+    return t.title.toLowerCase().includes(q) || t.description.toLowerCase().includes(q) || t.category.toLowerCase().includes(q)
+  })
+})
+
+function openCatalog() {
+  selectedTemplate.value = null
+  catalogSearch.value = ''
+  catalogCategory.value = 'All'
+  showCatalog.value = true
+}
+
+function selectTemplate(t: AppTemplate) {
+  selectedTemplate.value = t
+  templateForm.value = {
+    name: t.name,
+    path: `/opt/projects/${t.name}`,
+    compose: t.compose,
+  }
+}
+
+async function deployFromTemplate() {
+  if (!templateForm.value.name || !templateForm.value.path || !templateForm.value.compose) return
+  deployingTemplate.value = true
+  output.value = `// DEPLOYING APP TEMPLATE: ${templateForm.value.name.toUpperCase()}...\n`
+  try {
+    const proj: any = await apiFetch('/api/projects', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: templateForm.value.name,
+        path: templateForm.value.path,
+      }),
+    })
+    const projId = proj.id
+
+    await apiFetch(`/api/projects/${projId}/compose`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        filename: 'docker-compose.yml',
+        content: templateForm.value.compose,
+      }),
+    })
+
+    await apiFetch(`/api/projects/${projId}/up`, { method: 'POST' })
+    showCatalog.value = false
+    selectedTemplate.value = null
+    await load()
+
+    const poll = setInterval(async () => {
+      try {
+        const res: any = await apiFetch(`/api/projects/${projId}/output`)
+        output.value = (res.lines || []).join('\n')
+        if (outputEl.value) outputEl.value.scrollTop = outputEl.value.scrollHeight
+        if (res.done) clearInterval(poll)
+      } catch {
+        clearInterval(poll)
+      }
+    }, 1500)
+  } catch (err: any) {
+    alert('Failed to deploy template: ' + (err.message || err))
+  } finally {
+    deployingTemplate.value = false
+  }
+}
+
+onMounted(async () => {
+  await load()
+  checkRouteParams()
 })
 </script>
 
@@ -477,6 +817,9 @@ onMounted(() => {
         <p class="text-xs text-muted font-mono mt-1">// Manage Compose stacks, containers, and volumes</p>
       </div>
       <div class="flex items-center gap-2">
+        <button @click="openCatalog" class="cyber-btn flex items-center gap-2 text-cyan-300 border-cyan-800 bg-cyan-950/40 hover:bg-cyan-900/50" title="Deploy pre-configured popular apps with 1 click">
+          <Sparkles class="w-4 h-4 text-cyan-400" /> App Catalog
+        </button>
         <button @click="openDockerRun" class="cyber-btn flex items-center gap-2">
           <Terminal class="w-4 h-4" :stroke-width="2" /> Docker Run
         </button>
@@ -570,6 +913,14 @@ onMounted(() => {
               <FolderOpen class="w-3.5 h-3.5" />
               <span class="hidden sm:inline text-xs ml-1 font-mono">Files</span>
             </button>
+            <router-link
+              :to="'/containers?search=' + encodeURIComponent(p.name)"
+              class="cyber-btn-sm text-cyan-300 flex items-center gap-1"
+              title="Inspect containers in this stack"
+            >
+              <Server class="w-3.5 h-3.5 text-emerald-400" />
+              <span class="hidden sm:inline text-xs ml-1 font-mono">Containers</span>
+            </router-link>
 
             <span class="w-px h-5 bg-border mx-1"></span>
 
@@ -926,6 +1277,151 @@ onMounted(() => {
           <button @click="showDockerRun = false" class="cyber-btn-secondary">Cancel</button>
           <button @click="runDockerCommand" :disabled="dockerRunLoading || !dockerRunCmd.trim()" class="cyber-btn flex items-center gap-2">
             <Terminal class="w-4 h-4" /> Run Container
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================= -->
+    <!-- APP TEMPLATES CATALOG MODAL (Portainer / Cosmos Style)         -->
+    <!-- ============================================================= -->
+    <div v-if="showCatalog" class="fixed inset-0 z-50 flex items-center justify-center bg-void/80 p-4 backdrop-blur-sm" @click.self="showCatalog = false">
+      <div class="cyber-card w-full max-w-4xl max-h-[90vh] flex flex-col p-0 overflow-hidden border-cyan-800 shadow-2xl">
+        <!-- Catalog Header -->
+        <div class="p-5 border-b border-border bg-surface flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="rounded-lg bg-cyan-950/80 border border-cyan-800 p-2 text-cyan-300">
+              <Sparkles class="w-5 h-5 text-cyan-400" />
+            </div>
+            <div>
+              <h2 class="text-base font-bold text-gray-100 font-mono tracking-wide">1-Click App Catalog</h2>
+              <p class="text-xs text-muted font-mono mt-0.5">Pre-configured self-hosted apps attached to the Cloudflare network</p>
+            </div>
+          </div>
+          <button @click="showCatalog = false" class="text-muted hover:text-white transition">
+            <X class="w-5 h-5" />
+          </button>
+        </div>
+
+        <!-- Catalog Body -->
+        <div class="p-5 flex-1 overflow-y-auto space-y-4">
+          <!-- When no template selected: browse catalog -->
+          <div v-if="!selectedTemplate" class="space-y-4">
+            <!-- Search & Category Filters -->
+            <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div class="relative flex-1">
+                <Search class="w-4 h-4 text-muted absolute left-3 top-2.5" />
+                <input
+                  v-model="catalogSearch"
+                  placeholder="Search templates (e.g. Vaultwarden, Monitoring, Nextcloud)..."
+                  class="cyber-input w-full pl-9 text-xs"
+                />
+              </div>
+
+              <!-- Categories -->
+              <div class="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs font-mono">
+                <button
+                  v-for="cat in catalogCategories"
+                  :key="cat"
+                  @click="catalogCategory = cat"
+                  class="rounded px-2.5 py-1 transition whitespace-nowrap"
+                  :class="catalogCategory === cat ? 'bg-cyan-950 text-cyan-300 border border-cyan-700' : 'bg-surface text-muted hover:text-white'"
+                >
+                  {{ cat }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Templates Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+              <div
+                v-for="tmpl in filteredTemplates"
+                :key="tmpl.id"
+                @click="selectTemplate(tmpl)"
+                class="cyber-card p-4 hover:border-cyan-500/70 cursor-pointer transition flex flex-col justify-between group bg-void/60 hover:bg-void/90"
+              >
+                <div>
+                  <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-bold text-gray-100 font-mono group-hover:text-cyan-300 transition">
+                      {{ tmpl.title }}
+                    </span>
+                    <span class="rounded bg-slate-900 border border-slate-800 px-2 py-0.5 text-[10px] font-mono text-cyan-400">
+                      {{ tmpl.category }}
+                    </span>
+                  </div>
+                  <p class="text-xs text-muted leading-relaxed">
+                    {{ tmpl.description }}
+                  </p>
+                </div>
+
+                <div class="mt-4 pt-3 border-t border-border/50 flex items-center justify-between text-xs font-mono">
+                  <span class="text-muted/70 text-[11px]">Port: {{ tmpl.defaultPort }}</span>
+                  <span class="text-cyan-400 font-bold group-hover:translate-x-0.5 transition flex items-center gap-1">
+                    <span>Deploy</span>
+                    <span>&rarr;</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="filteredTemplates.length === 0" class="py-12 text-center text-xs text-muted font-mono">
+              // NO TEMPLATES MATCH YOUR SEARCH
+            </div>
+          </div>
+
+          <!-- When template selected: customize and deploy -->
+          <div v-else class="space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-border">
+              <div class="flex items-center gap-2">
+                <button @click="selectedTemplate = null" class="cyber-btn-sm text-muted hover:text-white flex items-center gap-1">
+                  <ArrowLeft class="w-3.5 h-3.5" /> Back to Catalog
+                </button>
+                <h3 class="text-sm font-bold text-cyan-300 font-mono ml-2">Deploy {{ selectedTemplate.title }}</h3>
+              </div>
+              <span class="rounded bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 text-xs font-mono text-cyan-300">
+                {{ selectedTemplate.category }}
+              </span>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-[10px] uppercase font-mono text-muted mb-1">Project / Stack Name</label>
+                <input v-model="templateForm.name" class="cyber-input w-full font-mono text-xs" />
+              </div>
+              <div>
+                <label class="block text-[10px] uppercase font-mono text-muted mb-1">Host Directory Path</label>
+                <input v-model="templateForm.path" class="cyber-input w-full font-mono text-xs" />
+              </div>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-[10px] uppercase font-mono text-muted">docker-compose.yml configuration</label>
+                <span class="text-[10px] text-emerald-400 font-mono">✔ Configured with cloudflared network</span>
+              </div>
+              <textarea
+                v-model="templateForm.compose"
+                rows="12"
+                class="cyber-input w-full font-mono text-xs leading-relaxed"
+                spellcheck="false"
+              ></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- Catalog Footer -->
+        <div class="p-4 border-t border-border bg-surface flex items-center justify-between">
+          <button @click="showCatalog = false" class="cyber-btn-secondary">Close</button>
+
+          <button
+            v-if="selectedTemplate"
+            @click="deployFromTemplate"
+            :disabled="deployingTemplate || !templateForm.name || !templateForm.path"
+            class="cyber-btn flex items-center gap-2 text-cyan-300 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/50"
+          >
+            <RotateCcw v-if="deployingTemplate" class="w-4 h-4 animate-spin" />
+            <Rocket v-else class="w-4 h-4 text-emerald-400" />
+            <span>{{ deployingTemplate ? 'Deploying...' : 'Deploy & Start App' }}</span>
           </button>
         </div>
       </div>

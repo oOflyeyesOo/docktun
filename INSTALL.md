@@ -110,6 +110,35 @@ sudo ./uninstall.sh
 
 ---
 
+## ⬆️ How to Update / Upgrade DockTun
+
+DockTun preserves all your data (`data/app.db`), configuration (`cloudflared/config.yml`), and credentials across updates.
+
+### On Linux Server or VM:
+```bash
+# 1. Pull latest code (if using Git)
+git pull
+
+# 2. Run the automated upgrade script (creates automatic backups and rebuilds)
+sudo ./upgrade.sh
+```
+*Or simply rebuild with Docker Compose:*
+```bash
+docker compose up -d --build
+```
+
+### On Windows (PowerShell or Command Prompt):
+```powershell
+.\upgrade.ps1
+# or double-click upgrade.bat
+```
+*Or run Docker Compose directly:*
+```powershell
+docker compose up -d --build
+```
+
+---
+
 ## 🔄 Fresh Reinstall / Reset
 
 If you wish to wipe the database, containers, and credentials for a clean slate while **keeping your Cloudflare Tunnel configuration**:

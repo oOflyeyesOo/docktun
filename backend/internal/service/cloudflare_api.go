@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -60,43 +61,189 @@ func NewCloudflareAPI(db *db.DB) *CloudflareAPI {
 	}
 }
 
-// GetCredentials returns saved Cloudflare credentials
+// GetCredentials returns saved Cloudflare credentials, automatically discovering
+// and persisting them from credentials.json, token files, .env, and environment variables
 func (s *CloudflareAPI) GetCredentials() CloudflareCredentials {
 	var creds CloudflareCredentials
-	if s.db == nil {
-		return creds
-	}
+	dbHasToken := false
+	dbHasAccount := false
+	dbHasZone := false
 
-	rows, err := s.db.Query("SELECT key, value FROM system_settings WHERE key IN ('cf_api_token', 'cf_account_id', 'cf_zone_id')")
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var k, v string
-			if err := rows.Scan(&k, &v); err == nil {
-				switch k {
-				case "cf_api_token":
-					creds.APIToken = v
-				case "cf_account_id":
-					creds.AccountID = v
-				case "cf_zone_id":
-					creds.ZoneID = v
+	if s.db != nil {
+		rows, err := s.db.Query("SELECT key, value FROM system_settings WHERE key IN ('cf_api_token', 'cf_account_id', 'cf_zone_id')")
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var k, v string
+				if err := rows.Scan(&k, &v); err == nil {
+					switch k {
+					case "cf_api_token":
+						creds.APIToken = strings.TrimSpace(v)
+						if creds.APIToken != "" {
+							dbHasToken = true
+						}
+					case "cf_account_id":
+						creds.AccountID = strings.TrimSpace(v)
+						if creds.AccountID != "" {
+							dbHasAccount = true
+						}
+					case "cf_zone_id":
+						creds.ZoneID = strings.TrimSpace(v)
+						if creds.ZoneID != "" {
+							dbHasZone = true
+						}
+					}
 				}
 			}
 		}
 	}
 
-	// Environment variable fallbacks
+	// 1. Check environment variables
 	if creds.APIToken == "" {
-		creds.APIToken = os.Getenv("CF_API_TOKEN")
+		for _, envKey := range []string{"CF_API_TOKEN", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_TOKEN", "CF_TOKEN"} {
+			if val := strings.TrimSpace(os.Getenv(envKey)); val != "" {
+				creds.APIToken = val
+				break
+			}
+		}
 	}
 	if creds.AccountID == "" {
-		creds.AccountID = os.Getenv("CF_ACCOUNT_ID")
+		for _, envKey := range []string{"CF_ACCOUNT_ID", "CLOUDFLARE_ACCOUNT_ID", "CF_ACCOUNT"} {
+			if val := strings.TrimSpace(os.Getenv(envKey)); val != "" {
+				creds.AccountID = val
+				break
+			}
+		}
 	}
 	if creds.ZoneID == "" {
-		creds.ZoneID = os.Getenv("CF_ZONE_ID")
+		for _, envKey := range []string{"CF_ZONE_ID", "CLOUDFLARE_ZONE_ID", "CF_ZONE"} {
+			if val := strings.TrimSpace(os.Getenv(envKey)); val != "" {
+				creds.ZoneID = val
+				break
+			}
+		}
+	}
+
+	// 2. Check dedicated token files on disk
+	if creds.APIToken == "" {
+		tokenFiles := []string{
+			"/etc/cloudflared/token",
+			"/etc/cloudflared/api_token",
+			"/etc/cloudflared/cf_api_token",
+			"/etc/cloudflared/cf_token",
+			"/app/cloudflared/token",
+			"/app/cloudflared/api_token",
+			"/app/data/cf_api_token",
+			"./cloudflared/token",
+			"./cloudflared/api_token",
+			"./cloudflared/cf_api_token",
+			"./cloudflared/cf_token",
+		}
+		if home := os.Getenv("HOME"); home != "" {
+			tokenFiles = append(tokenFiles,
+				filepath.Join(home, ".cloudflared", "token"),
+				filepath.Join(home, ".cloudflared", "api_token"),
+				filepath.Join(home, ".cloudflared", "cf_api_token"),
+			)
+		}
+		for _, tf := range tokenFiles {
+			if data, err := os.ReadFile(tf); err == nil {
+				token := strings.TrimSpace(string(data))
+				if token != "" && !strings.Contains(token, "\n") {
+					creds.APIToken = token
+					log.Printf("[docktun] Discovered Cloudflare API token from file: %s", tf)
+					break
+				}
+			}
+		}
+	}
+
+	// 3. Check credentials.json files (extracts AccountTag and optional api_token)
+	credJsonPaths := []string{
+		"/etc/cloudflared/credentials.json",
+		"./cloudflared/credentials.json",
+		"/app/cloudflared/credentials.json",
+	}
+	if home := os.Getenv("HOME"); home != "" {
+		if matches, err := filepath.Glob(filepath.Join(home, ".cloudflared", "*.json")); err == nil {
+			credJsonPaths = append(credJsonPaths, matches...)
+		}
+	}
+	for _, cjp := range credJsonPaths {
+		if data, err := os.ReadFile(cjp); err == nil {
+			var raw map[string]interface{}
+			if err := json.Unmarshal(data, &raw); err == nil {
+				// Check AccountTag / AccountID
+				if creds.AccountID == "" {
+					for _, k := range []string{"AccountTag", "account_tag", "AccountID", "account_id"} {
+						if val, ok := raw[k].(string); ok && strings.TrimSpace(val) != "" {
+							creds.AccountID = strings.TrimSpace(val)
+							log.Printf("[docktun] Discovered Cloudflare Account ID from %s: %s", cjp, creds.AccountID)
+							break
+						}
+					}
+				}
+				// Check api_token inside JSON
+				if creds.APIToken == "" {
+					for _, k := range []string{"api_token", "APIToken", "token", "Token", "cf_api_token"} {
+						if val, ok := raw[k].(string); ok && strings.TrimSpace(val) != "" {
+							creds.APIToken = strings.TrimSpace(val)
+							log.Printf("[docktun] Discovered Cloudflare API token from %s", cjp)
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 4. Check .env files on disk
+	if creds.APIToken == "" || creds.AccountID == "" || creds.ZoneID == "" {
+		envPaths := []string{
+			".env",
+			"/.env",
+			"/app/.env",
+			"/opt/projects/docktun/.env",
+		}
+		for _, ep := range envPaths {
+			if data, err := os.ReadFile(ep); err == nil {
+				for _, line := range strings.Split(string(data), "\n") {
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
+						continue
+					}
+					parts := strings.SplitN(line, "=", 2)
+					k := strings.TrimSpace(parts[0])
+					v := strings.Trim(strings.TrimSpace(parts[1]), "\"'")
+					if v == "" {
+						continue
+					}
+					if creds.APIToken == "" && (k == "CF_API_TOKEN" || k == "CLOUDFLARE_API_TOKEN" || k == "CLOUDFLARE_TOKEN" || k == "CF_TOKEN") {
+						creds.APIToken = v
+						log.Printf("[docktun] Discovered Cloudflare API token from %s (%s)", ep, k)
+					}
+					if creds.AccountID == "" && (k == "CF_ACCOUNT_ID" || k == "CLOUDFLARE_ACCOUNT_ID" || k == "CF_ACCOUNT") {
+						creds.AccountID = v
+						log.Printf("[docktun] Discovered Cloudflare Account ID from %s (%s)", ep, k)
+					}
+					if creds.ZoneID == "" && (k == "CF_ZONE_ID" || k == "CLOUDFLARE_ZONE_ID" || k == "CF_ZONE") {
+						creds.ZoneID = v
+						log.Printf("[docktun] Discovered Cloudflare Zone ID from %s (%s)", ep, k)
+					}
+				}
+			}
+		}
 	}
 
 	creds.HasToken = creds.APIToken != ""
+
+	// Auto-save discovered values to SQLite so they are permanently preserved across reboots
+	if s.db != nil && ((creds.APIToken != "" && !dbHasToken) || (creds.AccountID != "" && !dbHasAccount) || (creds.ZoneID != "" && !dbHasZone)) {
+		go func(tok, acc, zone string) {
+			_ = s.SaveCredentials(tok, acc, zone)
+		}(creds.APIToken, creds.AccountID, creds.ZoneID)
+	}
+
 	return creds
 }
 
@@ -375,3 +522,109 @@ func (s *CloudflareAPI) CreateWildcardRoute(domain, tunnelID string) error {
 
 	return nil
 }
+
+// GetRemoteTunnel queries the Cloudflare API for remote tunnel edge status and connectors
+func (s *CloudflareAPI) GetRemoteTunnel(tunnelID string) (map[string]interface{}, error) {
+	creds := s.GetCredentials()
+	if creds.APIToken == "" || creds.AccountID == "" {
+		return nil, fmt.Errorf("Cloudflare API Token and Account ID required")
+	}
+
+	apiURL := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/cfd_tunnel/%s", creds.AccountID, tunnelID)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+creds.APIToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("cloudflare api request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var cfResp cfApiResponse
+	if err := json.NewDecoder(resp.Body).Decode(&cfResp); err != nil {
+		return nil, fmt.Errorf("parse cloudflare response: %w", err)
+	}
+	if !cfResp.Success {
+		errMsg := "cloudflare api query failed"
+		if len(cfResp.Errors) > 0 {
+			errMsg = cfResp.Errors[0].Message
+		}
+		return nil, fmt.Errorf("%s", errMsg)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(cfResp.Result, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// AutoSyncIngressDNS automatically reads the active cloudflared config.yml,
+// synchronizes every ingress hostname to Cloudflare DNS CNAME records,
+// and ensures a wildcard DNS route (*.domain.com) is in place.
+func (s *CloudflareAPI) AutoSyncIngressDNS(configMgr *ConfigManager) {
+	if configMgr == nil {
+		return
+	}
+
+	rawYaml, err := configMgr.Read()
+	if err != nil || strings.TrimSpace(rawYaml) == "" {
+		return
+	}
+
+	var doc struct {
+		Tunnel  string `yaml:"tunnel"`
+		Ingress []struct {
+			Hostname string `yaml:"hostname"`
+			Service  string `yaml:"service"`
+		} `yaml:"ingress"`
+	}
+
+	if err := yaml.Unmarshal([]byte(rawYaml), &doc); err != nil {
+		log.Printf("[docktun] auto-dns: failed to parse config.yml: %v", err)
+		return
+	}
+
+	tid := strings.TrimSpace(doc.Tunnel)
+	if tid == "" || tid == "YOUR_TUNNEL_ID" || tid == "your-tunnel-uuid" {
+		return
+	}
+
+	log.Printf("[docktun] auto-dns: starting automated Cloudflare DNS sync for tunnel %s...", tid)
+
+	var detectedRootDomain string
+	for _, rule := range doc.Ingress {
+		host := strings.TrimSpace(rule.Hostname)
+		if host == "" || strings.HasPrefix(rule.Service, "http_status:") {
+			continue
+		}
+
+		// Sync individual hostname CNAME
+		if err := s.SyncDNSRecord(host, tid); err != nil {
+			log.Printf("[docktun] auto-dns: sync notice for %s: %v", host, err)
+		} else {
+			log.Printf("[docktun] auto-dns: verified CNAME %s -> %s.cfargotunnel.com", host, tid)
+		}
+
+		if detectedRootDomain == "" {
+			parts := strings.Split(strings.ToLower(host), ".")
+			if len(parts) >= 2 {
+				detectedRootDomain = strings.Join(parts[len(parts)-2:], ".")
+			}
+		}
+	}
+
+	// Also ensure a Wildcard route (*.domain.com) exists for the root domain
+	if detectedRootDomain != "" && !strings.Contains(detectedRootDomain, "example.com") {
+		if err := s.CreateWildcardRoute(detectedRootDomain, tid); err != nil {
+			log.Printf("[docktun] auto-dns: wildcard sync notice (*.%s): %v", detectedRootDomain, err)
+		} else {
+			log.Printf("[docktun] auto-dns: verified wildcard CNAME *.%s -> %s.cfargotunnel.com", detectedRootDomain, tid)
+		}
+	}
+}
+

@@ -4,6 +4,7 @@ import (
   "context"
   "log"
   "net/http"
+  "os"
   "os/signal"
   "path/filepath"
   "syscall"
@@ -59,13 +60,13 @@ func main() {
   cfAPISvc := service.NewCloudflareAPI(database)
   projectsSvc := service.NewProjects(database, cfg.SelfPath)
   dockerRunSvc := service.NewDockerRun(database, projectsSvc)
-  dockerContainersSvc := service.NewDockerContainers(cfg, database, configSvc, cfdSvc, cfAPISvc)
-  meshSvc := service.NewMeshService(dataDir)
+  dockerContainersSvc := service.NewDockerContainers(cfg, database, configSvc, cfdSvc, cfAPISvc, auditSvc)
+  meshSvc := service.NewMeshService(dataDir, configSvc, cfg)
 
   statusHandler := handler.NewStatus(cfdSvc, cfg)
   controlHandler := handler.NewControl(cfdSvc, auditSvc)
   logsHandler := handler.NewLogs(hub, cfg.JWTSecret)
-  configHandler := handler.NewConfig(configSvc, auditSvc)
+  configHandler := handler.NewConfig(configSvc, auditSvc, cfAPISvc)
   tcpHandler := handler.NewTcpAccess(cfdSvc)
   auditHandler := handler.NewAudit(auditSvc)
   healthHandler := handler.NewHealthCheck(cfg.CloudflaredConfig)
@@ -146,6 +147,13 @@ func main() {
     r.Post("/api/docker/containers/{id}/restart", dockerContainersHandler.Restart)
     r.Post("/api/docker/containers/{id}/remove", dockerContainersHandler.Remove)
     r.Get("/api/docker/containers/{id}/logs", dockerContainersHandler.Logs)
+    r.Post("/api/docker/containers/{id}/exec", dockerContainersHandler.Exec)
+    r.Post("/api/docker/containers/check-updates", dockerContainersHandler.CheckAllUpdates)
+    r.Post("/api/docker/containers/{id}/check-update", dockerContainersHandler.CheckUpdate)
+    r.Post("/api/docker/containers/{id}/update", dockerContainersHandler.Update)
+    r.Get("/api/docker/system/df", dockerContainersHandler.SystemDF)
+    r.Post("/api/docker/system/prune", dockerContainersHandler.SystemPrune)
+    r.Post("/api/docker/probe", dockerContainersHandler.ProbeTarget)
 
     r.Post("/api/docker/run", dockerRunHandler.Run)
     r.Get("/api/docker/run/output/{id}", dockerRunHandler.Output)
@@ -154,7 +162,41 @@ func main() {
     r.Post("/api/cloudflare/settings", cloudflareHandler.SaveSettings)
     r.Post("/api/cloudflare/sync-all", cloudflareHandler.SyncAllRoutes)
     r.Post("/api/cloudflare/create-wildcard", cloudflareHandler.CreateWildcard)
+    r.Get("/api/cloudflare/tunnel", cloudflareHandler.GetTunnelStatus)
   })
+
+  // ---------------------------------------------------------------------------
+  // Static Frontend SPA Serving (Unified Container)
+  // ---------------------------------------------------------------------------
+  staticDir := os.Getenv("STATIC_DIR")
+  if staticDir == "" {
+    staticDir = "./dist"
+  }
+  if fi, err := os.Stat(staticDir); err == nil && fi.IsDir() {
+    fileServer := http.FileServer(http.Dir(staticDir))
+    r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
+      reqPath := filepath.Clean(r.URL.Path)
+      fullPath := filepath.Join(staticDir, reqPath)
+      if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
+        fileServer.ServeHTTP(w, r)
+        return
+      }
+      http.ServeFile(w, r, filepath.Join(staticDir, "index.html"))
+    })
+    log.Printf("[docktun] serving frontend UI directly from %s", staticDir)
+  }
+
+  // Backwards-compatibility auxiliary listener on port 80 (inside container)
+  go func() {
+    srv80 := &http.Server{
+      Addr:         ":80",
+      Handler:      r,
+      ReadTimeout:  15 * time.Second,
+      WriteTimeout: 600 * time.Second,
+      IdleTimeout:  60 * time.Second,
+    }
+    _ = srv80.ListenAndServe()
+  }()
 
   srv := &http.Server{
     Addr:         cfg.ListenAddr,
@@ -172,6 +214,12 @@ func main() {
     if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
       log.Fatalf("server error: %v", err)
     }
+  }()
+
+  // Automatically sync all ingress hostnames & wildcard route with Cloudflare DNS on startup
+  go func() {
+    time.Sleep(3 * time.Second)
+    cfAPISvc.AutoSyncIngressDNS(configSvc)
   }()
 
   <-ctx.Done()

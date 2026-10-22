@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   Server,
   Play,
@@ -40,7 +41,15 @@ import {
   Radio,
   Activity,
   CornerDownRight,
-  Code2
+  Code2,
+  ArrowUpCircle,
+  Sparkles,
+  Download,
+  Rocket,
+  History,
+  GitBranch,
+  KeyRound,
+  Package
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
@@ -85,6 +94,11 @@ interface ContainerItem {
   project_path?: string
   compose_file?: string
   connected_to_cloudflared?: boolean
+  update_available?: boolean
+  latest_digest?: string
+  current_digest?: string
+  update_checked_at?: string
+  update_error?: string
 }
 
 interface ContainerDetail extends ContainerItem {
@@ -108,7 +122,17 @@ interface FileItem {
 const containers = ref<ContainerItem[]>([])
 const loading = ref(false)
 const searchQuery = ref('')
-const filter = ref<'all' | 'running' | 'stopped' | 'local' | 'public' | 'private'>('all')
+const filter = ref<'all' | 'running' | 'stopped' | 'local' | 'public' | 'private' | 'updates'>('all')
+
+const checkingUpdates = ref(false)
+const checkingSingleUpdate = ref<Record<string, boolean>>({})
+const updatingContainer = ref<Record<string, boolean>>({})
+const showUpdateConfirmModal = ref<{ container: ContainerItem } | null>(null)
+const updateResultModal = ref<{ name: string; output: string; success: boolean; error?: string } | null>(null)
+
+const availableUpdatesCount = computed(() => {
+  return containers.value.filter((c) => c.update_available).length
+})
 
 const actionLoading = ref<Record<string, string>>({})
 const exposeDrawerId = ref<string | null>(null)
@@ -145,10 +169,17 @@ function getExpose(id?: string): ExposureSettings {
 // Container Detail & Control Center State
 // ==========================================
 const selectedContainer = ref<ContainerDetail | null>(null)
-const selectedTab = ref<'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs'>('overview')
+const selectedTab = ref<'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs' | 'exec'>('overview')
 const detailLoading = ref(false)
 const networkActionLoading = ref(false)
 const projectScaffolding = ref(false)
+
+// Exec / Terminal state
+const execCmd = ref('')
+const execOutput = ref('')
+const execLoading = ref(false)
+const execExitCode = ref<number | null>(null)
+const execHistory = ref<string[]>([])
 
 // Compose state
 const composeFilename = ref('docker-compose.yml')
@@ -213,6 +244,54 @@ function copyToClipboard(key: string, text: string) {
   }, 2000)
 }
 
+// ==========================================
+// Launch Modal & Unified Stack State
+// ==========================================
+const showLaunchModal = ref(false)
+const launchTab = ref<'dockerrun' | 'gitstack'>('dockerrun')
+
+// Docker Run State
+const dockerRunCmd = ref('docker run -d --name my-app -p 8080:80 nginx:alpine')
+const dockerRunMode = ref<'compose' | 'direct'>('compose')
+const dockerRunCloudflared = ref(false)
+const dockerRunCreateProject = ref(true)
+const dockerRunCustomName = ref('')
+const dockerRunLoading = ref(false)
+const dockerRunJob = ref<any>(null)
+const dockerRunLines = ref<string[]>([])
+
+// Git / Compose Stack Creator State
+const newProjectForm = ref({
+  name: '',
+  path: '',
+  repo_url: '',
+  git_username: '',
+  git_token: '',
+})
+const newProjectSaving = ref(false)
+
+// Active Project Metadata in Control Center
+const currentProject = ref<{
+  id: number
+  name: string
+  path: string
+  repo_url: string
+  git_username: string
+  git_token: string
+} | null>(null)
+const projectGitSaving = ref(false)
+const showGitSettings = ref(false)
+
+// Stack Operations & Output Polling
+const stackActionLoading = ref<Record<number, boolean>>({})
+const stackOutputModal = ref<{ title: string; lines: string[]; done: boolean; projectId: number } | null>(null)
+let stackPollTimer: any = null
+
+const showDeployPromptModal = ref<{ projectId: number; projectName: string } | null>(null)
+const deployBranchName = ref('main')
+
+const stackHistoryModal = ref<{ projectName: string; items: any[] } | null>(null)
+
 const filteredContainers = computed(() => {
   return containers.value.filter((c) => {
     if (filter.value === 'running' && !c.running) return false
@@ -220,6 +299,7 @@ const filteredContainers = computed(() => {
     if (filter.value === 'local' && (!c.running || c.exposure_mode === 'public' || c.exposure_mode === 'private')) return false
     if (filter.value === 'public' && c.exposure_mode !== 'public') return false
     if (filter.value === 'private' && c.exposure_mode !== 'private') return false
+    if (filter.value === 'updates' && !c.update_available) return false
 
     if (!searchQuery.value) return true
     const q = searchQuery.value.toLowerCase()
@@ -349,6 +429,80 @@ async function removeContainer(container: ContainerItem) {
   }
 }
 
+async function checkAllContainerUpdates() {
+  checkingUpdates.value = true
+  try {
+    const results = await apiFetch('/api/docker/containers/check-updates', { method: 'POST' })
+    await fetchContainers()
+    const updatesFound = (results || []).filter((r: any) => r.update_available).length
+    if (updatesFound > 0) {
+      alert(`Update check complete: ${updatesFound} container${updatesFound > 1 ? 's have' : ' has'} updates available!`)
+    } else {
+      alert('All containers are up to date with remote registries.')
+    }
+  } catch (error: any) {
+    alert(error.message || 'Failed to check updates')
+  } finally {
+    checkingUpdates.value = false
+  }
+}
+
+async function checkSingleUpdate(container: ContainerItem) {
+  checkingSingleUpdate.value[container.id] = true
+  try {
+    const res = await apiFetch(`/api/docker/containers/${container.id}/check-update`, { method: 'POST' })
+    await fetchContainers()
+    if (selectedContainer.value && selectedContainer.value.id === container.id) {
+      selectedContainer.value.update_available = res.update_available
+      selectedContainer.value.latest_digest = res.latest_digest
+      selectedContainer.value.current_digest = res.current_digest
+      selectedContainer.value.update_checked_at = res.checked_at
+      selectedContainer.value.update_error = res.error
+    }
+    if (res.update_available) {
+      alert(`Update available for ${container.name}!`)
+    } else if (res.error) {
+      alert(`Update check notice for ${container.name}: ${res.error}`)
+    } else {
+      alert(`${container.name} is up to date!`)
+    }
+  } catch (error: any) {
+    alert(error.message || `Failed to check update for ${container.name}`)
+  } finally {
+    delete checkingSingleUpdate.value[container.id]
+  }
+}
+
+function confirmUpdate(container: ContainerItem) {
+  showUpdateConfirmModal.value = { container }
+}
+
+async function performUpdate(container: ContainerItem) {
+  showUpdateConfirmModal.value = null
+  updatingContainer.value[container.id] = true
+  try {
+    const res = await apiFetch(`/api/docker/containers/${container.id}/update`, { method: 'POST' })
+    updateResultModal.value = {
+      name: container.name,
+      output: res.output || 'Container updated successfully.',
+      success: true,
+    }
+    await fetchContainers()
+    if (selectedContainer.value && selectedContainer.value.id === container.id) {
+      await openContainerModal(container, selectedTab.value)
+    }
+  } catch (error: any) {
+    updateResultModal.value = {
+      name: container.name,
+      output: error.message || 'Update failed.',
+      success: false,
+      error: error.message,
+    }
+  } finally {
+    delete updatingContainer.value[container.id]
+  }
+}
+
 const exposeMsg = ref<Record<string, { type: 'success' | 'error'; text: string }>>({})
 
 function toggleExposeDrawer(container: ContainerItem) {
@@ -460,6 +614,7 @@ function handleTabChange(tab: 'overview' | 'access' | 'compose' | 'env' | 'files
   if (tab === 'compose') {
     if (selectedContainer.value.project_id) {
       loadContainerCompose(selectedContainer.value.project_id)
+      loadProjectInfo(selectedContainer.value.project_id)
     }
   } else if (tab === 'env') {
     if (selectedContainer.value.project_id) {
@@ -556,6 +711,190 @@ async function saveContainerCompose(restart = false) {
     composeMsg.value = 'Save failed: ' + e.message
   } finally {
     composeSaving.value = false
+  }
+}
+
+// ==========================================
+// Stack & Launcher Helper Functions
+// ==========================================
+async function loadProjectInfo(projectId: number) {
+  try {
+    const list: any[] = await apiFetch('/api/projects')
+    if (Array.isArray(list)) {
+      const found = list.find((p) => p.id === projectId)
+      if (found) {
+        currentProject.value = {
+          id: found.id,
+          name: found.name,
+          path: found.path,
+          repo_url: found.repo_url || '',
+          git_username: found.git_username || '',
+          git_token: found.git_token || '',
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load project info:', err)
+  }
+}
+
+async function saveProjectGit() {
+  if (!currentProject.value) return
+  projectGitSaving.value = true
+  try {
+    await apiFetch(`/api/projects/${currentProject.value.id}`, {
+      method: 'PUT',
+      body: JSON.stringify(currentProject.value),
+    })
+    alert('Git configuration saved successfully!')
+  } catch (e: any) {
+    alert('Failed to save Git configuration: ' + (e.message || e))
+  } finally {
+    projectGitSaving.value = false
+  }
+}
+
+function startStackOutputPolling(projectId: number, title: string) {
+  stackOutputModal.value = { title, lines: ['Initializing stack action...'], done: false, projectId }
+  if (stackPollTimer) clearInterval(stackPollTimer)
+  stackPollTimer = setInterval(async () => {
+    try {
+      const res: any = await apiFetch(`/api/projects/${projectId}/output`)
+      if (stackOutputModal.value && res.lines && res.lines.length) {
+        stackOutputModal.value.lines = res.lines
+      }
+      if (res.done) {
+        if (stackOutputModal.value) stackOutputModal.value.done = true
+        clearInterval(stackPollTimer)
+        stackPollTimer = null
+        delete stackActionLoading.value[projectId]
+        await fetchContainers()
+      }
+    } catch {
+      clearInterval(stackPollTimer)
+      stackPollTimer = null
+      delete stackActionLoading.value[projectId]
+    }
+  }, 1000)
+}
+
+async function runStackAction(projectId: number, action: 'up' | 'down' | 'restart') {
+  if (!confirm(`Are you sure you want to run compose "${action}" on this stack?`)) return
+  stackActionLoading.value[projectId] = true
+  try {
+    await apiFetch(`/api/projects/${projectId}/action/${action}`, { method: 'POST' })
+    startStackOutputPolling(projectId, `Compose ${action.toUpperCase()}`)
+  } catch (e: any) {
+    alert(`Stack action "${action}" failed: ` + (e.message || e))
+    delete stackActionLoading.value[projectId]
+  }
+}
+
+function openDeployPrompt(projectId: number, projectName: string) {
+  showDeployPromptModal.value = { projectId, projectName }
+  deployBranchName.value = 'main'
+}
+
+async function confirmDeploy() {
+  if (!showDeployPromptModal.value) return
+  const pId = showDeployPromptModal.value.projectId
+  const branch = deployBranchName.value.trim() || 'main'
+  showDeployPromptModal.value = null
+
+  stackActionLoading.value[pId] = true
+  try {
+    await apiFetch(`/api/projects/${pId}/action/deploy`, {
+      method: 'POST',
+      body: JSON.stringify({ ref: branch }),
+    })
+    startStackOutputPolling(pId, `Deploy Branch/Tag: ${branch}`)
+  } catch (e: any) {
+    alert('Deploy failed: ' + (e.message || e))
+    delete stackActionLoading.value[pId]
+  }
+}
+
+async function openStackHistory(projectId: number, projectName: string) {
+  try {
+    const res: any = await apiFetch(`/api/projects/${projectId}/history`)
+    stackHistoryModal.value = {
+      projectName: projectName || `Project #${projectId}`,
+      items: Array.isArray(res) ? res : [],
+    }
+  } catch (e: any) {
+    alert('Failed to load history: ' + (e.message || e))
+  }
+}
+
+function openLaunchModal() {
+  showLaunchModal.value = true
+  dockerRunLines.value = []
+  dockerRunJob.value = null
+}
+
+function insertDockerSnippet(snip: string) {
+  dockerRunCmd.value = (dockerRunCmd.value.trim() + ' ' + snip).trim()
+}
+
+async function runDockerCommand() {
+  if (!dockerRunCmd.value.trim()) return
+  dockerRunLoading.value = true
+  dockerRunLines.value = []
+  dockerRunJob.value = null
+
+  try {
+    const res: any = await apiFetch('/api/docker/run', {
+      method: 'POST',
+      body: JSON.stringify({
+        command: dockerRunCmd.value.trim(),
+        mode: dockerRunMode.value,
+        connect_cloudflared: dockerRunCloudflared.value,
+        create_project: dockerRunCreateProject.value,
+        project_name: dockerRunCustomName.value.trim(),
+      }),
+    })
+
+    const jobId = res.job_id
+    const poll = setInterval(async () => {
+      try {
+        const job: any = await apiFetch(`/api/docker/run/output/${jobId}`)
+        dockerRunJob.value = job
+        dockerRunLines.value = job.output || []
+        if (job.status === 'completed' || job.status === 'failed') {
+          clearInterval(poll)
+          dockerRunLoading.value = false
+          await fetchContainers()
+        }
+      } catch {
+        clearInterval(poll)
+        dockerRunLoading.value = false
+      }
+    }, 1000)
+  } catch (e: any) {
+    dockerRunLoading.value = false
+    alert(e.message || 'Failed to execute Docker run')
+  }
+}
+
+async function submitNewProject() {
+  if (!newProjectForm.value.name.trim() || !newProjectForm.value.path.trim()) {
+    alert('Stack name and folder path are required.')
+    return
+  }
+  newProjectSaving.value = true
+  try {
+    await apiFetch('/api/projects', {
+      method: 'POST',
+      body: JSON.stringify(newProjectForm.value),
+    })
+    showLaunchModal.value = false
+    newProjectForm.value = { name: '', path: '', repo_url: '', git_username: '', git_token: '' }
+    await fetchContainers()
+    alert('Stack created successfully!')
+  } catch (e: any) {
+    alert('Failed to create stack: ' + (e.message || e))
+  } finally {
+    newProjectSaving.value = false
   }
 }
 
@@ -698,6 +1037,31 @@ async function fetchModalLogs() {
   }
 }
 
+async function runContainerExec() {
+  if (!selectedContainer.value || !execCmd.value.trim() || execLoading.value) return
+  const cmd = execCmd.value.trim()
+  execLoading.value = true
+  execOutput.value = `// EXECUTING: ${cmd}...\n`
+  execExitCode.value = null
+  if (!execHistory.value.includes(cmd)) {
+    execHistory.value.unshift(cmd)
+    if (execHistory.value.length > 8) execHistory.value.pop()
+  }
+  try {
+    const res: any = await apiFetch(`/api/docker/containers/${selectedContainer.value.id}/exec`, {
+      method: 'POST',
+      body: JSON.stringify({ command: cmd }),
+    })
+    execOutput.value = res.output || '(Command completed with no output)'
+    execExitCode.value = res.exit_code
+  } catch (err: any) {
+    execOutput.value = `ERROR: ${err.message || err}`
+    execExitCode.value = 1
+  } finally {
+    execLoading.value = false
+  }
+}
+
 async function disconnectFromCloudflared(container: any) {
   if (!container) return
   disconnectingNetwork.value[container.id] = true
@@ -743,11 +1107,62 @@ function getPrimaryPort(portsStr?: string): string {
 }
 
 let timer: any = null
+const route = useRoute()
+const router = useRouter()
+
+function checkRouteParams() {
+  const targetId = (route.query.id as string) || ''
+  const targetName = (route.query.name as string) || ''
+  const initialTab = (route.query.tab as any) || 'overview'
+
+  if (targetId || targetName) {
+    const cleanTargetName = targetName.replace(/^\//, '').toLowerCase()
+    const target = containers.value.find((c) => {
+      if (targetId && (c.id === targetId || c.id.startsWith(targetId))) return true
+      if (cleanTargetName) {
+        const cName = c.name.replace(/^\//, '').toLowerCase()
+        return cName === cleanTargetName || cName.startsWith(cleanTargetName)
+      }
+      return false
+    })
+    if (target) {
+      openContainerModal(target, initialTab)
+    }
+  }
+
+  // Support opening stack directly via ?project=<id> or ?id=<project_id>
+  const targetProjectId = route.query.project || (route.query.id && !containers.value.some((c) => c.id === (route.query.id as string)) ? route.query.id : null)
+  if (targetProjectId) {
+    const pId = parseInt(targetProjectId as string, 10)
+    if (!isNaN(pId)) {
+      const pTarget = containers.value.find((c) => c.project_id === pId)
+      if (pTarget) {
+        openContainerModal(pTarget, 'compose')
+      }
+    }
+  }
+
+  if (route.query.launch === 'true') {
+    openLaunchModal()
+  }
+
+  if (route.query.filter && ['all', 'running', 'stopped', 'local', 'public', 'private', 'updates'].includes(route.query.filter as string)) {
+    filter.value = route.query.filter as any
+  }
+  if (route.query.search) {
+    searchQuery.value = route.query.search as string
+  }
+}
+
+watch(() => route.query, () => {
+  checkRouteParams()
+})
 
 onMounted(async () => {
   loading.value = true
   await fetchContainers()
   loading.value = false
+  checkRouteParams()
 
   // Live polling every 4 seconds
   timer = setInterval(() => {
@@ -760,6 +1175,7 @@ onMounted(async () => {
 onUnmounted(() => {
   if (timer) clearInterval(timer)
   if (modalLogsTimer) clearInterval(modalLogsTimer)
+  if (stackPollTimer) clearInterval(stackPollTimer)
 })
 </script>
 
@@ -772,13 +1188,38 @@ onUnmounted(() => {
           <Layers class="h-3.5 w-3.5 text-cyan-400" />
           <span>Container Orchestration</span>
         </div>
-        <h1 class="text-2xl font-bold tracking-tight text-slate-100">Containers</h1>
+        <h1 class="text-2xl font-bold tracking-tight text-slate-100">Containers & Stacks</h1>
         <p class="text-xs text-slate-400">
-          Manage standalone containers, docker-compose stacks, ingress routing, and network connectivity.
+          Manage standalone containers, docker-compose stacks, git deployments, and network ingress.
         </p>
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
+        <button
+          @click="openLaunchModal"
+          class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-300 border-cyan-500/50 bg-cyan-950/40 hover:bg-cyan-900/60 shadow-sm"
+          title="Run a new Docker container or deploy a Compose stack"
+        >
+          <Plus class="h-3.5 w-3.5 text-cyan-400" />
+          <span>Deploy / Launch</span>
+        </button>
+
+        <button
+          @click="checkAllContainerUpdates"
+          :disabled="checkingUpdates || loading"
+          class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-300 hover:border-amber-500/60 hover:bg-amber-950/30"
+          title="Check remote registries for newer image tags on all containers"
+        >
+          <Sparkles class="h-3.5 w-3.5 text-amber-400" :class="checkingUpdates ? 'animate-spin' : ''" />
+          <span>{{ checkingUpdates ? 'Checking…' : 'Check Updates' }}</span>
+          <span
+            v-if="availableUpdatesCount > 0"
+            class="ml-1 rounded-full bg-amber-500/20 px-1.5 py-0.2 text-[10px] font-bold text-amber-300 border border-amber-500/40"
+          >
+            {{ availableUpdatesCount }}
+          </span>
+        </button>
+
         <button
           @click="fetchContainers"
           :disabled="loading"
@@ -875,6 +1316,20 @@ onUnmounted(() => {
           Public ({{ summary.publicCount }})
         </button>
         <button
+          @click="filter = 'updates'"
+          class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors flex items-center gap-1.5"
+          :class="filter === 'updates' ? 'bg-amber-950/70 text-amber-300 border border-amber-500/40 shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+        >
+          <ArrowUpCircle class="h-3 w-3 text-amber-400" />
+          <span>Updates</span>
+          <span
+            v-if="availableUpdatesCount > 0"
+            class="rounded-full bg-amber-500/20 px-1.5 py-0.2 text-[10px] font-bold text-amber-300 border border-amber-500/40"
+          >
+            {{ availableUpdatesCount }}
+          </span>
+        </button>
+        <button
           @click="filter = 'stopped'"
           class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors"
           :class="filter === 'stopped' ? 'bg-slate-800 text-slate-300 shadow-sm' : 'text-slate-400 hover:text-slate-200'"
@@ -946,8 +1401,17 @@ onUnmounted(() => {
               </span>
 
               <!-- Stack / Project Badge -->
+              <button
+                v-if="container.project_id"
+                @click.stop="openContainerModal(container, 'compose')"
+                class="inline-flex items-center gap-1 rounded border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 font-mono hover:bg-cyan-500/20 hover:border-cyan-400 transition cursor-pointer"
+                :title="`Open stack '${container.project_name}' compose & controls`"
+              >
+                <Layers class="h-3 w-3" />
+                <span>Stack: {{ container.project_name }}</span>
+              </button>
               <span
-                v-if="container.project_name"
+                v-else-if="container.project_name"
                 class="inline-flex items-center gap-1 rounded border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 font-mono"
                 title="Part of compose project"
               >
@@ -985,6 +1449,16 @@ onUnmounted(() => {
               >
                 <Lock class="h-3 w-3 text-slate-500" />
                 <span>Internal</span>
+              </span>
+
+              <!-- Update Available Badge -->
+              <span
+                v-if="container.update_available"
+                class="inline-flex items-center gap-1.5 rounded-full border border-amber-500/50 bg-amber-500/15 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-300 animate-pulse shadow-sm"
+                title="Newer version available on registry"
+              >
+                <ArrowUpCircle class="h-3 w-3 text-amber-400" />
+                <span>Update Available</span>
               </span>
             </div>
 
@@ -1051,6 +1525,18 @@ onUnmounted(() => {
             >
               <Sliders class="h-3.5 w-3.5" />
               <span>Control Center</span>
+            </button>
+
+            <!-- 1-Click Update Button (Shown when update available) -->
+            <button
+              v-if="container.update_available"
+              @click="confirmUpdate(container)"
+              :disabled="!!updatingContainer[container.id]"
+              class="cyber-btn flex items-center gap-1.5 text-xs text-amber-200 border-amber-500/80 bg-gradient-to-r from-amber-950/80 to-orange-950/80 hover:from-amber-900 hover:to-orange-900 shadow-md transition"
+              title="Pull latest image and recreate container cleanly"
+            >
+              <ArrowUpCircle class="h-3.5 w-3.5 text-amber-400" :class="updatingContainer[container.id] ? 'animate-spin' : ''" />
+              <span>{{ updatingContainer[container.id] ? 'Updating…' : 'Update' }}</span>
             </button>
 
             <button
@@ -1431,6 +1917,15 @@ onUnmounted(() => {
             <ScrollText class="h-3.5 w-3.5" />
             <span>Realtime Logs</span>
           </button>
+
+          <button
+            @click="handleTabChange('exec')"
+            class="flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium transition-colors whitespace-nowrap"
+            :class="selectedTab === 'exec' ? 'bg-cyan-950/60 text-cyan-300 border border-cyan-800/60' : 'text-slate-400 hover:text-slate-200'"
+          >
+            <Terminal class="h-3.5 w-3.5" />
+            <span>Terminal (Exec)</span>
+          </button>
         </div>
 
         <!-- Tab Body Container -->
@@ -1500,6 +1995,69 @@ onUnmounted(() => {
                 </div>
                 <div class="font-mono text-xs text-slate-200 truncate">
                   {{ selectedContainer.block_io || '0B / 0B' }}
+                </div>
+              </div>
+            </div>
+
+            <!-- Image & Remote Registry Updates Card -->
+            <div class="rounded-lg border border-slate-800 bg-slate-950 p-4 space-y-3">
+              <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                  <Sparkles class="h-4 w-4 text-amber-400" /> Container Image & Registry Updates
+                </h3>
+                <div class="flex items-center gap-2">
+                  <button
+                    @click="checkSingleUpdate(selectedContainer)"
+                    :disabled="!!checkingSingleUpdate[selectedContainer.id]"
+                    class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-300 hover:border-amber-500/50"
+                  >
+                    <RotateCcw class="h-3 w-3" :class="checkingSingleUpdate[selectedContainer.id] ? 'animate-spin' : ''" />
+                    <span>{{ checkingSingleUpdate[selectedContainer.id] ? 'Checking…' : 'Check for Update' }}</span>
+                  </button>
+                  <button
+                    v-if="selectedContainer.update_available"
+                    @click="confirmUpdate(selectedContainer)"
+                    :disabled="!!updatingContainer[selectedContainer.id]"
+                    class="cyber-btn flex items-center gap-1.5 text-xs text-amber-200 border-amber-500 bg-amber-950/70 hover:bg-amber-900"
+                  >
+                    <ArrowUpCircle class="h-3.5 w-3.5 text-amber-400" :class="updatingContainer[selectedContainer.id] ? 'animate-spin' : ''" />
+                    <span>{{ updatingContainer[selectedContainer.id] ? 'Updating…' : 'Update to Latest' }}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono">
+                <div>
+                  <span class="text-slate-500">Image Tag:</span>
+                  <span class="ml-2 text-cyan-300 font-bold">{{ selectedContainer.image }}</span>
+                </div>
+                <div>
+                  <span class="text-slate-500">Registry Status:</span>
+                  <span v-if="selectedContainer.update_available" class="ml-2 inline-flex items-center gap-1 text-amber-400 font-bold animate-pulse">
+                    <ArrowUpCircle class="h-3.5 w-3.5" />
+                    Update Available on Registry
+                  </span>
+                  <span v-else-if="selectedContainer.update_checked_at" class="ml-2 inline-flex items-center gap-1 text-emerald-400 font-bold">
+                    <CheckCircle2 class="h-3.5 w-3.5" />
+                    Up to Date
+                  </span>
+                  <span v-else class="ml-2 text-slate-500">
+                    Not checked yet
+                  </span>
+                </div>
+                <div v-if="selectedContainer.current_digest" class="truncate">
+                  <span class="text-slate-500">Current Digest:</span>
+                  <span class="ml-2 text-slate-300 truncate" :title="selectedContainer.current_digest">{{ selectedContainer.current_digest.substring(0, 19) }}…</span>
+                </div>
+                <div v-if="selectedContainer.latest_digest" class="truncate">
+                  <span class="text-slate-500">Latest Remote Digest:</span>
+                  <span class="ml-2 text-amber-300 truncate" :title="selectedContainer.latest_digest">{{ selectedContainer.latest_digest.substring(0, 19) }}…</span>
+                </div>
+                <div v-if="selectedContainer.update_checked_at" class="md:col-span-2 text-slate-500 text-[11px]">
+                  Last checked: {{ selectedContainer.update_checked_at }}
+                </div>
+                <div v-if="selectedContainer.update_error" class="md:col-span-2 text-amber-400/90 text-[11px]">
+                  Notice: {{ selectedContainer.update_error }}
                 </div>
               </div>
             </div>
@@ -1664,30 +2222,6 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <!-- Cloudflared Network Pruning Notice (If connected without public route) -->
-            <div
-              v-if="selectedContainer.connected_to_cloudflared && getExpose(selectedContainer.id).mode !== 'public'"
-              class="rounded-xl border border-amber-900/40 bg-amber-950/20 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-            >
-              <div class="space-y-1">
-                <div class="flex items-center gap-1.5 text-xs font-bold text-amber-300">
-                  <ShieldAlert class="h-4 w-4" />
-                  <span>Attached to Cloudflared Network (No Public Ingress)</span>
-                </div>
-                <p class="text-xs text-slate-400 leading-relaxed">
-                  This container is attached to the Docker <code class="text-slate-300 font-mono">cloudflared</code> network, but has no public tunnel route configured. Disconnect it to keep it completely internal.
-                </p>
-              </div>
-              <button
-                @click="disconnectFromCloudflared(selectedContainer)"
-                :disabled="disconnectingNetwork[selectedContainer.id]"
-                class="cyber-btn-secondary text-xs text-amber-300 border-amber-800 hover:bg-amber-900/40 whitespace-nowrap self-start sm:self-auto flex items-center gap-1.5"
-              >
-                <RotateCcw v-if="disconnectingNetwork[selectedContainer.id]" class="h-3 w-3 animate-spin" />
-                <span>{{ disconnectingNetwork[selectedContainer.id] ? 'Disconnecting…' : 'Disconnect from Cloudflare' }}</span>
-              </button>
-            </div>
-
             <!-- 2. OPTIONAL PUBLIC INGRESS (Cloudflare Tunnel) -->
             <div class="rounded-xl border border-slate-800 bg-slate-950 p-5 space-y-4">
               <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
@@ -1848,46 +2382,124 @@ onUnmounted(() => {
           <div v-else-if="selectedTab === 'compose'" class="space-y-4">
             <!-- If Container is Linked to a Project -->
             <div v-if="selectedContainer.project_id" class="space-y-4">
-              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-                <div>
-                  <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2">
-                    <FileCode class="h-4 w-4 text-cyan-400" />
-                    <span>Stack Compose: {{ selectedContainer.project_name || selectedContainer.name }}</span>
-                  </h3>
-                  <p class="text-xs text-slate-400 font-mono">
-                    {{ selectedContainer.project_path }}/{{ composeFilename }}
-                  </p>
+              <div class="flex flex-col gap-3 border-b border-slate-800 pb-3">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2">
+                      <FileCode class="h-4 w-4 text-cyan-400" />
+                      <span>Stack Compose: {{ selectedContainer.project_name || selectedContainer.name }}</span>
+                    </h3>
+                    <p class="text-xs text-slate-400 font-mono">
+                      {{ selectedContainer.project_path }}/{{ composeFilename }}
+                    </p>
+                  </div>
+
+                  <!-- Stack Action Buttons -->
+                  <div class="flex flex-wrap items-center gap-1.5">
+                    <span v-if="composeMsg" class="text-xs text-emerald-400 font-medium mr-1">
+                      {{ composeMsg }}
+                    </span>
+
+                    <button
+                      @click="runStackAction(selectedContainer.project_id, 'up')"
+                      :disabled="!!stackActionLoading[selectedContainer.project_id]"
+                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-emerald-400 hover:border-emerald-500/60 hover:bg-emerald-950/30"
+                      title="docker compose up -d"
+                    >
+                      <Play class="h-3 w-3 fill-current" />
+                      <span>Stack Up</span>
+                    </button>
+
+                    <button
+                      @click="runStackAction(selectedContainer.project_id, 'down')"
+                      :disabled="!!stackActionLoading[selectedContainer.project_id]"
+                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-amber-400 hover:border-amber-500/60 hover:bg-amber-950/30"
+                      title="docker compose down"
+                    >
+                      <Square class="h-3 w-3 fill-current" />
+                      <span>Stack Down</span>
+                    </button>
+
+                    <button
+                      @click="runStackAction(selectedContainer.project_id, 'restart')"
+                      :disabled="!!stackActionLoading[selectedContainer.project_id]"
+                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-cyan-300 hover:border-cyan-500/60 hover:bg-cyan-950/30"
+                      title="docker compose restart"
+                    >
+                      <RotateCcw class="h-3 w-3" :class="stackActionLoading[selectedContainer.project_id] ? 'animate-spin' : ''" />
+                      <span>Restart</span>
+                    </button>
+
+                    <button
+                      @click="openDeployPrompt(selectedContainer.project_id, selectedContainer.project_name || selectedContainer.name)"
+                      :disabled="!!stackActionLoading[selectedContainer.project_id]"
+                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-violet-300 hover:border-violet-500/60 hover:bg-violet-950/30"
+                      title="Git pull & docker compose up -d --build"
+                    >
+                      <Rocket class="h-3 w-3 text-violet-400" />
+                      <span>Deploy / Pull</span>
+                    </button>
+
+                    <button
+                      @click="openStackHistory(selectedContainer.project_id, selectedContainer.project_name || selectedContainer.name)"
+                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-slate-300"
+                      title="View deployment & stack action history"
+                    >
+                      <History class="h-3 w-3 text-slate-400" />
+                      <span>History</span>
+                    </button>
+
+                    <button
+                      @click="saveContainerCompose(false)"
+                      :disabled="composeSaving"
+                      class="cyber-btn text-xs flex items-center gap-1 text-cyan-300 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/50"
+                      title="Save edits to docker-compose.yml"
+                    >
+                      <Save class="h-3 w-3" />
+                      <span>Save YAML</span>
+                    </button>
+                  </div>
                 </div>
 
-                <div class="flex items-center gap-2">
-                  <span v-if="composeMsg" class="text-xs text-emerald-400 font-medium">
-                    {{ composeMsg }}
-                  </span>
-                  <button
-                    @click="loadContainerCompose(selectedContainer.project_id)"
-                    :disabled="composeLoading"
-                    class="cyber-btn-secondary text-xs flex items-center gap-1"
-                  >
-                    <RotateCcw class="h-3 w-3" :class="composeLoading ? 'animate-spin' : ''" />
-                    <span>Reload</span>
-                  </button>
-                  <button
-                    @click="saveContainerCompose(false)"
-                    :disabled="composeSaving"
-                    class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-300 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/50"
-                  >
-                    <Save class="h-3.5 w-3.5" />
-                    <span>Save</span>
-                  </button>
-                  <button
-                    @click="saveContainerCompose(true)"
-                    :disabled="composeSaving"
-                    class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-300 border-emerald-600 bg-emerald-950/40 hover:bg-emerald-900/50"
-                    title="Save compose file and restart docker-compose stack"
-                  >
-                    <RotateCcw class="h-3.5 w-3.5" />
-                    <span>Save & Restart</span>
-                  </button>
+                <!-- Collapsible Git Continuous Deployment Configuration -->
+                <div class="rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-xs space-y-2">
+                  <div class="flex items-center justify-between cursor-pointer" @click="showGitSettings = !showGitSettings">
+                    <div class="flex items-center gap-2">
+                      <GitBranch class="h-3.5 w-3.5 text-violet-400" />
+                      <span class="font-semibold text-slate-200">Git Repository & Auto-Deploy</span>
+                      <span v-if="currentProject?.repo_url" class="rounded bg-violet-950/80 border border-violet-800/60 px-1.5 py-0.2 font-mono text-[10px] text-violet-300 truncate max-w-xs">
+                        {{ currentProject.repo_url }}
+                      </span>
+                    </div>
+                    <span class="text-[11px] text-slate-500 font-mono">{{ showGitSettings ? 'Hide ▲' : 'Configure Git ▼' }}</span>
+                  </div>
+
+                  <div v-if="showGitSettings && currentProject" class="pt-2 border-t border-slate-800 space-y-2.5">
+                    <div class="grid gap-2.5 sm:grid-cols-3">
+                      <div class="sm:col-span-3">
+                        <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Git Repository URL</label>
+                        <input v-model="currentProject.repo_url" class="cyber-input text-xs font-mono" placeholder="https://github.com/owner/repository.git" />
+                      </div>
+                      <div>
+                        <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Git Username (Optional)</label>
+                        <input v-model="currentProject.git_username" class="cyber-input text-xs font-mono" placeholder="oauth2 or username" />
+                      </div>
+                      <div>
+                        <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Git Token / PAT (Masked)</label>
+                        <input v-model="currentProject.git_token" type="password" class="cyber-input text-xs font-mono" placeholder="ghp_••••••••••••" />
+                      </div>
+                      <div class="flex items-end">
+                        <button
+                          @click="saveProjectGit"
+                          :disabled="projectGitSaving"
+                          class="cyber-btn w-full text-xs flex items-center justify-center gap-1.5"
+                        >
+                          <Save class="h-3.5 w-3.5" />
+                          <span>{{ projectGitSaving ? 'Saving…' : 'Save Git Settings' }}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -2291,6 +2903,489 @@ onUnmounted(() => {
               >{{ filteredModalLogs }}</pre>
             </div>
           </div>
+
+          <!-- ============================================== -->
+          <!-- TAB 7: TERMINAL (CONTAINER EXEC)               -->
+          <!-- ============================================== -->
+          <div v-else-if="selectedTab === 'exec'" class="space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+              <div>
+                <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2 font-mono">
+                  <Terminal class="h-4 w-4 text-cyan-400" />
+                  <span>Interactive Container Exec: {{ selectedContainer.name }}</span>
+                </h3>
+                <p class="text-[11px] text-slate-400 font-mono mt-0.5">
+                  Execute commands directly inside container via Docker exec
+                </p>
+              </div>
+
+              <!-- Quick command chips -->
+              <div class="flex flex-wrap items-center gap-1.5 text-xs font-mono">
+                <span class="text-[10px] text-slate-500 uppercase tracking-wider mr-1">Presets:</span>
+                <button
+                  v-for="preset in ['ls -la', 'ps aux', 'env', 'df -h', 'ip a', 'uptime']"
+                  :key="preset"
+                  @click="execCmd = preset; runContainerExec()"
+                  class="rounded bg-slate-900 border border-slate-800 px-2 py-0.5 text-[11px] text-slate-300 hover:border-cyan-700 hover:text-cyan-300 transition"
+                >
+                  {{ preset }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Command Input Bar -->
+            <div class="flex items-center gap-2">
+              <div class="relative flex-1">
+                <span class="absolute left-3 top-2.5 font-mono text-cyan-400 text-xs font-bold">$</span>
+                <input
+                  v-model="execCmd"
+                  @keyup.enter="runContainerExec"
+                  placeholder="Enter command to run (e.g. ls -la, cat /etc/resolv.conf, curl localhost)..."
+                  class="cyber-input w-full pl-8 font-mono text-xs text-cyan-200"
+                  :disabled="execLoading"
+                />
+              </div>
+
+              <button
+                @click="runContainerExec"
+                :disabled="execLoading || !execCmd.trim()"
+                class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-300 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/50"
+              >
+                <RotateCcw v-if="execLoading" class="h-3.5 w-3.5 animate-spin" />
+                <Play v-else class="h-3.5 w-3.5 fill-current" />
+                <span>{{ execLoading ? 'Running...' : 'Execute' }}</span>
+              </button>
+
+              <button
+                v-if="execOutput"
+                @click="execOutput = ''; execExitCode = null"
+                class="cyber-btn-secondary text-xs"
+                title="Clear output"
+              >
+                Clear
+              </button>
+            </div>
+
+            <!-- Output Box -->
+            <div class="space-y-2">
+              <div class="flex items-center justify-between text-xs font-mono text-slate-400">
+                <span class="text-[10px] uppercase tracking-wider">Console Output</span>
+                <span
+                  v-if="execExitCode !== null"
+                  class="rounded px-2 py-0.5 text-[10px] font-bold"
+                  :class="execExitCode === 0 ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-red-950 text-red-400 border border-red-800'"
+                >
+                  Exit Code: {{ execExitCode }}
+                </span>
+              </div>
+
+              <div class="max-h-[50vh] min-h-[160px] overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-200 shadow-inner">
+                <pre v-if="execOutput" class="whitespace-pre-wrap break-all">{{ execOutput }}</pre>
+                <p v-else class="text-slate-600 italic">No command has been executed yet. Enter a command or click a preset above.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================== -->
+    <!-- UPDATE CONFIRMATION MODAL                      -->
+    <!-- ============================================== -->
+    <div
+      v-if="showUpdateConfirmModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-md"
+      @click.self="showUpdateConfirmModal = null"
+    >
+      <div class="w-full max-w-lg rounded-xl border border-amber-500/40 bg-slate-900 p-6 shadow-2xl space-y-5">
+        <div class="flex items-start justify-between">
+          <div class="flex items-center gap-3">
+            <div class="rounded-lg bg-amber-500/20 p-2.5 text-amber-400 border border-amber-500/30">
+              <ArrowUpCircle class="h-6 w-6" />
+            </div>
+            <div>
+              <h3 class="text-lg font-bold text-slate-100">Update Container</h3>
+              <p class="text-xs text-slate-400 font-mono">{{ showUpdateConfirmModal.container.name }}</p>
+            </div>
+          </div>
+          <button @click="showUpdateConfirmModal = null" class="text-slate-400 hover:text-slate-200">
+            <X class="h-5 w-5" />
+          </button>
+        </div>
+
+        <div class="space-y-3 rounded-lg border border-slate-800 bg-slate-950 p-4 text-xs font-mono">
+          <div class="flex justify-between">
+            <span class="text-slate-500 font-sans">Target Image:</span>
+            <span class="text-cyan-300 font-bold">{{ showUpdateConfirmModal.container.image }}</span>
+          </div>
+          <div v-if="showUpdateConfirmModal.container.project_name" class="flex justify-between">
+            <span class="text-slate-500 font-sans">Stack / Compose:</span>
+            <span class="text-emerald-400">{{ showUpdateConfirmModal.container.project_name }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-500 font-sans">Cloudflared Network:</span>
+            <span :class="showUpdateConfirmModal.container.connected_to_cloudflared ? 'text-emerald-400 font-bold' : 'text-slate-400'">
+              {{ showUpdateConfirmModal.container.connected_to_cloudflared ? 'Yes (Will maintain connection)' : 'No' }}
+            </span>
+          </div>
+        </div>
+
+        <p class="text-xs text-slate-300 leading-relaxed">
+          DockTun will pull the latest image layers from the remote registry, cleanly recreate the container with your existing volume mounts, environment variables, published ports, and network routes, then verify health.
+        </p>
+
+        <div class="flex items-center justify-end gap-3 pt-2">
+          <button
+            @click="showUpdateConfirmModal = null"
+            class="cyber-btn-secondary text-xs"
+          >
+            Cancel
+          </button>
+          <button
+            @click="performUpdate(showUpdateConfirmModal.container)"
+            class="cyber-btn flex items-center gap-2 text-xs text-amber-200 border-amber-500/80 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 font-bold shadow-lg shadow-amber-900/30"
+          >
+            <ArrowUpCircle class="h-4 w-4" />
+            <span>Pull & Recreate Container</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================== -->
+    <!-- UPDATE RESULT MODAL                            -->
+    <!-- ============================================== -->
+    <div
+      v-if="updateResultModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-md"
+      @click.self="updateResultModal = null"
+    >
+      <div
+        class="w-full max-w-2xl rounded-xl border bg-slate-900 p-6 shadow-2xl space-y-4"
+        :class="updateResultModal.success ? 'border-emerald-500/40' : 'border-red-500/40'"
+      >
+        <div class="flex items-start justify-between">
+          <div class="flex items-center gap-3">
+            <div
+              class="rounded-lg p-2.5 border"
+              :class="updateResultModal.success ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'"
+            >
+              <CheckCircle2 v-if="updateResultModal.success" class="h-6 w-6" />
+              <AlertCircle v-else class="h-6 w-6" />
+            </div>
+            <div>
+              <h3 class="text-lg font-bold text-slate-100">
+                {{ updateResultModal.success ? 'Container Updated Successfully' : 'Update Failed' }}
+              </h3>
+              <p class="text-xs text-slate-400 font-mono">{{ updateResultModal.name }}</p>
+            </div>
+          </div>
+          <button @click="updateResultModal = null" class="text-slate-400 hover:text-slate-200">
+            <X class="h-5 w-5" />
+          </button>
+        </div>
+
+        <div class="max-h-72 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-300 shadow-inner">
+          <pre class="whitespace-pre-wrap break-all">{{ updateResultModal.output }}</pre>
+        </div>
+
+        <div class="flex items-center justify-end">
+          <button
+            @click="updateResultModal = null"
+            class="cyber-btn text-xs"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================== -->
+    <!-- LAUNCH MODAL (DOCKER RUN & GIT STACK LAUNCHER) -->
+    <!-- ============================================== -->
+    <div
+      v-if="showLaunchModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-md"
+      @click.self="showLaunchModal = false"
+    >
+      <div class="w-full max-w-2xl rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl space-y-4">
+        <div class="flex items-start justify-between border-b border-slate-800 pb-3">
+          <div>
+            <h3 class="text-lg font-bold text-slate-100 flex items-center gap-2">
+              <Rocket class="h-5 w-5 text-cyan-400" />
+              <span>Deploy New Container or Stack</span>
+            </h3>
+            <p class="text-xs text-slate-400">Launch a container via Docker command or register a Compose/Git stack.</p>
+          </div>
+          <button @click="showLaunchModal = false" class="text-slate-400 hover:text-slate-200">
+            <X class="h-5 w-5" />
+          </button>
+        </div>
+
+        <!-- Mode Tabs -->
+        <div class="flex gap-2 border-b border-slate-800 pb-2">
+          <button
+            @click="launchTab = 'dockerrun'"
+            class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition"
+            :class="launchTab === 'dockerrun' ? 'bg-cyan-950/80 text-cyan-300 border border-cyan-800/60' : 'text-slate-400 hover:text-slate-200'"
+          >
+            <Terminal class="h-3.5 w-3.5" />
+            <span>Docker Run Command</span>
+          </button>
+          <button
+            @click="launchTab = 'gitstack'"
+            class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition"
+            :class="launchTab === 'gitstack' ? 'bg-cyan-950/80 text-cyan-300 border border-cyan-800/60' : 'text-slate-400 hover:text-slate-200'"
+          >
+            <GitBranch class="h-3.5 w-3.5" />
+            <span>Git / Compose Stack</span>
+          </button>
+        </div>
+
+        <!-- TAB 1: Docker Run -->
+        <div v-if="launchTab === 'dockerrun'" class="space-y-4">
+          <div>
+            <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              Docker Run Command
+            </label>
+            <textarea
+              v-model="dockerRunCmd"
+              rows="3"
+              class="cyber-input font-mono text-xs w-full leading-relaxed"
+              placeholder="docker run -d --name my-app -p 8080:80 nginx:alpine"
+            ></textarea>
+          </div>
+
+          <!-- Snippet helper buttons -->
+          <div class="flex flex-wrap items-center gap-1.5 text-xs">
+            <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mr-1">Insert:</span>
+            <button
+              v-for="snip in ['--restart unless-stopped', '-p 8080:80', '-v /data:/data', '-e KEY=val', '--network cloudflared']"
+              :key="snip"
+              type="button"
+              @click="insertDockerSnippet(snip)"
+              class="rounded border border-slate-800 bg-slate-950 px-2 py-0.5 font-mono text-[10px] text-cyan-300 hover:border-cyan-600 hover:bg-slate-900 transition"
+            >
+              + {{ snip }}
+            </button>
+          </div>
+
+          <div class="grid gap-3 sm:grid-cols-2 text-xs">
+            <div>
+              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Execution Mode</label>
+              <div class="space-y-1">
+                <label class="flex items-center gap-2 cursor-pointer text-slate-300">
+                  <input type="radio" v-model="dockerRunMode" value="compose" class="accent-cyan-500" />
+                  <span>Convert to Compose Stack (Recommended)</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer text-slate-300">
+                  <input type="radio" v-model="dockerRunMode" value="direct" class="accent-cyan-500" />
+                  <span>Direct Docker Run</span>
+                </label>
+              </div>
+            </div>
+
+            <div>
+              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Custom Project / Stack Name</label>
+              <input v-model="dockerRunCustomName" class="cyber-input text-xs" placeholder="Leave blank to infer from --name" />
+            </div>
+          </div>
+
+          <!-- Output Log -->
+          <div v-if="dockerRunLines.length > 0" class="max-h-48 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-[11px] text-slate-300 leading-relaxed shadow-inner">
+            <div v-for="(line, idx) in dockerRunLines" :key="idx">{{ line }}</div>
+            <div v-if="dockerRunLoading" class="text-cyan-400 animate-pulse mt-1">&rarr; Running command...</div>
+          </div>
+
+          <div class="flex items-center justify-end gap-3 pt-2">
+            <button @click="showLaunchModal = false" class="cyber-btn-secondary text-xs">Cancel</button>
+            <button
+              @click="runDockerCommand"
+              :disabled="dockerRunLoading || !dockerRunCmd.trim()"
+              class="cyber-btn flex items-center gap-2 text-xs text-cyan-300 border-cyan-500/80 bg-cyan-950/40 hover:bg-cyan-900/60 font-bold"
+            >
+              <RotateCcw v-if="dockerRunLoading" class="h-3.5 w-3.5 animate-spin" />
+              <Play v-else class="h-3.5 w-3.5 fill-current" />
+              <span>{{ dockerRunLoading ? 'Executing…' : 'Run Container' }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- TAB 2: Git / Compose Stack -->
+        <div v-else class="space-y-4">
+          <div class="grid gap-3 sm:grid-cols-2 text-xs">
+            <div>
+              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Stack Name</label>
+              <input v-model="newProjectForm.name" class="cyber-input text-xs font-mono" placeholder="e.g. mediastorm" />
+            </div>
+            <div>
+              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Host Directory Path</label>
+              <input v-model="newProjectForm.path" class="cyber-input text-xs font-mono" placeholder="./projects/mediastorm" />
+            </div>
+            <div class="sm:col-span-2">
+              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Git Repository URL (Optional)</label>
+              <input v-model="newProjectForm.repo_url" class="cyber-input text-xs font-mono" placeholder="https://github.com/owner/repo.git" />
+            </div>
+            <div>
+              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Git Username (Optional)</label>
+              <input v-model="newProjectForm.git_username" class="cyber-input text-xs font-mono" placeholder="oauth2 or username" />
+            </div>
+            <div>
+              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Git Token / PAT (Optional)</label>
+              <input v-model="newProjectForm.git_token" type="password" class="cyber-input text-xs font-mono" placeholder="ghp_••••••••••••" />
+            </div>
+          </div>
+
+          <div class="flex items-center justify-end gap-3 pt-2">
+            <button @click="showLaunchModal = false" class="cyber-btn-secondary text-xs">Cancel</button>
+            <button
+              @click="submitNewProject"
+              :disabled="newProjectSaving || !newProjectForm.name.trim() || !newProjectForm.path.trim()"
+              class="cyber-btn flex items-center gap-2 text-xs text-emerald-300 border-emerald-500/80 bg-emerald-950/40 hover:bg-emerald-900/60 font-bold"
+            >
+              <RotateCcw v-if="newProjectSaving" class="h-3.5 w-3.5 animate-spin" />
+              <Package v-else class="h-3.5 w-3.5" />
+              <span>{{ newProjectSaving ? 'Creating…' : 'Register & Initialize Stack' }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================== -->
+    <!-- STACK OUTPUT STREAM MODAL                      -->
+    <!-- ============================================== -->
+    <div
+      v-if="stackOutputModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-md"
+      @click.self="stackOutputModal = null"
+    >
+      <div class="w-full max-w-3xl rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl space-y-4">
+        <div class="flex items-start justify-between border-b border-slate-800 pb-3">
+          <div class="flex items-center gap-3">
+            <div class="rounded-lg p-2 bg-slate-800 text-cyan-400">
+              <Terminal class="h-5 w-5" />
+            </div>
+            <div>
+              <h3 class="text-base font-bold text-slate-100">{{ stackOutputModal.title }}</h3>
+              <p class="text-xs text-slate-400 font-mono">
+                {{ stackOutputModal.done ? 'Action finished.' : 'Action in progress… streaming output.' }}
+              </p>
+            </div>
+          </div>
+          <button @click="stackOutputModal = null" class="text-slate-400 hover:text-slate-200">
+            <X class="h-5 w-5" />
+          </button>
+        </div>
+
+        <div class="max-h-96 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-300 shadow-inner">
+          <div v-for="(line, idx) in stackOutputModal.lines" :key="idx" class="whitespace-pre-wrap break-all">{{ line }}</div>
+          <div v-if="!stackOutputModal.done" class="text-cyan-400 animate-pulse mt-2">&rarr; Running docker-compose command...</div>
+        </div>
+
+        <div class="flex items-center justify-between text-xs">
+          <span :class="stackOutputModal.done ? 'text-emerald-400' : 'text-amber-400'">
+            {{ stackOutputModal.done ? '✓ Completed' : '● Processing...' }}
+          </span>
+          <button @click="stackOutputModal = null" class="cyber-btn text-xs">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================== -->
+    <!-- DEPLOY PROMPT MODAL                            -->
+    <!-- ============================================== -->
+    <div
+      v-if="showDeployPromptModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-md"
+      @click.self="showDeployPromptModal = null"
+    >
+      <div class="w-full max-w-md rounded-xl border border-violet-500/40 bg-slate-900 p-6 shadow-2xl space-y-4">
+        <div class="flex items-start justify-between border-b border-slate-800 pb-3">
+          <div class="flex items-center gap-2 text-violet-300 font-bold">
+            <Rocket class="h-5 w-5" />
+            <span>Deploy Stack: {{ showDeployPromptModal.projectName }}</span>
+          </div>
+          <button @click="showDeployPromptModal = null" class="text-slate-400 hover:text-slate-200">
+            <X class="h-5 w-5" />
+          </button>
+        </div>
+
+        <div class="space-y-2 text-xs">
+          <label class="block font-semibold uppercase tracking-wider text-slate-400">Git Branch, Tag, or Ref</label>
+          <input
+            v-model="deployBranchName"
+            class="cyber-input font-mono text-xs"
+            placeholder="main"
+            @keyup.enter="confirmDeploy"
+          />
+          <p class="text-[11px] text-slate-500">
+            DockTun will fetch remote changes, checkout this ref, git pull, and execute <code class="text-cyan-400 font-mono">docker compose up -d --build</code>.
+          </p>
+        </div>
+
+        <div class="flex items-center justify-end gap-3 pt-2">
+          <button @click="showDeployPromptModal = null" class="cyber-btn-secondary text-xs">Cancel</button>
+          <button
+            @click="confirmDeploy"
+            class="cyber-btn flex items-center gap-1.5 text-xs text-violet-300 border-violet-600 bg-violet-950/40 hover:bg-violet-900/60 font-bold"
+          >
+            <Rocket class="h-3.5 w-3.5" />
+            <span>Start Deployment</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================== -->
+    <!-- STACK HISTORY MODAL                            -->
+    <!-- ============================================== -->
+    <div
+      v-if="stackHistoryModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-md"
+      @click.self="stackHistoryModal = null"
+    >
+      <div class="w-full max-w-2xl rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl space-y-4">
+        <div class="flex items-start justify-between border-b border-slate-800 pb-3">
+          <div class="flex items-center gap-2.5">
+            <History class="h-5 w-5 text-cyan-400" />
+            <div>
+              <h3 class="text-base font-bold text-slate-100">Stack Action History</h3>
+              <p class="text-xs text-slate-400 font-mono">{{ stackHistoryModal.projectName }}</p>
+            </div>
+          </div>
+          <button @click="stackHistoryModal = null" class="text-slate-400 hover:text-slate-200">
+            <X class="h-5 w-5" />
+          </button>
+        </div>
+
+        <div v-if="stackHistoryModal.items.length === 0" class="py-8 text-center text-xs text-slate-500">
+          No recorded actions found for this stack.
+        </div>
+
+        <div v-else class="max-h-80 overflow-y-auto divide-y divide-slate-800/80 pr-1">
+          <div
+            v-for="(item, idx) in stackHistoryModal.items"
+            :key="idx"
+            class="py-2.5 flex items-start justify-between gap-3 text-xs"
+          >
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] font-bold text-cyan-300 uppercase">
+                  {{ item.action || 'Action' }}
+                </span>
+                <span class="text-slate-300 font-mono">{{ item.created_at || item.timestamp }}</span>
+              </div>
+              <div v-if="item.detail" class="mt-1 font-mono text-[11px] text-slate-400 line-clamp-2">
+                {{ item.detail }}
+              </div>
+            </div>
+            <span class="text-[10px] text-slate-500 font-mono shrink-0">{{ item.ip || 'Local' }}</span>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end pt-2">
+          <button @click="stackHistoryModal = null" class="cyber-btn text-xs">Close</button>
         </div>
       </div>
     </div>

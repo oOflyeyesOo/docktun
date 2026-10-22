@@ -540,6 +540,9 @@ PREV_ADMIN_USER=""
 PREV_ADMIN_PASS=""
 PREV_PORT=""
 PREV_JWT_SECRET=""
+PREV_CF_API_TOKEN=""
+PREV_CF_ACCOUNT_ID=""
+PREV_CF_ZONE_ID=""
 
 # 1. Check existing .env file
 if [ -f "$SCRIPT_DIR/.env" ]; then
@@ -551,6 +554,9 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
     PREV_TUNNEL_PROTOCOL=$(grep -E '^TUNNEL_PROTOCOL=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
     PREV_JWT_SECRET=$(grep -E '^JWT_SECRET=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
     PREV_DOMAIN=$(grep -E '^DOCKTUN_DOMAIN=' "$SCRIPT_DIR/.env" 2>/dev/null | cut -d'=' -f2- | tr -d '\r')
+    PREV_CF_API_TOKEN=$(grep -E '^(CF_API_TOKEN|CLOUDFLARE_API_TOKEN)=' "$SCRIPT_DIR/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d '\r')
+    PREV_CF_ACCOUNT_ID=$(grep -E '^(CF_ACCOUNT_ID|CLOUDFLARE_ACCOUNT_ID)=' "$SCRIPT_DIR/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d '\r')
+    PREV_CF_ZONE_ID=$(grep -E '^(CF_ZONE_ID|CLOUDFLARE_ZONE_ID)=' "$SCRIPT_DIR/.env" 2>/dev/null | head -n1 | cut -d'=' -f2- | tr -d '\r')
 fi
 
 # 2. Check local credentials.json
@@ -558,6 +564,14 @@ if [ -f "$SCRIPT_DIR/cloudflared/credentials.json" ]; then
     cid=$(jq -r '.TunnelID // empty' "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true)
     if [ -n "$cid" ] && [ "$cid" != "your-tunnel-uuid" ] && [ "$cid" != "placeholder-tunnel-id" ]; then
         PREV_TUNNEL_ID="$cid"
+    fi
+    if [ -z "$PREV_CF_ACCOUNT_ID" ]; then
+        c_act=$(jq -r '.AccountTag // .account_tag // .AccountID // empty' "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true)
+        [ -n "$c_act" ] && [ "$c_act" != "null" ] && PREV_CF_ACCOUNT_ID="$c_act"
+    fi
+    if [ -z "$PREV_CF_API_TOKEN" ]; then
+        c_tok=$(jq -r '.api_token // .APIToken // empty' "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true)
+        [ -n "$c_tok" ] && [ "$c_tok" != "null" ] && PREV_CF_API_TOKEN="$c_tok"
     fi
 fi
 
@@ -571,6 +585,14 @@ for p in "$HOME/.cloudflared" "/root/.cloudflared"; do
                 if [ -n "$jid" ] && [ "$jid" != "null" ]; then
                     SYS_TUNNEL_JSON="$jf"
                     [ -z "$PREV_TUNNEL_ID" ] && PREV_TUNNEL_ID="$jid"
+                    if [ -z "$PREV_CF_ACCOUNT_ID" ]; then
+                        s_act=$(jq -r '.AccountTag // .account_tag // .AccountID // empty' "$jf" 2>/dev/null || true)
+                        [ -n "$s_act" ] && [ "$s_act" != "null" ] && PREV_CF_ACCOUNT_ID="$s_act"
+                    fi
+                    if [ -z "$PREV_CF_API_TOKEN" ]; then
+                        s_tok=$(jq -r '.api_token // .APIToken // empty' "$jf" 2>/dev/null || true)
+                        [ -n "$s_tok" ] && [ "$s_tok" != "null" ] && PREV_CF_API_TOKEN="$s_tok"
+                    fi
                     break 2
                 fi
             fi
@@ -578,19 +600,38 @@ for p in "$HOME/.cloudflared" "/root/.cloudflared"; do
     fi
 done
 
-# 4. Check existing cloudflared/config.yml for tunnel ID and domain
+# 4. Check dedicated token files if token not yet found
+if [ -z "$PREV_CF_API_TOKEN" ]; then
+    for tf in "$SCRIPT_DIR/cloudflared/token" "$SCRIPT_DIR/cloudflared/api_token" "$HOME/.cloudflared/token"; do
+        if [ -f "$tf" ]; then
+            t_val=$(head -n1 "$tf" 2>/dev/null | tr -d '\r\n ')
+            if [ -n "$t_val" ]; then
+                PREV_CF_API_TOKEN="$t_val"
+                break
+            fi
+        fi
+    done
+fi
+
+# 5. Check environment variables
+[ -z "$PREV_CF_API_TOKEN" ] && PREV_CF_API_TOKEN="${CF_API_TOKEN:-${CLOUDFLARE_API_TOKEN}}"
+[ -z "$PREV_CF_ACCOUNT_ID" ] && PREV_CF_ACCOUNT_ID="${CF_ACCOUNT_ID:-${CLOUDFLARE_ACCOUNT_ID}}"
+[ -z "$PREV_CF_ZONE_ID" ] && PREV_CF_ZONE_ID="${CF_ZONE_ID:-${CLOUDFLARE_ZONE_ID}}"
+
+# 6. Check existing cloudflared/config.yml for tunnel ID and domain
 if [ -f "$SCRIPT_DIR/cloudflared/config.yml" ]; then
-    cfg_tid=$(grep -E '^tunnel:' "$SCRIPT_DIR/cloudflared/config.yml" 2>/dev/null | awk '{print $NF}' | tr -d '\r')
+    cfg_tid=$(grep -E '^[[:space:]]*tunnel:' "$SCRIPT_DIR/cloudflared/config.yml" 2>/dev/null | awk '{print $NF}' | tr -d '"'\''\r ')
     if [ -n "$cfg_tid" ] && [ "$cfg_tid" != "YOUR_TUNNEL_ID" ]; then
         [ -z "$PREV_TUNNEL_ID" ] && PREV_TUNNEL_ID="$cfg_tid"
     fi
-    cfg_dom=$(grep -E '^\s*-\s*hostname:' "$SCRIPT_DIR/cloudflared/config.yml" 2>/dev/null | head -n1 | awk '{print $NF}' | tr -d '\r')
+    cfg_dom=$(grep -E '^[[:space:]]*-[[:space:]]*hostname:' "$SCRIPT_DIR/cloudflared/config.yml" 2>/dev/null | head -n1 | awk '{print $NF}' | tr -d '"'\''\r ')
+    cfg_dom=$(echo "$cfg_dom" | sed -E 's|^https?://||; s|/+$||; s|:[0-9]+$||')
     if [ -n "$cfg_dom" ] && [ "$cfg_dom" != "docktun.example.com" ]; then
         PREV_DOMAIN="$cfg_dom"
     fi
 fi
 
-# 5. Check if Cloudflare cert.pem is already present (already logged in)
+# 7. Check if Cloudflare cert.pem is already present (already logged in)
 CF_CERT_PATH="$HOME/.cloudflared/cert.pem"
 if [ ! -f "$CF_CERT_PATH" ] && [ -f "/root/.cloudflared/cert.pem" ]; then
     CF_CERT_PATH="/root/.cloudflared/cert.pem"
@@ -607,6 +648,8 @@ if [ -n "$PREV_TUNNEL_ID" ] && [ "$PREV_TUNNEL_ID" != "your-tunnel-uuid" ]; then
     [ -n "$PREV_ADMIN_USER" ]  && echo -e "  • ${C_BOLD}Admin User:${C_RESET}      ${PREV_ADMIN_USER}"
     [ -n "$PREV_ADMIN_PASS" ]  && echo -e "  • ${C_BOLD}Admin Password:${C_RESET}  [Saved from previous install]"
     [ -n "$PREV_PORT" ]        && echo -e "  • ${C_BOLD}Web Port:${C_RESET}        ${PREV_PORT}"
+    [ -n "$PREV_CF_API_TOKEN" ] && echo -e "  • ${C_BOLD}Cloudflare API Token:${C_RESET} ${C_GREEN}✓ Auto-detected from file/environment${C_RESET}"
+    [ -n "$PREV_CF_ACCOUNT_ID" ] && echo -e "  • ${C_BOLD}Cloudflare Account ID:${C_RESET} ${PREV_CF_ACCOUNT_ID}"
     if [ "$CF_ALREADY_LOGGED_IN" = true ]; then
         echo -e "  • ${C_BOLD}Cloudflare Auth:${C_RESET} Active (${CF_CERT_PATH})"
     fi
@@ -645,19 +688,25 @@ if [ "$RESUME_PREVIOUS" = true ]; then
 
     success "Tunnel configuration restored: ${TUNNEL_NAME} (${TUNNEL_ID})"
 
-    if [ -z "$DOCKTUN_DOMAIN" ] || [ "$DOCKTUN_DOMAIN" = "docktun.example.com" ]; then
-        prompt_read "Enter the public domain/hostname for DockTun Web UI (e.g. docktun.example.com): " DOCKTUN_DOMAIN "docktun.example.com"
-    fi
+    prompt_read "Expose DockTun web dashboard publicly via Cloudflare Tunnel? [y/N]: " EXPOSE_DOCKTUN_PUBLIC "N"
+    if [[ "$EXPOSE_DOCKTUN_PUBLIC" =~ ^[Yy]$ ]]; then
+        DEFAULT_DOM="${PREV_DOMAIN:-docktun.example.com}"
+        prompt_read "Enter the public domain/hostname for DockTun Web UI (Default: ${DEFAULT_DOM}): " DOCKTUN_DOMAIN "$DEFAULT_DOM"
+        DOCKTUN_DOMAIN=$(echo "$DOCKTUN_DOMAIN" | tr -d '"'\''\r ' | sed -E 's|^https?://||; s|/+$||; s|:[0-9]+$||')
 
-    # Register DNS route in Cloudflare if certificate is present
-    if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_ID" ] && [ -n "$DOCKTUN_DOMAIN" ] && [ "$DOCKTUN_DOMAIN" != "docktun.example.com" ]; then
-        info "Ensuring DNS route in Cloudflare: $DOCKTUN_DOMAIN -> $TUNNEL_ID..."
-        if dns_res=$(cloudflared tunnel route dns "$TUNNEL_ID" "$DOCKTUN_DOMAIN" 2>&1); then
-            success "Cloudflare DNS route configured: $DOCKTUN_DOMAIN"
-        else
-            warn "Cloudflare CLI returned: $dns_res"
-            info "If the DNS record already exists, you can safely continue."
+        # Register DNS route in Cloudflare if certificate is present
+        if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_ID" ] && [ -n "$DOCKTUN_DOMAIN" ] && [ "$DOCKTUN_DOMAIN" != "docktun.example.com" ]; then
+            info "Ensuring DNS route in Cloudflare: $DOCKTUN_DOMAIN -> $TUNNEL_ID..."
+            if dns_res=$(cloudflared tunnel route dns "$TUNNEL_ID" "$DOCKTUN_DOMAIN" 2>&1); then
+                success "Cloudflare DNS route configured: $DOCKTUN_DOMAIN"
+            else
+                warn "Cloudflare CLI returned: $dns_res"
+                info "If the DNS record already exists, you can safely continue."
+            fi
         fi
+    else
+        DOCKTUN_DOMAIN=""
+        success "DockTun dashboard will remain local-only (not exposed to public Cloudflare Tunnel)."
     fi
 else
     # Discover all existing tunnels across ~/.cloudflared, /root/.cloudflared, and Cloudflare account
@@ -855,18 +904,30 @@ else
 
     [ -f "$SCRIPT_DIR/cloudflared/credentials.json" ] && chmod 644 "$SCRIPT_DIR/cloudflared/credentials.json" 2>/dev/null || true
 
-    DEFAULT_DOM="${PREV_DOMAIN:-docktun.example.com}"
-    prompt_read "Enter the public domain/hostname for DockTun Web UI (Default: ${DEFAULT_DOM}): " DOCKTUN_DOMAIN "$DEFAULT_DOM"
+    echo ""
+    info "DockTun Web Dashboard Access & Security:"
+    echo -e "  By default, DockTun is kept secure and ${C_GREEN}LOCAL ONLY${C_RESET} (accessible via LAN/IP: http://${HOST_IP:-localhost}:${PORT:-8080} or mDNS http://docktun.local)."
+    echo -e "  You can optionally expose it publicly through your Cloudflare Tunnel."
+    echo -e "  ${C_YELLOW}Recommendation: Keep DockTun local-only, or protect it with Cloudflare Zero Trust (Access) if exposed.${C_RESET}"
+    prompt_read "Expose DockTun web dashboard publicly via Cloudflare Tunnel? [y/N]: " EXPOSE_DOCKTUN_PUBLIC "N"
+    if [[ "$EXPOSE_DOCKTUN_PUBLIC" =~ ^[Yy]$ ]]; then
+        DEFAULT_DOM="${PREV_DOMAIN:-docktun.example.com}"
+        prompt_read "Enter the public domain/hostname for DockTun Web UI (Default: ${DEFAULT_DOM}): " DOCKTUN_DOMAIN "$DEFAULT_DOM"
+        DOCKTUN_DOMAIN=$(echo "$DOCKTUN_DOMAIN" | tr -d '"'\''\r ' | sed -E 's|^https?://||; s|/+$||; s|:[0-9]+$||')
 
-    # Automatically create DNS CNAME if logged in
-    if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_ID" ] && [ -n "$DOCKTUN_DOMAIN" ] && [ "$DOCKTUN_DOMAIN" != "docktun.example.com" ]; then
-        info "Registering DNS route in Cloudflare: $DOCKTUN_DOMAIN -> $TUNNEL_ID..."
-        if dns_res=$(cloudflared tunnel route dns "$TUNNEL_ID" "$DOCKTUN_DOMAIN" 2>&1); then
-            success "Cloudflare DNS route configured: $DOCKTUN_DOMAIN"
-        else
-            warn "Cloudflare CLI returned: $dns_res"
-            info "If the DNS record already exists, you can safely continue."
+        # Automatically create DNS CNAME if logged in
+        if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_ID" ] && [ -n "$DOCKTUN_DOMAIN" ] && [ "$DOCKTUN_DOMAIN" != "docktun.example.com" ]; then
+            info "Registering DNS route in Cloudflare: $DOCKTUN_DOMAIN -> $TUNNEL_ID..."
+            if dns_res=$(cloudflared tunnel route dns "$TUNNEL_ID" "$DOCKTUN_DOMAIN" 2>&1); then
+                success "Cloudflare DNS route configured: $DOCKTUN_DOMAIN"
+            else
+                warn "Cloudflare CLI returned: $dns_res"
+                info "If the DNS record already exists, you can safely continue."
+            fi
         fi
+    else
+        DOCKTUN_DOMAIN=""
+        success "DockTun dashboard will remain local-only (not exposed to public Cloudflare Tunnel)."
     fi
 fi
 
@@ -923,14 +984,16 @@ else
 fi
 
 # Find all running containers excluding DockTun
-RUNNING_CONTAINERS=$(docker ps --format '{{.Names}}' | grep -vE '^(docktun-backend|docktun-frontend|docktun-cloudflared|docktun-zeroconf)$' || true)
+RUNNING_CONTAINERS=$(docker ps --format '{{.Names}}' | grep -vE '^(docktun|docktun-backend|docktun-frontend|docktun-cloudflared|docktun-zeroconf)$' || true)
 
 CONTAINER_COUNT=0
 if [ -n "$RUNNING_CONTAINERS" ]; then
     CONTAINER_COUNT=$(echo "$RUNNING_CONTAINERS" | wc -l)
 fi
 
-IMPORTED_INGRESS=()
+INGRESS_RULES_HOST=()
+INGRESS_RULES_SVC=()
+INGRESS_RULES_NOTLS=()
 COMPOSE_MOUNT_PATHS=()
 
 if [ "$CONTAINER_COUNT" -eq 0 ]; then
@@ -1040,12 +1103,6 @@ services:
     image: ${cimage}
     container_name: ${cname}
     restart: unless-stopped
-    networks:
-      - cloudflared
-
-networks:
-  cloudflared:
-    external: true
 EOF
                     fi
                     esc_name=$(echo "$cname" | sed "s/'/''/g")
@@ -1071,17 +1128,31 @@ EOF
 
     # Restore any previously configured custom container ingress rules from existing config.yml
     if [ -f "$SCRIPT_DIR/cloudflared/config.yml" ]; then
-        while IFS= read -r rline; do
-            if [[ "$rline" =~ ^[[:space:]]*-[[:space:]]*hostname:[[:space:]]*([^[:space:]]+) ]]; then
-                rh="${BASH_REMATCH[1]}"
-                if [ "$rh" != "$DOCKTUN_DOMAIN" ] && [ "$rh" != "docktun.example.com" ]; then
-                    read -r sline || true
-                    IMPORTED_INGRESS+=("$rline"$'\n'"$sline")
+        cur_host=""
+        cur_notls="false"
+        while IFS= read -r raw_line || [ -n "$raw_line" ]; do
+            line=$(echo "$raw_line" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+            if [[ "$line" =~ ^-[[:space:]]*hostname:[[:space:]]*[\"']?([^\"'[:space:]]+)[\"']? ]]; then
+                cur_host="${BASH_REMATCH[1]}"
+                cur_host=$(echo "$cur_host" | sed -E 's|^https?://||; s|/+$||; s|:[0-9]+$||')
+                cur_notls="false"
+            elif [[ "$line" =~ ^service:[[:space:]]*[\"']?([^\"'[:space:]]+)[\"']? ]]; then
+                cur_svc="${BASH_REMATCH[1]}"
+                if [ -n "$cur_host" ] && [ "$cur_host" != "$DOCKTUN_DOMAIN" ] && [ "$cur_host" != "docktun.example.com" ] && [ "$cur_svc" != "http_status:404" ]; then
+                    INGRESS_RULES_HOST+=("$cur_host")
+                    INGRESS_RULES_SVC+=("$cur_svc")
+                    INGRESS_RULES_NOTLS+=("$cur_notls")
+                fi
+                cur_host=""
+            elif [[ "$line" =~ noTLSVerify:[[:space:]]*true ]]; then
+                if [ ${#INGRESS_RULES_NOTLS[@]} -gt 0 ]; then
+                    last_idx=$((${#INGRESS_RULES_NOTLS[@]} - 1))
+                    INGRESS_RULES_NOTLS[$last_idx]="true"
                 fi
             fi
         done < "$SCRIPT_DIR/cloudflared/config.yml"
-        if [ ${#IMPORTED_INGRESS[@]} -gt 0 ]; then
-            info "Restored ${#IMPORTED_INGRESS[@]} previously configured container ingress rule(s)."
+        if [ ${#INGRESS_RULES_HOST[@]} -gt 0 ]; then
+            info "Restored ${#INGRESS_RULES_HOST[@]} previously configured container ingress rule(s)."
         fi
     fi
 
@@ -1104,8 +1175,8 @@ EOF
             def_host="${cname}.${BASE_DOMAIN}"
 
             already_configured=false
-            for r in "${IMPORTED_INGRESS[@]}"; do
-                if echo "$r" | grep -q "hostname: $def_host"; then
+            for r in "${INGRESS_RULES_HOST[@]}"; do
+                if [ "$r" = "$def_host" ]; then
                     already_configured=true
                     break
                 fi
@@ -1120,8 +1191,22 @@ EOF
                     prompt_read "Enter public hostname for '$cname' (Default: $def_host): " C_HOST "$def_host"
                     prompt_read "Enter internal service port for '$cname' (Default: $def_port): " C_PORT "$def_port"
 
+                    C_HOST=$(echo "$C_HOST" | tr -d '"'\''\r ' | sed -E 's|^https?://||; s|/+$||; s|:[0-9]+$||')
+                    [ -z "$C_PORT" ] && C_PORT="${def_port:-80}"
+                    C_PORT=$(echo "$C_PORT" | tr -d '"'\''\r ')
+                    svc_target="http://${cname}:${C_PORT}"
+                    notls="false"
+                    if [[ "$C_PORT" =~ ^https?:// ]]; then
+                        svc_target="$C_PORT"
+                    fi
+                    if [[ "$svc_target" =~ ^https:// ]]; then
+                        notls="true"
+                    fi
+
                     if [ -n "$C_HOST" ]; then
-                        IMPORTED_INGRESS+=("  - hostname: $C_HOST"$'\n'"    service: http://$cname:$C_PORT")
+                        INGRESS_RULES_HOST+=("$C_HOST")
+                        INGRESS_RULES_SVC+=("$svc_target")
+                        INGRESS_RULES_NOTLS+=("$notls")
                         if [ "$LOGIN_SUCCESSFUL" = true ] && [ -n "$TUNNEL_ID" ]; then
                             info "Configuring Cloudflare DNS route: $C_HOST -> $TUNNEL_ID..."
                             if dns_c_res=$(cloudflared tunnel route dns "$TUNNEL_ID" "$C_HOST" 2>&1); then
@@ -1130,7 +1215,7 @@ EOF
                                 warn "Cloudflare CLI returned: $dns_c_res"
                             fi
                         fi
-                        success "Added ingress rule for $C_HOST -> http://$cname:$C_PORT"
+                        success "Added ingress rule for $C_HOST -> $svc_target"
                     fi
                 fi
             fi
@@ -1145,6 +1230,10 @@ header "Step 6: Generating Configuration Files"
 
 # Write .env
 info "Writing .env configuration..."
+CF_API_TOKEN="${CF_API_TOKEN:-${PREV_CF_API_TOKEN}}"
+CF_ACCOUNT_ID="${CF_ACCOUNT_ID:-${PREV_CF_ACCOUNT_ID}}"
+CF_ZONE_ID="${CF_ZONE_ID:-${PREV_CF_ZONE_ID}}"
+
 cat > "$SCRIPT_DIR/.env" << EOF
 # ==========================================
 # DockTun Configuration
@@ -1173,8 +1262,28 @@ DB_PATH=/app/data/app.db
 LISTEN_ADDR=0.0.0.0:3001
 SELF_PATH=/opt/projects/docktun
 PROJECTS_ROOT=./projects
+
+# Cloudflare API Integration (auto-discovered from file / environment)
+CF_API_TOKEN=${CF_API_TOKEN}
+CF_ACCOUNT_ID=${CF_ACCOUNT_ID}
+CF_ZONE_ID=${CF_ZONE_ID}
 EOF
 success "Created $SCRIPT_DIR/.env"
+
+# Persist token to cloudflared/token file if present
+if [ -n "$CF_API_TOKEN" ]; then
+    mkdir -p "$SCRIPT_DIR/cloudflared"
+    echo "$CF_API_TOKEN" > "$SCRIPT_DIR/cloudflared/token"
+    chmod 600 "$SCRIPT_DIR/cloudflared/token" 2>/dev/null || true
+    success "Preserved Cloudflare API token in $SCRIPT_DIR/cloudflared/token"
+fi
+
+# Pre-populate SQLite settings table if database already exists
+if [ -f "$SCRIPT_DIR/data/app.db" ] && command -v sqlite3 >/dev/null 2>&1; then
+    [ -n "$CF_API_TOKEN" ] && sqlite3 "$SCRIPT_DIR/data/app.db" "INSERT INTO system_settings (key, value) VALUES ('cf_api_token', '$CF_API_TOKEN') ON CONFLICT(key) DO UPDATE SET value='$CF_API_TOKEN';" 2>/dev/null || true
+    [ -n "$CF_ACCOUNT_ID" ] && sqlite3 "$SCRIPT_DIR/data/app.db" "INSERT INTO system_settings (key, value) VALUES ('cf_account_id', '$CF_ACCOUNT_ID') ON CONFLICT(key) DO UPDATE SET value='$CF_ACCOUNT_ID';" 2>/dev/null || true
+    [ -n "$CF_ZONE_ID" ] && sqlite3 "$SCRIPT_DIR/data/app.db" "INSERT INTO system_settings (key, value) VALUES ('cf_zone_id', '$CF_ZONE_ID') ON CONFLICT(key) DO UPDATE SET value='$CF_ZONE_ID';" 2>/dev/null || true
+fi
 
 # Write cloudflared/config.yml
 info "Writing cloudflared/config.yml..."
@@ -1182,37 +1291,168 @@ cat > "$SCRIPT_DIR/cloudflared/config.yml" << EOF
 # DockTun managed cloudflared config
 # Managed by DockTun. Edit via the dashboard or manually here.
 
-tunnel: ${TUNNEL_ID}
+tunnel: "${TUNNEL_ID}"
 credentials-file: /etc/cloudflared/credentials.json
 protocol: http2
 
 ingress:
-  - hostname: ${DOCKTUN_DOMAIN}
-    service: http://docktun-frontend:80
 EOF
 
-declare -A WRITTEN_HOSTS
-WRITTEN_HOSTS["$DOCKTUN_DOMAIN"]=1
+if [ -n "$DOCKTUN_DOMAIN" ] && [ "$DOCKTUN_DOMAIN" != "docktun.example.com" ]; then
+    cat >> "$SCRIPT_DIR/cloudflared/config.yml" << EOF
+  - hostname: "${DOCKTUN_DOMAIN}"
+    service: "http://docktun:3001"
+EOF
+fi
 
-# Append imported container ingress rules (deduplicated)
-for rule in "${IMPORTED_INGRESS[@]}"; do
-    rhost=$(echo "$rule" | grep -oE 'hostname:[[:space:]]*[^[:space:]]+' | awk '{print $2}' || true)
-    if [ -n "$rhost" ]; then
-        if [ -z "${WRITTEN_HOSTS[$rhost]}" ]; then
-            WRITTEN_HOSTS["$rhost"]=1
-            echo "$rule" >> "$SCRIPT_DIR/cloudflared/config.yml"
-        fi
-    else
-        echo "$rule" >> "$SCRIPT_DIR/cloudflared/config.yml"
+declare -A WRITTEN_HOSTS
+[ -n "$DOCKTUN_DOMAIN" ] && WRITTEN_HOSTS["$DOCKTUN_DOMAIN"]=1
+WRITTEN_HOSTS["docktun.example.com"]=1
+
+for idx in "${!INGRESS_RULES_HOST[@]}"; do
+    rhost="${INGRESS_RULES_HOST[$idx]}"
+    rsvc="${INGRESS_RULES_SVC[$idx]}"
+    rnotls="${INGRESS_RULES_NOTLS[$idx]}"
+
+    [ -z "$rhost" ] || [ -z "$rsvc" ] && continue
+    [ "$rsvc" = "http_status:404" ] && continue
+    if [ -n "${WRITTEN_HOSTS[$rhost]}" ]; then
+        continue
+    fi
+    WRITTEN_HOSTS["$rhost"]=1
+
+    cat >> "$SCRIPT_DIR/cloudflared/config.yml" << EOF
+  - hostname: "${rhost}"
+    service: "${rsvc}"
+EOF
+    if [ "$rnotls" = "true" ] || [[ "$rsvc" =~ ^https:// ]]; then
+        cat >> "$SCRIPT_DIR/cloudflared/config.yml" << 'EOF'
+    originRequest:
+      noTLSVerify: true
+EOF
     fi
 done
 
 # Ingress catch-all must ALWAYS be the last rule
-cat >> "$SCRIPT_DIR/cloudflared/config.yml" << EOF
-  - service: http_status:404
+cat >> "$SCRIPT_DIR/cloudflared/config.yml" << 'EOF'
+  - service: "http_status:404"
 EOF
+
+# Ensure clean UNIX line endings (no CR \r)
+tr -d '\r' < "$SCRIPT_DIR/cloudflared/config.yml" > "$SCRIPT_DIR/cloudflared/config.yml.tmp" && mv "$SCRIPT_DIR/cloudflared/config.yml.tmp" "$SCRIPT_DIR/cloudflared/config.yml"
 chmod 644 "$SCRIPT_DIR/cloudflared/config.yml" 2>/dev/null || true
 success "Created $SCRIPT_DIR/cloudflared/config.yml"
+
+# Validate generated cloudflared config.yml syntax
+info "Validating Cloudflare Tunnel ingress configuration..."
+cfg_valid=false
+if docker run --rm -v "$SCRIPT_DIR/cloudflared/config.yml:/etc/cloudflared/config.yml:ro" cloudflare/cloudflared:latest tunnel --config /etc/cloudflared/config.yml ingress validate >/dev/null 2>&1; then
+    cfg_valid=true
+    success "Cloudflare Tunnel ingress configuration validated successfully via Docker."
+elif command -v cloudflared &>/dev/null && cloudflared tunnel --config "$SCRIPT_DIR/cloudflared/config.yml" ingress validate >/dev/null 2>&1; then
+    cfg_valid=true
+    success "Cloudflare Tunnel ingress configuration validated successfully via CLI."
+fi
+
+if [ "$cfg_valid" = false ]; then
+    if docker info >/dev/null 2>&1 || command -v cloudflared &>/dev/null; then
+        warn "cloudflared detected an issue with the custom ingress rules. Auto-repairing to clean base..."
+        cat > "$SCRIPT_DIR/cloudflared/config.yml" << EOF
+# DockTun managed cloudflared config
+# Managed by DockTun. Edit via the dashboard or manually here.
+
+tunnel: "${TUNNEL_ID}"
+credentials-file: /etc/cloudflared/credentials.json
+protocol: http2
+
+ingress:
+EOF
+        if [ -n "$DOCKTUN_DOMAIN" ] && [ "$DOCKTUN_DOMAIN" != "docktun.example.com" ]; then
+            cat >> "$SCRIPT_DIR/cloudflared/config.yml" << EOF
+  - hostname: "${DOCKTUN_DOMAIN}"
+    service: "http://docktun:3001"
+EOF
+        fi
+        cat >> "$SCRIPT_DIR/cloudflared/config.yml" << 'EOF'
+  - service: "http_status:404"
+EOF
+        tr -d '\r' < "$SCRIPT_DIR/cloudflared/config.yml" > "$SCRIPT_DIR/cloudflared/config.yml.tmp" && mv "$SCRIPT_DIR/cloudflared/config.yml.tmp" "$SCRIPT_DIR/cloudflared/config.yml"
+        chmod 644 "$SCRIPT_DIR/cloudflared/config.yml" 2>/dev/null || true
+    fi
+fi
+
+# Automatically synchronize all ingress hostnames and wildcard route with Cloudflare DNS
+info "Automatically registering Cloudflare DNS routes for all ingress hostnames..."
+auto_sync_cname() {
+    local target="$1"
+    local tid="$2"
+    [ -z "$target" ] || [ "$target" = "docktun.example.com" ] && return 0
+
+    local chost=$(echo "$target" | tr -d '"'\''\r ' | sed -E 's|^https?://||; s|/+$||; s|:[0-9]+$||')
+
+    # Method 1: cloudflared CLI with cert.pem
+    if command -v cloudflared >/dev/null 2>&1; then
+        if c_res=$(cloudflared tunnel route dns "$tid" "$chost" 2>&1); then
+            success "Cloudflare DNS route configured: $chost -> $tid.cfargotunnel.com"
+            return 0
+        fi
+    fi
+
+    # Method 2: Cloudflare REST API (via API Token)
+    if [ -n "$CF_API_TOKEN" ]; then
+        local bdom="$chost"
+        bdom=$(echo "$chost" | sed -E 's/^\*\.//')
+        local dcnt=$(echo "$bdom" | tr -cd '.' | wc -c)
+        if [ "$dcnt" -ge 2 ]; then
+            bdom="${bdom#*.}"
+        fi
+
+        local zid=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${bdom}&status=active" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" 2>/dev/null | jq -r '.result[0].id // empty' 2>/dev/null || true)
+
+        if [ -n "$zid" ] && [ "$zid" != "null" ]; then
+            local payload="{\"type\":\"CNAME\",\"name\":\"${chost}\",\"content\":\"${tid}.cfargotunnel.com\",\"proxied\":true,\"ttl\":1}"
+            local existing_id=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${zid}/dns_records?name=${chost}" \
+                -H "Authorization: Bearer ${CF_API_TOKEN}" \
+                -H "Content-Type: application/json" 2>/dev/null | jq -r '.result[0].id // empty' 2>/dev/null || true)
+
+            if [ -n "$existing_id" ] && [ "$existing_id" != "null" ]; then
+                curl -s -X PUT "https://api.cloudflare.com/client/v4/zones/${zid}/dns_records/${existing_id}" \
+                    -H "Authorization: Bearer ${CF_API_TOKEN}" \
+                    -H "Content-Type: application/json" \
+                    -d "$payload" >/dev/null 2>&1 || true
+                success "Cloudflare DNS route verified via API: $chost"
+                return 0
+            else
+                curl -s -X POST "https://api.cloudflare.com/client/v4/zones/${zid}/dns_records" \
+                    -H "Authorization: Bearer ${CF_API_TOKEN}" \
+                    -H "Content-Type: application/json" \
+                    -d "$payload" >/dev/null 2>&1 || true
+                success "Cloudflare DNS route created via API: $chost"
+                return 0
+            fi
+        fi
+    fi
+}
+
+if [ -f "$SCRIPT_DIR/cloudflared/config.yml" ] && [ -n "$TUNNEL_ID" ] && [ "$TUNNEL_ID" != "your-tunnel-uuid" ]; then
+    while IFS= read -r h; do
+        [ -n "$h" ] && auto_sync_cname "$h" "$TUNNEL_ID"
+    done < <(grep -E '^[[:space:]]*-[[:space:]]*hostname:' "$SCRIPT_DIR/cloudflared/config.yml" 2>/dev/null | awk '{print $NF}' | tr -d '"'\''\r ')
+
+    # Automatically add Wildcard route for root domain (*.domain.com)
+    if [ -n "$DOCKTUN_DOMAIN" ] && [ "$DOCKTUN_DOMAIN" != "docktun.example.com" ]; then
+        rdom=$(echo "$DOCKTUN_DOMAIN" | sed -E 's|^https?://||; s|/+$||; s|:[0-9]+$||')
+        dcnt=$(echo "$rdom" | tr -cd '.' | wc -c)
+        if [ "$dcnt" -ge 2 ]; then
+            rdom="${rdom#*.}"
+        fi
+        if [ -n "$rdom" ] && [ "$rdom" != "example.com" ]; then
+            auto_sync_cname "*.$rdom" "$TUNNEL_ID"
+        fi
+    fi
+fi
 
 # Configure project mounts via docker-compose.override.yml if needed (leaves docker-compose.yml clean for git)
 rm -f "$SCRIPT_DIR/docker-compose.override.yml"
@@ -1282,9 +1522,11 @@ HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
 header "Installation & Deployment Complete!"
 
 echo -e "${C_GREEN}${C_BOLD}DockTun is now running!${C_RESET}\n"
-echo -e "  ${C_BOLD}Local Web Dashboard:${C_RESET}     ${C_CYAN}http://${HOST_IP}:${PORT}${C_RESET}"
-if [ -n "$DOCKTUN_DOMAIN" ]; then
+echo -e "  ${C_BOLD}Local Web Dashboard:${C_RESET}     ${C_CYAN}http://${HOST_IP}:${PORT}${C_RESET} (or http://docktun.local)"
+if [ -n "$DOCKTUN_DOMAIN" ] && [ "$DOCKTUN_DOMAIN" != "docktun.example.com" ]; then
     echo -e "  ${C_BOLD}Public Tunnel URL:${C_RESET}       ${C_CYAN}https://${DOCKTUN_DOMAIN}${C_RESET}"
+else
+    echo -e "  ${C_BOLD}Public Tunnel URL:${C_RESET}       ${C_YELLOW}Disabled (Local-only security active)${C_RESET}"
 fi
 echo -e "  ${C_BOLD}Admin Username:${C_RESET}          ${C_YELLOW}${ADMIN_USERNAME}${C_RESET}"
 echo -e "  ${C_BOLD}Admin Password:${C_RESET}          ${C_YELLOW}${ADMIN_PASSWORD}${C_RESET}"
@@ -1292,10 +1534,10 @@ echo -e "  ${C_BOLD}Tunnel Name:${C_RESET}             ${TUNNEL_NAME}"
 echo -e "  ${C_BOLD}Tunnel UUID:${C_RESET}             ${TUNNEL_ID}"
 echo ""
 
-if [ ${#IMPORTED_INGRESS[@]} -gt 0 ]; then
+if [ ${#INGRESS_RULES_HOST[@]} -gt 0 ]; then
     echo -e "${C_BOLD}Imported Container Ingress Hostnames:${C_RESET}"
-    for rule in "${IMPORTED_INGRESS[@]}"; do
-        echo -e "  $rule"
+    for idx in "${!INGRESS_RULES_HOST[@]}"; do
+        echo -e "  • ${C_CYAN}https://${INGRESS_RULES_HOST[$idx]}${C_RESET} -> ${INGRESS_RULES_SVC[$idx]}"
     done
     echo ""
 fi

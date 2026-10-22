@@ -119,6 +119,7 @@ fi
 
 # 2. Force remove any lingering DockTun / Tunlify containers
 TARGET_CONTAINERS=(
+    "docktun"
     "docktun-backend"
     "docktun-frontend"
     "docktun-zeroconf"
@@ -155,6 +156,8 @@ success "All containers and networks stopped and cleared."
 header "Step 3: Removing Locally Built Images"
 
 IMAGES_TO_REMOVE=(
+    "docktun:latest"
+    "docktun"
     "docktun-backend:latest"
     "docktun-frontend:latest"
     "docktun-zeroconf:latest"

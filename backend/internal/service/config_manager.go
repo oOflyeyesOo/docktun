@@ -1,7 +1,9 @@
-﻿package service
+package service
 
 import (
+	"fmt"
 	"os"
+	"strings"
 
 	"docktun/internal/config"
 	"docktun/internal/db"
@@ -80,6 +82,17 @@ func (m *ConfigManager) DeleteBackup(id int) error {
 }
 
 func (m *ConfigManager) Write(content string, userID int) error {
+	// Normalize CRLF / CR to pure UNIX LF
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+
+	if err := m.Validate(content); err != nil {
+		return fmt.Errorf("refusing to write invalid yaml: %w", err)
+	}
+
 	current, err := m.Read()
 	if err == nil && current != "" {
 		_ = m.CreateBackup(current, userID)
@@ -89,10 +102,34 @@ func (m *ConfigManager) Write(content string, userID int) error {
 }
 
 func (m *ConfigManager) Validate(content string) error {
-	var out interface{}
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
+
+	var out map[string]interface{}
 	if err := yaml.Unmarshal([]byte(content), &out); err != nil {
-		return err
+		return fmt.Errorf("invalid yaml syntax: %w", err)
 	}
+
+	// Validate ingress structure if present
+	if rawIngress, ok := out["ingress"]; ok {
+		ingressList, ok := rawIngress.([]interface{})
+		if !ok || len(ingressList) == 0 {
+			return fmt.Errorf("'ingress' must be a non-empty list of rules")
+		}
+
+		// The final rule must be a catch-all service rule
+		lastRule, ok := ingressList[len(ingressList)-1].(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("the final ingress rule must be a mapping with 'service' (e.g. service: http_status:404)")
+		}
+		if _, hasSvc := lastRule["service"]; !hasSvc {
+			return fmt.Errorf("the final ingress rule must specify a 'service'")
+		}
+		if host, hasHost := lastRule["hostname"]; hasHost && host != "" && host != nil {
+			return fmt.Errorf("the final ingress rule must be a catch-all rule without a hostname (e.g. - service: http_status:404)")
+		}
+	}
+
 	return nil
 }
 

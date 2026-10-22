@@ -98,6 +98,8 @@ const generatedTcpCmd = ref('')
 const cfApiToken = ref(localStorage.getItem('docktun_cf_api_token') || '')
 const cfAccountId = ref(localStorage.getItem('docktun_cf_account_id') || '')
 const cfZoneId = ref(localStorage.getItem('docktun_cf_zone_id') || '')
+const cfApiHasToken = ref(false)
+const cfApiMaskedToken = ref('')
 const cfRemoteTunnel = ref<any>(null)
 const cfApiLoading = ref(false)
 const cfApiError = ref('')
@@ -114,7 +116,56 @@ function copyText(key: string, text: string) {
 }
 
 function isDocktunRule(rule: IngressRule) {
-  return rule.service.includes('docktun-frontend')
+  return rule.service.includes('docktun-frontend') || rule.service.includes('docktun:3001') || rule.service.includes('docktun:')
+}
+
+function extractTargetHost(service: string): string {
+  if (!service) return ''
+  try {
+    let s = service.trim()
+    if (!s.includes('://')) {
+      s = 'http://' + s
+    }
+    const u = new URL(s)
+    return u.hostname
+  } catch {
+    return service.replace(/^https?:\/\//, '').split(':')[0]
+  }
+}
+
+// Origin Probe & Maintenance State
+const probingHost = ref<string | null>(null)
+const probeResults = ref<Record<string, { reachable: boolean; status_code: number; latency_ms: number; error: string }>>({})
+const pausedServices = ref<Record<string, string>>({})
+
+async function probeOriginRule(rule: IngressRule) {
+  if (!rule.service || rule.service.startsWith('http_status:')) return
+  probingHost.value = rule.hostname
+  try {
+    const res: any = await apiFetch('/api/docker/probe', {
+      method: 'POST',
+      body: JSON.stringify({ service: rule.service }),
+    })
+    probeResults.value[rule.hostname] = res
+  } catch (err: any) {
+    probeResults.value[rule.hostname] = {
+      reachable: false,
+      status_code: 0,
+      latency_ms: 0,
+      error: err.message || 'Probe error',
+    }
+  } finally {
+    probingHost.value = null
+  }
+}
+
+function toggleRulePause(rule: IngressRule) {
+  if (rule.service.startsWith('http_status:')) {
+    rule.service = pausedServices.value[rule.hostname] || `http://${rule.hostname.split('.')[0]}:80`
+  } else {
+    pausedServices.value[rule.hostname] = rule.service
+    rule.service = 'http_status:503'
+  }
 }
 
 // Load YAML Config
@@ -149,9 +200,23 @@ function parseYaml(content: string) {
     }
     if (!inIngress) continue
 
-    const hm = line.match(/^\s+-\s+hostname:\s*(.+)/)
-    const sm = line.match(/^\s+service:\s*(.+)/)
+    const isStandaloneService = line.match(/^\s*-\s*service:\s*["']?([^"'\s]+)["']?/)
+    const hm = line.match(/^\s*-\s*hostname:\s*["']?([^"'\s]+)["']?/)
+    const sm = line.match(/^\s*service:\s*["']?([^"'\s]+)["']?/)
     const tm = line.match(/noTLSVerify:\s*true/)
+
+    if (isStandaloneService) {
+      if (cur.hostname) {
+        rules.value.push({
+          hostname: cur.hostname,
+          service: cur.service || '',
+          noTLSVerify: cur.noTLSVerify || false,
+        })
+        cur = {}
+      }
+      // If standalone service is not http_status:404, we could preserve it, but http_status:404 is the default catchall
+      continue
+    }
 
     if (hm) {
       if (cur.hostname) {
@@ -179,12 +244,12 @@ function parseYaml(content: string) {
 }
 
 function generateYaml(): string {
-  let y = `tunnel: ${tunnelId.value}\ncredentials-file: ${credentialsFile.value || '/etc/cloudflared/credentials.json'}\nprotocol: ${protocol.value || 'http2'}\n\ningress:\n`
+  let y = `tunnel: "${tunnelId.value}"\ncredentials-file: "${credentialsFile.value || '/etc/cloudflared/credentials.json'}"\nprotocol: ${protocol.value || 'http2'}\n\ningress:\n`
   for (const r of rules.value) {
     if (!r.hostname || !r.service) continue
     // Clean hostname: remove https:// and trailing slashes
-    let cleanH = r.hostname.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '')
-    let target = r.service.trim()
+    let cleanH = r.hostname.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '').replace(/:[0-9]+$/, '')
+    let target = r.service.trim().replace(/^["']|["']$/g, '')
     // Normalize .local to direct container name:
     if (target.includes('.local')) {
       target = target.replace('.local', '')
@@ -193,18 +258,24 @@ function generateYaml(): string {
     if (target.includes('localhost') || target.includes('127.0.0.1')) {
       target = target.replace('localhost', 'host.docker.internal').replace('127.0.0.1', 'host.docker.internal')
     }
-    y += `  - hostname: ${cleanH}\n    service: ${target}\n`
-    y += `    originRequest:\n      noTLSVerify: true\n`
+    y += `  - hostname: "${cleanH}"\n    service: "${target}"\n`
+    if (r.noTLSVerify || target.startsWith('https://')) {
+      y += `    originRequest:\n      noTLSVerify: true\n`
+    }
   }
-  return y + `  - service: http_status:404\n`
+  return y + `  - service: "http_status:404"\n`
 }
 
 function addRule() {
-  rules.value.push({ hostname: '', service: '', noTLSVerify: true })
+  rules.value.push({ hostname: '', service: '', noTLSVerify: false })
 }
 
 function removeRule(i: number) {
-  if (isDocktunRule(rules.value[i])) return
+  if (isDocktunRule(rules.value[i])) {
+    if (!confirm('Are you sure you want to remove public tunnel access for DockTun? DockTun will no longer be accessible from the public internet, and will only be accessible locally on your LAN (port 8080 or http://docktun.local).')) {
+      return
+    }
+  }
   rules.value.splice(i, 1)
 }
 
@@ -322,6 +393,10 @@ async function loadBackendCfSettings() {
     const s = await apiFetch<any>('/api/cloudflare/settings')
     if (s.account_id && !cfAccountId.value) cfAccountId.value = s.account_id
     if (s.zone_id && !cfZoneId.value) cfZoneId.value = s.zone_id
+    if (s.has_token) {
+      cfApiHasToken.value = true
+      cfApiMaskedToken.value = s.masked_token || '••••••••'
+    }
   } catch {}
 }
 
@@ -329,9 +404,15 @@ async function saveCfApiCredentials() {
   cfApiLoading.value = true
   cfApiError.value = ''
   try {
-    localStorage.setItem('docktun_cf_api_token', cfApiToken.value)
-    localStorage.setItem('docktun_cf_account_id', cfAccountId.value)
-    localStorage.setItem('docktun_cf_zone_id', cfZoneId.value)
+    if (cfApiToken.value) {
+      localStorage.setItem('docktun_cf_api_token', cfApiToken.value)
+    }
+    if (cfAccountId.value) {
+      localStorage.setItem('docktun_cf_account_id', cfAccountId.value)
+    }
+    if (cfZoneId.value) {
+      localStorage.setItem('docktun_cf_zone_id', cfZoneId.value)
+    }
 
     await apiFetch('/api/cloudflare/settings', {
       method: 'POST',
@@ -343,8 +424,9 @@ async function saveCfApiCredentials() {
     })
 
     cfApiSuccess.value = true
-    setTimeout(() => (cfApiSuccess.value = false), 3500)
+    await loadBackendCfSettings()
     await fetchRemoteTunnelInfo()
+    setTimeout(() => (cfApiSuccess.value = false), 3500)
   } catch (err: any) {
     cfApiError.value = 'Failed to save settings: ' + err.message
   } finally {
@@ -393,26 +475,19 @@ async function createWildcardRoute() {
 }
 
 async function fetchRemoteTunnelInfo() {
-  if (!cfApiToken.value || !cfAccountId.value || !tunnelId.value) {
-    return
-  }
   cfApiLoading.value = true
   cfApiError.value = ''
   try {
-    const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${cfAccountId.value}/cfd_tunnel/${tunnelId.value}`, {
-      headers: {
-        Authorization: `Bearer ${cfApiToken.value}`,
-        'Content-Type': 'application/json',
-      },
-    })
-    const data = await res.json()
-    if (data.success && data.result) {
-      cfRemoteTunnel.value = data.result
-    } else {
-      cfApiError.value = data.errors?.[0]?.message || 'Cloudflare API query failed'
+    const data = await apiFetch<any>('/api/cloudflare/tunnel')
+    if (data && !data.error) {
+      cfRemoteTunnel.value = data
+    } else if (data && data.error) {
+      cfApiError.value = data.error
     }
   } catch (err: any) {
-    cfApiError.value = 'Failed to connect to Cloudflare API: ' + err.message
+    if (cfApiHasToken.value || cfApiToken.value) {
+      cfApiError.value = 'Cloudflare API query: ' + err.message
+    }
   } finally {
     cfApiLoading.value = false
   }
@@ -427,7 +502,7 @@ onMounted(async () => {
   fetchMetrics()
   fetchHealth()
   loadBackups()
-  if (cfApiToken.value && cfAccountId.value) {
+  if (cfApiHasToken.value || cfApiToken.value) {
     fetchRemoteTunnelInfo()
   }
 
@@ -700,7 +775,17 @@ onUnmounted(() => {
                   <ExternalLink class="h-3 w-3" />
                 </a>
               </div>
-              <div class="text-[11px] text-slate-500">{{ h.service }}</div>
+              <div class="text-[11px] text-slate-500 flex items-center gap-2">
+                <span>{{ h.service }}</span>
+                <router-link
+                  v-if="extractTargetHost(h.service)"
+                  :to="'/containers?name=' + encodeURIComponent(extractTargetHost(h.service))"
+                  class="text-cyan-400 hover:underline text-[10px]"
+                  :title="`Inspect container '${extractTargetHost(h.service)}'`"
+                >
+                  (inspect container)
+                </router-link>
+              </div>
             </div>
 
             <div class="flex items-center gap-3">
@@ -788,6 +873,20 @@ onUnmounted(() => {
         ></textarea>
       </div>
 
+      <!-- Security & Cloudflare Access Advice -->
+      <div class="rounded-xl border border-cyan-800/40 bg-slate-950 p-4 flex flex-col sm:flex-row items-start gap-3.5">
+        <ShieldCheck class="h-5 w-5 text-cyan-400 mt-0.5 flex-shrink-0" />
+        <div class="space-y-1 text-xs">
+          <div class="font-bold text-slate-200">Exposing Admin Panels & Security Hardening</div>
+          <p class="text-slate-400 leading-relaxed">
+            If you expose the DockTun management dashboard publicly, we strongly recommend placing it behind
+            <strong class="text-cyan-300">Cloudflare Zero Trust (Access)</strong> in your Cloudflare dashboard (Applications &rarr; Add an Application).
+            Access requires One-Time PIN email verification or Google/GitHub SSO at the Cloudflare edge before any traffic reaches your server.
+            Alternatively, you can safely <strong class="text-amber-300">delete the DockTun rule below</strong> to keep DockTun internal-only and access it via your local network (<code class="text-slate-300 font-mono">http://&lt;lan-ip&gt;:8080</code> or <code class="text-slate-300 font-mono">http://docktun.local</code>).
+          </p>
+        </div>
+      </div>
+
       <!-- Visual Rules Cards View -->
       <div v-else class="space-y-3">
         <div
@@ -807,9 +906,7 @@ onUnmounted(() => {
                   v-model="rule.hostname"
                   type="text"
                   placeholder="app.example.com"
-                  :disabled="isDocktunRule(rule)"
                   class="cyber-input text-xs font-mono"
-                  :class="isDocktunRule(rule) ? 'opacity-70 cursor-not-allowed bg-slate-900' : ''"
                 />
                 <a
                   v-if="rule.hostname"
@@ -826,43 +923,89 @@ onUnmounted(() => {
 
             <!-- Service Target Input -->
             <div>
-              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                Local Service Target
-              </label>
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                  Local Service Target
+                </label>
+                <router-link
+                  v-if="extractTargetHost(rule.service)"
+                  :to="'/containers?name=' + encodeURIComponent(extractTargetHost(rule.service))"
+                  class="text-[10px] text-cyan-400 hover:underline font-mono flex items-center gap-1"
+                  :title="`Inspect container '${extractTargetHost(rule.service)}'`"
+                >
+                  <Server class="w-3 h-3 text-cyan-400" />
+                  <span>Inspect Container &rarr;</span>
+                </router-link>
+              </div>
               <input
                 v-model="rule.service"
                 type="text"
                 placeholder="http://container-name:80"
-                :disabled="isDocktunRule(rule)"
                 class="cyber-input text-xs font-mono"
-                :class="isDocktunRule(rule) ? 'opacity-70 cursor-not-allowed bg-slate-900' : ''"
               />
             </div>
 
             <!-- Options Row -->
-            <div class="col-span-full flex items-center justify-between text-xs text-slate-400 pt-1">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  v-model="rule.noTLSVerify"
-                  :disabled="isDocktunRule(rule)"
-                  class="rounded bg-slate-950"
-                />
-                <span class="text-[11px] font-mono">noTLSVerify (Disable TLS origin check)</span>
-              </label>
+            <div class="col-span-full flex flex-wrap items-center justify-between text-xs text-slate-400 pt-1 gap-2">
+              <div class="flex flex-wrap items-center gap-3">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    v-model="rule.noTLSVerify"
+                    class="rounded bg-slate-950"
+                  />
+                  <span class="text-[11px] font-mono">noTLSVerify (Disable TLS origin check)</span>
+                </label>
 
-              <span
-                v-if="isDocktunRule(rule)"
-                class="inline-flex items-center gap-1 rounded bg-cyan-950/80 border border-cyan-800/60 px-2 py-0.5 text-[10px] font-mono text-cyan-300 font-semibold"
-              >
-                <Lock class="h-3 w-3" />
-                SYSTEM DASHBOARD RULE (PROTECTED)
-              </span>
+                <!-- Test Origin Button -->
+                <button
+                  v-if="!rule.service.startsWith('http_status:')"
+                  type="button"
+                  @click="probeOriginRule(rule)"
+                  :disabled="probingHost === rule.hostname"
+                  class="cyber-btn-secondary text-[11px] font-mono py-0.5 px-2 flex items-center gap-1.5 hover:text-cyan-300"
+                  title="Test HTTP connectivity to origin container"
+                >
+                  <RotateCcw v-if="probingHost === rule.hostname" class="h-3 w-3 animate-spin text-cyan-400" />
+                  <Activity v-else class="h-3 w-3 text-cyan-400" />
+                  <span>{{ probingHost === rule.hostname ? 'Testing...' : 'Test Origin' }}</span>
+                </button>
+
+                <!-- Probe feedback badge -->
+                <span
+                  v-if="probeResults[rule.hostname]"
+                  class="rounded px-2 py-0.5 text-[10px] font-mono font-bold"
+                  :class="probeResults[rule.hostname].reachable ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/50' : 'bg-red-950/80 text-red-400 border border-red-800/50'"
+                >
+                  {{ probeResults[rule.hostname].reachable ? `UP ${probeResults[rule.hostname].latency_ms}ms • HTTP ${probeResults[rule.hostname].status_code}` : (probeResults[rule.hostname].error || 'TIMEOUT') }}
+                </span>
+              </div>
+
+              <div class="flex items-center gap-2">
+                <!-- Maintenance / Pause Toggle -->
+                <button
+                  type="button"
+                  @click="toggleRulePause(rule)"
+                  class="rounded px-2 py-0.5 text-[10px] font-mono font-semibold transition"
+                  :class="rule.service.startsWith('http_status:') ? 'bg-amber-950 text-amber-300 border border-amber-800 hover:bg-amber-900/60' : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'"
+                  :title="rule.service.startsWith('http_status:') ? 'Resume routing to container' : 'Temporarily pause rule with HTTP 503 maintenance mode'"
+                >
+                  {{ rule.service.startsWith('http_status:') ? '⚠ MAINTENANCE (503) • CLICK TO RESUME' : 'Pause (503 Mode)' }}
+                </button>
+
+                <span
+                  v-if="isDocktunRule(rule)"
+                  class="inline-flex items-center gap-1 rounded bg-cyan-950/60 border border-cyan-800/40 px-2 py-0.5 text-[10px] font-mono text-cyan-300 font-semibold"
+                >
+                  <Sliders class="h-3 w-3" />
+                  DockTun Dashboard
+                </span>
+              </div>
             </div>
           </div>
 
           <!-- Delete Rule Button -->
-          <div v-if="!isDocktunRule(rule)" class="flex md:flex-col justify-end pt-2 md:pt-0">
+          <div class="flex md:flex-col justify-end pt-2 md:pt-0">
             <button
               @click="removeRule(i)"
               class="cyber-btn-danger !px-2.5 !py-2 text-xs"
@@ -978,13 +1121,19 @@ onUnmounted(() => {
 
         <div class="grid gap-4 md:grid-cols-2">
           <div class="col-span-full">
-            <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-              Cloudflare API Token
-            </label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                Cloudflare API Token
+              </label>
+              <span v-if="cfApiHasToken" class="text-[10px] text-emerald-400 font-mono flex items-center gap-1">
+                <CheckCircle2 class="h-3 w-3" />
+                Detected from file/environment ({{ cfApiMaskedToken }})
+              </span>
+            </div>
             <input
               v-model="cfApiToken"
               type="password"
-              placeholder="Bearer Token with Cloudflare Tunnel & DNS read permissions"
+              :placeholder="cfApiHasToken ? 'Configured: ' + cfApiMaskedToken + ' (enter new value to override)' : 'Bearer Token with Cloudflare Tunnel & DNS permissions'"
               class="cyber-input text-xs font-mono"
             />
           </div>
@@ -1023,6 +1172,15 @@ onUnmounted(() => {
             <RefreshCw v-if="cfApiLoading" class="h-3 w-3 animate-spin mr-1" />
             <span>Save & Query Cloudflare API</span>
           </button>
+          <button
+            v-if="cfApiHasToken || cfApiToken"
+            @click="fetchRemoteTunnelInfo"
+            :disabled="cfApiLoading"
+            class="cyber-btn-secondary text-xs text-slate-300 flex items-center gap-1.5"
+          >
+            <RefreshCw class="h-3 w-3" :class="cfApiLoading ? 'animate-spin' : ''" />
+            <span>Query Remote Status</span>
+          </button>
           <span v-if="cfApiSuccess" class="text-xs text-emerald-400 font-medium">Credentials saved!</span>
         </div>
 
@@ -1043,8 +1201,8 @@ onUnmounted(() => {
           <div class="flex flex-wrap items-center gap-3 pt-1">
             <button
               @click="syncAllDnsRoutes"
-              :disabled="syncLoading || !cfApiToken"
-              class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-300 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/60"
+              :disabled="syncLoading || (!cfApiToken && !cfApiHasToken)"
+              class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-300 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/60 disabled:opacity-50"
             >
               <RefreshCw class="h-3.5 w-3.5" :class="syncLoading ? 'animate-spin' : ''" />
               <span>{{ syncLoading ? 'Syncing DNS…' : 'Sync All Ingress Routes to Cloudflare DNS' }}</span>
@@ -1068,8 +1226,8 @@ onUnmounted(() => {
               />
               <button
                 @click="createWildcardRoute"
-                :disabled="wildcardLoading || !cfApiToken || !wildcardDomainInput"
-                class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-300 border-emerald-600 bg-emerald-950/40 hover:bg-emerald-900/60"
+                :disabled="wildcardLoading || (!cfApiToken && !cfApiHasToken) || !wildcardDomainInput"
+                class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-300 border-emerald-600 bg-emerald-950/40 hover:bg-emerald-900/60 disabled:opacity-50"
               >
                 <CheckCircle2 class="h-3.5 w-3.5" :class="wildcardLoading ? 'animate-spin' : ''" />
                 <span>{{ wildcardLoading ? 'Creating…' : 'Create Wildcard DNS (*.domain)' }}</span>

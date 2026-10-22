@@ -7,5 +7,5 @@ protocol: http2
 
 ingress:
   - hostname: docktun.example.com
-    service: http://docktun-frontend:80
+    service: http://docktun:3001
   - service: http_status:404
