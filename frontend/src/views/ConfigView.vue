@@ -30,6 +30,7 @@ import {
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 const { apiFetch } = useApi()
 
 interface IngressRule {
@@ -522,8 +523,8 @@ onUnmounted(() => {
 
 <template>
   <div class="space-y-6">
-    <!-- Header -->
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <!-- Header (shown when standalone page) -->
+    <div v-if="!embedded" class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
         <div class="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
           <Globe class="h-3.5 w-3.5 text-cyan-400" />
@@ -553,6 +554,25 @@ onUnmounted(() => {
           <span>Reload</span>
         </button>
       </div>
+    </div>
+    <!-- Mini actions bar when embedded in RemoteAccessView -->
+    <div v-else class="flex items-center justify-end gap-2 pb-1">
+      <button
+        @click="restartTunnel"
+        :disabled="saving"
+        class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-300 hover:border-amber-600 hover:bg-amber-950/40"
+        title="Restart Cloudflare Tunnel daemon"
+      >
+        <RotateCcw class="h-3.5 w-3.5" :class="saving ? 'animate-spin' : ''" />
+        <span>Restart Tunnel</span>
+      </button>
+      <button
+        @click="loadConfig"
+        class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-slate-300"
+      >
+        <RefreshCw class="h-3.5 w-3.5" />
+        <span>Reload</span>
+      </button>
     </div>
 
     <!-- Alert / Toast Feedback -->

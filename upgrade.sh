@@ -100,7 +100,7 @@ if docker network inspect cloudflared >/dev/null 2>&1; then
   info "Pruning internal containers from 'cloudflared' network (keeping only DockTun & routed services)..."
   CF_ATTACHED=$(docker network inspect cloudflared -f '{{range $k, $v := .Containers}}{{$v.Name}} {{end}}' 2>/dev/null || true)
   for c in $CF_ATTACHED; do
-    if [[ ! "$c" =~ ^(docktun|docktun-backend|docktun-frontend|docktun-cloudflared|docktun-zeroconf)$ ]]; then
+    if [[ ! "$c" =~ ^(docktun|docktun-backend|docktun-frontend|docktun-cloudflared|docktun-zeroconf|docktun-tailscale|docktun-wireguard)$ ]]; then
       if [ -f "$CLOUDFLARED_DIR/config.yml" ] && ! grep -q "$c" "$CLOUDFLARED_DIR/config.yml" 2>/dev/null; then
         info "Disconnected internal container '$c' from 'cloudflared' network"
         docker network disconnect cloudflared "$c" 2>/dev/null || true

@@ -62,6 +62,7 @@ func main() {
   dockerRunSvc := service.NewDockerRun(database, projectsSvc)
   dockerContainersSvc := service.NewDockerContainers(cfg, database, configSvc, cfdSvc, cfAPISvc, auditSvc)
   meshSvc := service.NewMeshService(dataDir, configSvc, cfg)
+  remoteAccessSvc := service.NewRemoteAccessService(cfg, configSvc, cfdSvc, cfAPISvc, meshSvc, auditSvc, dataDir)
 
   statusHandler := handler.NewStatus(cfdSvc, cfg)
   controlHandler := handler.NewControl(cfdSvc, auditSvc)
@@ -77,6 +78,7 @@ func main() {
   dockerRunHandler := handler.NewDockerRun(dockerRunSvc, auditSvc)
   dockerContainersHandler := handler.NewDockerContainers(dockerContainersSvc)
   meshHandler := handler.NewMesh(meshSvc)
+  remoteAccessHandler := handler.NewRemoteAccess(remoteAccessSvc, auditSvc)
   cloudflareHandler := handler.NewCloudflareHandler(cfAPISvc, configSvc)
 
   r.Post("/auth/login", authHandler.Login)
@@ -116,6 +118,17 @@ func main() {
 
     r.Get("/api/mesh", meshHandler.Get)
     r.Put("/api/mesh", meshHandler.Save)
+
+    // Remote Access (unified Cloudflare, Tailscale, WireGuard, ZeroConf)
+    r.Get("/api/remote-access/overview", remoteAccessHandler.Overview)
+    r.Get("/api/remote-access/tailscale/status", remoteAccessHandler.TailscaleStatus)
+    r.Post("/api/remote-access/tailscale/up", remoteAccessHandler.TailscaleUp)
+    r.Post("/api/remote-access/tailscale/down", remoteAccessHandler.TailscaleDown)
+    r.Post("/api/remote-access/tailscale/control", remoteAccessHandler.TailscaleControl)
+    r.Get("/api/remote-access/wireguard/status", remoteAccessHandler.WireguardStatus)
+    r.Post("/api/remote-access/wireguard/control", remoteAccessHandler.WireguardControl)
+    r.Post("/api/remote-access/zeroconf/control", remoteAccessHandler.ZeroconfControl)
+
 
     r.Get("/api/projects", projectsHandler.List)
     r.Post("/api/projects", projectsHandler.Create)

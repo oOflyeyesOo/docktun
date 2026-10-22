@@ -37,7 +37,7 @@ services:
 
   # Optional local ZeroConf mDNS router (run with: docker compose --profile zeroconf up -d)
   zeroconf:
-    profiles: ["zeroconf"]
+    profiles: ["zeroconf", "all"]
     build: ./zeroconf
     container_name: docktun-zeroconf
     restart: unless-stopped
@@ -48,6 +48,53 @@ services:
       - DOMAIN=local
       - HTTP_PORT=80
       - DOCKTUN_PORT=${PORT:-8080}
+
+  # Optional Tailscale Zero-Trust Mesh VPN (run with: docker compose --profile tailscale up -d)
+  tailscale:
+    profiles: ["tailscale", "mesh", "all"]
+    image: tailscale/tailscale:latest
+    container_name: docktun-tailscale
+    hostname: docktun
+    restart: unless-stopped
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:-}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=${TS_USERSPACE:-true}
+      - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:-}
+    volumes:
+      - ./data/tailscale:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    networks:
+      - cloudflared
+
+  # Optional WireGuard Point-to-Point VPN Tunnel (run with: docker compose --profile wireguard up -d)
+  wireguard:
+    profiles: ["wireguard", "mesh", "all"]
+    image: linuxserver/wireguard:latest
+    container_name: docktun-wireguard
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+      - SERVERURL=${WIREGUARD_SERVERURL:-auto}
+      - SERVERPORT=51820
+      - PEERS=${WIREGUARD_PEERS:-3}
+      - PEERDNS=auto
+      - INTERNAL_SUBNET=10.13.13.0
+    volumes:
+      - ./data/wireguard:/config
+      - /lib/modules:/lib/modules:ro
+    ports:
+      - "${WIREGUARD_PORT:-51820}:51820/udp"
+    networks:
+      - cloudflared
 
 networks:
   cloudflared:

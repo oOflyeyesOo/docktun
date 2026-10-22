@@ -984,7 +984,7 @@ else
 fi
 
 # Find all running containers excluding DockTun
-RUNNING_CONTAINERS=$(docker ps --format '{{.Names}}' | grep -vE '^(docktun|docktun-backend|docktun-frontend|docktun-cloudflared|docktun-zeroconf)$' || true)
+RUNNING_CONTAINERS=$(docker ps --format '{{.Names}}' | grep -vE '^(docktun|docktun-backend|docktun-frontend|docktun-cloudflared|docktun-zeroconf|docktun-tailscale|docktun-wireguard)$' || true)
 
 CONTAINER_COUNT=0
 if [ -n "$RUNNING_CONTAINERS" ]; then
