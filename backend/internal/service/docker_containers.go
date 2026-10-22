@@ -482,7 +482,7 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		}
 	}
 
-	// Formatted ports
+	// Formatted ports (standard Docker format: [HostIP:]HostPort->ContainerPort)
 	ports := []string{}
 	for port, bindings := range inspect.NetworkSettings.Ports {
 		if len(bindings) == 0 {
@@ -491,9 +491,13 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		}
 		for _, b := range bindings {
 			if b.HostPort != "" {
-				ports = append(ports, fmt.Sprintf("%s -> %s:%s", port, b.HostIP, b.HostPort))
+				hostIP := b.HostIP
+				if hostIP == "" {
+					hostIP = "0.0.0.0"
+				}
+				ports = append(ports, fmt.Sprintf("%s:%s->%s", hostIP, b.HostPort, port))
 			} else {
-				ports = append(ports, fmt.Sprintf("%s -> %s", port, b.HostIP))
+				ports = append(ports, port)
 			}
 		}
 	}
@@ -727,18 +731,13 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 			var portLines []string
 			seen := make(map[string]bool)
 			for _, part := range strings.Split(detail.Ports, ",") {
-				part = strings.TrimSpace(part)
-				if idx := strings.Index(part, "->"); idx > 0 {
-					hostPart := strings.TrimSpace(part[:idx])
-					containerPart := strings.TrimSpace(part[idx+2:])
-					if hIdx := strings.LastIndex(hostPart, ":"); hIdx >= 0 {
-						hostPart = hostPart[hIdx+1:]
-					}
-					cPort := strings.TrimSuffix(containerPart, "/tcp")
-					mapping := fmt.Sprintf("%s:%s", hostPart, cPort)
-					if !seen[mapping] && hostPart != "" && cPort != "" {
-						seen[mapping] = true
-						portLines = append(portLines, fmt.Sprintf("      - \"%s\"\n", mapping))
+				if parsed, ok := parsePortMapping(part); ok {
+					if parsed.HostPort != "" && parsed.ContainerPort != "" {
+						mapping := parsed.FormatForCompose()
+						if !seen[mapping] {
+							seen[mapping] = true
+							portLines = append(portLines, fmt.Sprintf("      - \"%s\"\n", mapping))
+						}
 					}
 				}
 			}
@@ -762,6 +761,8 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 		if err := os.WriteFile(composePath, []byte(b.String()), 0644); err != nil {
 			return 0, fmt.Errorf("failed to write compose file: %w", err)
 		}
+	} else {
+		sanitizeComposeFile(composePath)
 	}
 
 	envPath := filepath.Join(destDir, ".env")
@@ -1546,10 +1547,24 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 
 	// Strategy A: Existing valid compose stack
 	if validComposeDir != "" {
+		composeCandidate := compFile
+		if composeCandidate == "" || !fileExists(composeCandidate) {
+			for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
+				p := filepath.Join(validComposeDir, name)
+				if fileExists(p) {
+					composeCandidate = p
+					break
+				}
+			}
+		}
+		if composeCandidate != "" && fileExists(composeCandidate) {
+			sanitizeComposeFile(composeCandidate)
+		}
+
 		appendLog(fmt.Sprintf("[STEP 2/4] Updating via Docker Compose in %s (service: %s)...", validComposeDir, compService))
 		var composeArgs []string
-		if compFile != "" && fileExists(compFile) {
-			composeArgs = append(composeArgs, "-f", compFile)
+		if composeCandidate != "" && fileExists(composeCandidate) {
+			composeArgs = append(composeArgs, "-f", composeCandidate)
 		} else {
 			composeArgs = append(composeArgs, "--project-directory", validComposeDir)
 		}
@@ -1579,6 +1594,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		composeFilePath := filepath.Join(destDir, "docker-compose.yml")
 
 		if fileExists(composeFilePath) {
+			sanitizeComposeFile(composeFilePath)
 			appendLog(fmt.Sprintf("[STEP 3/4] Recreating container via Docker Compose in %s...", destDir))
 			upCmd := exec.Command("docker", "compose", "-f", composeFilePath, "up", "-d", "--force-recreate")
 			upCmd.Dir = destDir
@@ -1643,37 +1659,16 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 	if detail.Ports != "" {
 		seen := make(map[string]bool)
 		for _, part := range strings.Split(detail.Ports, ",") {
-			part = strings.TrimSpace(part)
-			if idx := strings.Index(part, "->"); idx > 0 {
-				containerPart := strings.TrimSpace(part[:idx])
-				hostPart := strings.TrimSpace(part[idx+2:])
-
-				// Extract container port
-				cPort := strings.TrimSpace(strings.Split(containerPart, "/")[0])
-				proto := ""
-				if strings.Contains(containerPart, "/udp") {
-					proto = "/udp"
-				}
-
-				// Extract host port (hostPart is e.g. "0.0.0.0:7777" or "7777")
-				hPort := hostPart
-				if lastColon := strings.LastIndex(hostPart, ":"); lastColon >= 0 {
-					hPort = hostPart[lastColon+1:]
-				}
-				hPort = strings.TrimSpace(hPort)
-
-				if hPort != "" && cPort != "" {
-					mapping := fmt.Sprintf("%s:%s%s", hPort, cPort, proto)
-					if !seen[mapping] {
-						seen[mapping] = true
-						runArgs = append(runArgs, "-p", mapping)
+			if parsed, ok := parsePortMapping(part); ok {
+				if parsed.HostPort != "" && parsed.ContainerPort != "" {
+					runPort := parsed.FormatForDockerRun()
+					if !seen[runPort] {
+						seen[runPort] = true
+						runArgs = append(runArgs, "-p", runPort)
 					}
-				}
-			} else if strings.TrimSpace(part) != "" {
-				cPort := strings.TrimSpace(strings.Split(part, "/")[0])
-				if cPort != "" && !seen[cPort] {
-					seen[cPort] = true
-					runArgs = append(runArgs, "--expose", cPort)
+				} else if parsed.ContainerPort != "" && !seen[parsed.ContainerPort] {
+					seen[parsed.ContainerPort] = true
+					runArgs = append(runArgs, "--expose", parsed.ContainerPort)
 				}
 			}
 		}
@@ -2006,3 +2001,205 @@ func fetchLatestGitHubCommit(ctx context.Context, owner, repo, branch string) (s
 	}
 	return shortSHA, firstLineMsg, nil
 }
+
+type ParsedPortMapping struct {
+	HostIP        string
+	HostPort      string
+	ContainerPort string
+	Protocol      string // "tcp" or "udp"
+}
+
+func (p ParsedPortMapping) FormatForCompose() string {
+	proto := ""
+	if p.Protocol == "udp" {
+		proto = "/udp"
+	}
+	if p.HostIP != "" && p.HostIP != "0.0.0.0" && p.HostIP != "::" && p.HostIP != "[::]" {
+		return fmt.Sprintf("%s:%s:%s%s", p.HostIP, p.HostPort, p.ContainerPort, proto)
+	}
+	return fmt.Sprintf("%s:%s%s", p.HostPort, p.ContainerPort, proto)
+}
+
+func (p ParsedPortMapping) FormatForDockerRun() string {
+	proto := ""
+	if p.Protocol == "udp" {
+		proto = "/udp"
+	}
+	if p.HostIP != "" && p.HostIP != "0.0.0.0" && p.HostIP != "::" && p.HostIP != "[::]" {
+		return fmt.Sprintf("%s:%s:%s%s", p.HostIP, p.HostPort, p.ContainerPort, proto)
+	}
+	return fmt.Sprintf("%s:%s%s", p.HostPort, p.ContainerPort, proto)
+}
+
+func parsePortMapping(raw string) (ParsedPortMapping, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ParsedPortMapping{}, false
+	}
+
+	proto := "tcp"
+	if strings.Contains(strings.ToLower(raw), "/udp") {
+		proto = "udp"
+	}
+
+	// Case 1: contains "->"
+	if strings.Contains(raw, "->") {
+		parts := strings.SplitN(raw, "->", 2)
+		left := strings.TrimSpace(parts[0])
+		right := strings.TrimSpace(parts[1])
+
+		var hostSide, containerSide string
+		if strings.Contains(left, "/tcp") || strings.Contains(left, "/udp") {
+			containerSide = left
+			hostSide = right
+		} else if strings.Contains(right, "/tcp") || strings.Contains(right, "/udp") {
+			containerSide = right
+			hostSide = left
+		} else if strings.Contains(left, ".") || strings.Contains(left, "::") {
+			hostSide = left
+			containerSide = right
+		} else if strings.Contains(right, ".") || strings.Contains(right, "::") {
+			hostSide = right
+			containerSide = left
+		} else {
+			hostSide = left
+			containerSide = right
+		}
+
+		cPort := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(containerSide), "/tcp"), "/udp")
+		cPort = strings.TrimSpace(cPort)
+		if lastC := strings.LastIndex(cPort, ":"); lastC >= 0 {
+			cPort = cPort[lastC+1:]
+		}
+
+		hostIP := ""
+		hostPort := hostSide
+		if lastColon := strings.LastIndex(hostSide, ":"); lastColon >= 0 {
+			hostIP = strings.TrimSpace(hostSide[:lastColon])
+			hostPort = strings.TrimSpace(hostSide[lastColon+1:])
+		}
+		hostIP = strings.Trim(hostIP, "[]")
+		hostPort = strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(hostPort), "/tcp"), "/udp")
+		hostPort = strings.TrimSpace(hostPort)
+
+		if cPort != "" && hostPort != "" {
+			return ParsedPortMapping{
+				HostIP:        hostIP,
+				HostPort:      hostPort,
+				ContainerPort: cPort,
+				Protocol:      proto,
+			}, true
+		}
+	}
+
+	// Case 2: standard mapping without "->", e.g. "7777:7777" or "0.0.0.0:7777:7777" or inverted "7777/tcp:0.0.0.0:7777"
+	if strings.Contains(raw, ":") {
+		colons := strings.Split(raw, ":")
+		if len(colons) == 2 {
+			part1 := strings.TrimSpace(colons[0])
+			part2 := strings.TrimSpace(colons[1])
+
+			// If part1 has /tcp or /udp, e.g. "7777/tcp:7777" -> part1 is container!
+			if strings.Contains(strings.ToLower(part1), "/tcp") || strings.Contains(strings.ToLower(part1), "/udp") {
+				c := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(part1), "/tcp"), "/udp")
+				h := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(part2), "/tcp"), "/udp")
+				return ParsedPortMapping{
+					HostPort:      h,
+					ContainerPort: c,
+					Protocol:      proto,
+				}, true
+			}
+
+			// Normal "host:container"
+			c := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(part2), "/tcp"), "/udp")
+			h := strings.TrimSpace(part1)
+			return ParsedPortMapping{
+				HostPort:      h,
+				ContainerPort: c,
+				Protocol:      proto,
+			}, true
+		} else if len(colons) == 3 {
+			// Could be "0.0.0.0:7777:7777" OR malformed "7777/tcp:0.0.0.0:7777"
+			part1 := strings.TrimSpace(colons[0])
+			part2 := strings.TrimSpace(colons[1])
+			part3 := strings.TrimSpace(colons[2])
+
+			if strings.Contains(strings.ToLower(part1), "/tcp") || strings.Contains(strings.ToLower(part1), "/udp") {
+				// Malformed "7777/tcp:0.0.0.0:7777" -> container is part1, host port is part3
+				c := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(part1), "/tcp"), "/udp")
+				h := strings.TrimSpace(part3)
+				return ParsedPortMapping{
+					HostPort:      h,
+					ContainerPort: c,
+					Protocol:      proto,
+				}, true
+			}
+
+			ip := strings.Trim(part1, "[]")
+			h := part2
+			c := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(part3), "/tcp"), "/udp")
+			return ParsedPortMapping{
+				HostIP:        ip,
+				HostPort:      h,
+				ContainerPort: c,
+				Protocol:      proto,
+			}, true
+		}
+	}
+
+	// Case 3: single port, e.g. "7777/tcp" or "7777"
+	clean := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(raw), "/tcp"), "/udp")
+	clean = strings.TrimSpace(clean)
+	if clean != "" {
+		return ParsedPortMapping{
+			ContainerPort: clean,
+			Protocol:      proto,
+		}, true
+	}
+
+	return ParsedPortMapping{}, false
+}
+
+func sanitizeComposeFile(composePath string) bool {
+	contentBytes, err := os.ReadFile(composePath)
+	if err != nil {
+		return false
+	}
+	content := string(contentBytes)
+	lines := strings.Split(content, "\n")
+	modified := false
+	inPorts := false
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "ports:") {
+			inPorts = true
+			continue
+		}
+		if inPorts {
+			if strings.HasPrefix(trimmed, "-") {
+				rawPort := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+				rawPort = strings.Trim(rawPort, `"'`)
+				if parsed, ok := parsePortMapping(rawPort); ok && parsed.HostPort != "" && parsed.ContainerPort != "" {
+					correctCompose := parsed.FormatForCompose()
+					if rawPort != correctCompose {
+						dashIdx := strings.Index(line, "-")
+						indent := line[:dashIdx]
+						lines[i] = fmt.Sprintf("%s- \"%s\"", indent, correctCompose)
+						modified = true
+					}
+				}
+			} else if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+				inPorts = false
+			}
+		}
+	}
+
+	if modified {
+		_ = os.WriteFile(composePath, []byte(strings.Join(lines, "\n")), 0644)
+		log.Printf("[docktun] sanitized invalid ports in compose file: %s", composePath)
+		return true
+	}
+	return false
+}
+
