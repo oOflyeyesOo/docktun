@@ -1470,8 +1470,6 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		return logOutput.String(), fmt.Errorf("failed to pull image %s: %s (%w)", image, strings.TrimSpace(string(pullOut)), err)
 	}
 
-	wasConnectedToCloudflared := detail.ConnectedToCloudflared
-
 	// Check if compose managed
 	compDir := ""
 	compFile := ""
