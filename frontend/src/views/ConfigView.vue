@@ -1,5 +1,5 @@
-<script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   Globe,
   Shield,
@@ -32,6 +32,7 @@ import { useApi } from '../composables/useApi'
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 const { apiFetch } = useApi()
+const route = useRoute()
 
 interface IngressRule {
   hostname: string
@@ -497,6 +498,12 @@ async function fetchRemoteTunnelInfo() {
 let metricsTimer: any = null
 
 onMounted(async () => {
+  const sub = route.query.sub as string
+  if (sub && ['overview', 'ingress', 'tcp', 'api', 'backups', 'health'].includes(sub)) {
+    if (sub === 'health') activeTab.value = 'overview'
+    else activeTab.value = sub as any
+  }
+
   await loadConfig()
   await loadBackendCfSettings()
   fetchStatus()

@@ -11,7 +11,6 @@ const { apiFetch } = useApi()
 
 const nav = [
   { to: '/', label: 'Status', icon: LayoutDashboard },
-  { to: '/health', label: 'Health', icon: Activity },
   { to: '/containers', label: 'Containers', icon: Server },
   { to: '/access', label: 'Remote Access', icon: Globe },
   { to: '/logs', label: 'Logs', icon: ScrollText },
