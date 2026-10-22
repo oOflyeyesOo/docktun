@@ -462,7 +462,11 @@ async function checkSingleUpdate(container: ContainerItem) {
     if (res.update_available) {
       alert(`Update available for ${container.name}!`)
     } else if (res.error) {
-      alert(`Update check notice for ${container.name}: ${res.error}`)
+      if (res.error.includes('DockTun is built locally') || res.error.includes('Local build or private image')) {
+        alert(res.error)
+      } else {
+        alert(`Update check notice for ${container.name}: ${res.error}`)
+      }
     } else {
       alert(`${container.name} is up to date!`)
     }
@@ -2037,7 +2041,11 @@ onUnmounted(() => {
                     <ArrowUpCircle class="h-3.5 w-3.5" />
                     Update Available on Registry
                   </span>
-                  <span v-else-if="selectedContainer.update_checked_at" class="ml-2 inline-flex items-center gap-1 text-emerald-400 font-bold">
+                  <span v-else-if="selectedContainer.update_error && (selectedContainer.update_error.includes('built locally') || selectedContainer.update_error.includes('Local'))" class="ml-2 inline-flex items-center gap-1 text-cyan-300 font-semibold">
+                    <Info class="h-3.5 w-3.5" />
+                    Local / Git Managed
+                  </span>
+                  <span v-else-if="selectedContainer.update_checked_at && !selectedContainer.update_error" class="ml-2 inline-flex items-center gap-1 text-emerald-400 font-bold">
                     <CheckCircle2 class="h-3.5 w-3.5" />
                     Up to Date
                   </span>
@@ -2056,7 +2064,7 @@ onUnmounted(() => {
                 <div v-if="selectedContainer.update_checked_at" class="md:col-span-2 text-slate-500 text-[11px]">
                   Last checked: {{ selectedContainer.update_checked_at }}
                 </div>
-                <div v-if="selectedContainer.update_error" class="md:col-span-2 text-amber-400/90 text-[11px]">
+                <div v-if="selectedContainer.update_error" class="md:col-span-2 text-[11px]" :class="(selectedContainer.update_error.includes('built locally') || selectedContainer.update_error.includes('Local')) ? 'text-cyan-300/90' : 'text-amber-400/90'">
                   Notice: {{ selectedContainer.update_error }}
                 </div>
               </div>

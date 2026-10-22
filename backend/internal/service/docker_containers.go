@@ -672,9 +672,6 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if detail.ProjectID > 0 {
-		return detail.ProjectID, nil
-	}
 
 	cname := strings.TrimPrefix(detail.Name, "/")
 	if cname == "" {
@@ -686,10 +683,13 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 		destDir = filepath.Join(filepath.Dir(s.cfg.SelfPath), cname)
 	}
 
-	_ = os.MkdirAll(destDir, 0755)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return 0, fmt.Errorf("failed to create project directory %s: %w", destDir, err)
+	}
 
 	composePath := filepath.Join(destDir, "docker-compose.yml")
-	if _, err := os.Stat(composePath); os.IsNotExist(err) {
+	info, statErr := os.Stat(composePath)
+	if os.IsNotExist(statErr) || (statErr == nil && info.Size() == 0) {
 		img := detail.Image
 		if img == "" {
 			img = "alpine"
@@ -759,7 +759,9 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 			b.WriteString("    external: true\n")
 		}
 
-		_ = os.WriteFile(composePath, []byte(b.String()), 0644)
+		if err := os.WriteFile(composePath, []byte(b.String()), 0644); err != nil {
+			return 0, fmt.Errorf("failed to write compose file: %w", err)
+		}
 	}
 
 	envPath := filepath.Join(destDir, ".env")
@@ -768,20 +770,16 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 	}
 
 	if s.db != nil {
-		res, err := s.db.Exec(`INSERT OR IGNORE INTO projects (name, path) VALUES (?, ?)`, cname, destDir)
-		if err != nil {
-			return 0, err
-		}
+		_, _ = s.db.Exec(`INSERT OR IGNORE INTO projects (name, path) VALUES (?, ?)`, cname, destDir)
+		_, _ = s.db.Exec(`UPDATE projects SET path = ? WHERE name = ?`, destDir, cname)
 		var projID int
-		_ = s.db.QueryRow(`SELECT id FROM projects WHERE path = ?`, destDir).Scan(&projID)
-		if projID == 0 {
-			lastID, _ := res.LastInsertId()
-			projID = int(lastID)
+		_ = s.db.QueryRow(`SELECT id FROM projects WHERE path = ? OR name = ?`, destDir, cname).Scan(&projID)
+		if projID > 0 {
+			return projID, nil
 		}
-		return projID, nil
 	}
 
-	return 0, fmt.Errorf("database unavailable to register project")
+	return 0, nil
 }
 
 func (s *DockerContainers) Start(id string) error { return dockerCommand("start", id) }
@@ -1297,9 +1295,10 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 		return UpdateCheckResult{}, err
 	}
 
+	cname := strings.TrimPrefix(detail.Name, "/")
 	res := UpdateCheckResult{
 		ContainerID:   detail.ID,
-		ContainerName: detail.Name,
+		ContainerName: cname,
 		Image:         detail.Image,
 		CheckedAt:     time.Now().UTC().Format(time.RFC3339),
 	}
@@ -1312,6 +1311,22 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+
+	// 0. Detect DockTun container or locally built image
+	if isDocktunContainer(cname, detail.Image) {
+		res.CurrentDigest = "local-git"
+		commitSHA, commitMsg, ghErr := fetchLatestGitHubCommit(ctx, "oOflyeyesOo", "docktun", "main")
+		if ghErr == nil && commitSHA != "" {
+			res.LatestDigest = commitSHA
+			res.Error = fmt.Sprintf("DockTun is built locally. Latest upstream commit: %s (%s). Update via host: git pull && docker compose up -d --build docktun", commitSHA, commitMsg)
+		} else {
+			res.LatestDigest = "git-main"
+			res.Error = "DockTun is built locally. Update via host: git pull && docker compose up -d --build docktun"
+		}
+		res.UpdateAvailable = false
+		s.saveUpdateToDB(res)
+		return res, nil
+	}
 
 	// 1. Inspect local image RepoDigests and ID
 	inspectCmd := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}\t{{.Id}}", detail.Image)
@@ -1375,7 +1390,11 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 	}
 
 	if err != nil {
-		res.Error = fmt.Sprintf("unable to check registry: %v", err)
+		if strings.Contains(err.Error(), "does not host this image") || strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "404") {
+			res.Error = "Local build or private image (updates managed locally)"
+		} else {
+			res.Error = fmt.Sprintf("unable to check registry: %v", err)
+		}
 		s.saveUpdateToDB(res)
 		return res, nil
 	}
@@ -1447,7 +1466,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		return "", fmt.Errorf("failed to get container details: %w", err)
 	}
 
-	cname := detail.Name
+	cname := strings.TrimPrefix(detail.Name, "/")
 	image := detail.Image
 	if image == "" {
 		return "", fmt.Errorf("container has no image specified")
@@ -1470,7 +1489,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		return logOutput.String(), fmt.Errorf("failed to pull image %s: %s (%w)", image, strings.TrimSpace(string(pullOut)), err)
 	}
 
-	// Check if compose managed
+	// Step 2: Determine recreation strategy
 	compDir := ""
 	compFile := ""
 	compService := ""
@@ -1491,56 +1510,99 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		compService = cname
 	}
 
+	// Path translation: Check if compDir exists or can be mapped to container's /opt/projects
+	validComposeDir := ""
 	if compDir != "" {
-		if _, err := os.Stat(compDir); err == nil {
-			appendLog(fmt.Sprintf("[STEP 2/4] Updating via Docker Compose in %s (service: %s)...", compDir, compService))
-			var composeArgs []string
-			if compFile != "" {
-				composeArgs = append(composeArgs, "-f", compFile)
-			} else {
-				composeArgs = append(composeArgs, "--project-directory", compDir)
-			}
-			composeArgs = append(composeArgs, "up", "-d", "--no-deps", compService)
-
-			upCmd := exec.Command("docker", append([]string{"compose"}, composeArgs...)...)
-			upCmd.Dir = compDir
-			upOut, upErr := upCmd.CombinedOutput()
-			appendLog(strings.TrimSpace(string(upOut)))
-			if upErr != nil {
-				return logOutput.String(), fmt.Errorf("docker compose up failed: %s (%w)", strings.TrimSpace(string(upOut)), upErr)
-			}
+		if fi, err := os.Stat(compDir); err == nil && fi.IsDir() {
+			validComposeDir = compDir
 		} else {
-			compDir = ""
+			if idx := strings.Index(compDir, "/projects/"); idx != -1 {
+				mapped := filepath.Join("/opt/projects", compDir[idx+len("/projects/"):])
+				if fi, err := os.Stat(mapped); err == nil && fi.IsDir() {
+					validComposeDir = mapped
+				}
+			}
+			if validComposeDir == "" {
+				cDir := filepath.Join("/opt/projects", cname)
+				if fi, err := os.Stat(cDir); err == nil && fi.IsDir() {
+					validComposeDir = cDir
+				}
+			}
 		}
 	}
 
-	if compDir == "" {
-		appendLog(fmt.Sprintf("[STEP 2/4] Standalone container detected. Scaffolding compose configuration..."))
-		_, projErr := s.EnsureProjectForContainer(id)
-		if projErr != nil {
-			return logOutput.String(), fmt.Errorf("failed to scaffold compose project for %s: %w", cname, projErr)
+	if validComposeDir == "" && detail.ProjectPath != "" {
+		if fi, err := os.Stat(detail.ProjectPath); err == nil && fi.IsDir() {
+			validComposeDir = detail.ProjectPath
+		} else if idx := strings.Index(detail.ProjectPath, "/projects/"); idx != -1 {
+			mapped := filepath.Join("/opt/projects", detail.ProjectPath[idx+len("/projects/"):])
+			if fi, err := os.Stat(mapped); err == nil && fi.IsDir() {
+				validComposeDir = mapped
+			}
 		}
+	}
+
+	recreated := false
+
+	// Strategy A: Existing valid compose stack
+	if validComposeDir != "" {
+		appendLog(fmt.Sprintf("[STEP 2/4] Updating via Docker Compose in %s (service: %s)...", validComposeDir, compService))
+		var composeArgs []string
+		if compFile != "" && fileExists(compFile) {
+			composeArgs = append(composeArgs, "-f", compFile)
+		} else {
+			composeArgs = append(composeArgs, "--project-directory", validComposeDir)
+		}
+		composeArgs = append(composeArgs, "up", "-d", "--no-deps", "--force-recreate", compService)
+
+		upCmd := exec.Command("docker", append([]string{"compose"}, composeArgs...)...)
+		upCmd.Dir = validComposeDir
+		upOut, upErr := upCmd.CombinedOutput()
+		appendLog(strings.TrimSpace(string(upOut)))
+		if upErr == nil {
+			recreated = true
+		} else {
+			appendLog(fmt.Sprintf("[WARN] Compose up encountered an issue: %s. Attempting scaffolded / direct recreation...", strings.TrimSpace(string(upOut))))
+		}
+	}
+
+	// Strategy B: Scaffold compose and recreate
+	if !recreated {
+		appendLog(fmt.Sprintf("[STEP 2/4] Ensuring compose configuration for %s...", cname))
+		_, _ = s.EnsureProjectForContainer(id)
 
 		destDir := filepath.Join("/opt/projects", cname)
 		if s.cfg.SelfPath != "" {
 			destDir = filepath.Join(filepath.Dir(s.cfg.SelfPath), cname)
 		}
+		_ = os.MkdirAll(destDir, 0755)
 		composeFilePath := filepath.Join(destDir, "docker-compose.yml")
 
-		appendLog(fmt.Sprintf("[STEP 3/4] Stopping and removing old container %s...", cname))
-		_ = exec.Command("docker", "stop", id).Run()
-		_ = exec.Command("docker", "rm", id).Run()
-
-		appendLog(fmt.Sprintf("[STEP 4/4] Starting updated container with new image..."))
-		upCmd := exec.Command("docker", "compose", "-f", composeFilePath, "up", "-d")
-		upCmd.Dir = destDir
-		upOut, upErr := upCmd.CombinedOutput()
-		appendLog(strings.TrimSpace(string(upOut)))
-		if upErr != nil {
-			return logOutput.String(), fmt.Errorf("failed to recreate container: %s (%w)", strings.TrimSpace(string(upOut)), upErr)
+		if fileExists(composeFilePath) {
+			appendLog(fmt.Sprintf("[STEP 3/4] Recreating container via Docker Compose in %s...", destDir))
+			upCmd := exec.Command("docker", "compose", "-f", composeFilePath, "up", "-d", "--force-recreate")
+			upCmd.Dir = destDir
+			upOut, upErr := upCmd.CombinedOutput()
+			appendLog(strings.TrimSpace(string(upOut)))
+			if upErr == nil {
+				recreated = true
+			} else {
+				appendLog(fmt.Sprintf("[WARN] Compose recreation notice: %s. Falling back to native Docker Engine recreation...", strings.TrimSpace(string(upOut))))
+			}
 		}
 	}
 
+	// Strategy C: Direct native Docker Engine recreate fallback
+	if !recreated {
+		appendLog(fmt.Sprintf("[STEP 3/4] Performing native Docker recreate for container %s...", cname))
+		fallbackErr := s.recreateContainerDirect(detail, image, appendLog)
+		if fallbackErr != nil {
+			return logOutput.String(), fmt.Errorf("failed to recreate container: %w", fallbackErr)
+		}
+		recreated = true
+	}
+
+	// Step 4: Network and Exposure
 	if detail.ExposureMode == "public" {
 		appendLog("[NETWORK] Ensuring connection to cloudflared network...")
 		_ = s.ConnectNetwork(cname, "cloudflared")
@@ -1554,6 +1616,73 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 
 	appendLog(fmt.Sprintf("✔ [SUCCESS] Container %s updated and running successfully!", cname))
 	return logOutput.String(), nil
+}
+
+func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newImage string, appendLog func(string)) error {
+	cname := strings.TrimPrefix(detail.Name, "/")
+	appendLog(fmt.Sprintf("Recreating container %s natively with image %s...", cname, newImage))
+
+	var runArgs []string
+	runArgs = append(runArgs, "run", "-d", "--name", cname, "--restart", "unless-stopped")
+
+	if detail.Ports != "" {
+		seen := make(map[string]bool)
+		for _, part := range strings.Split(detail.Ports, ",") {
+			part = strings.TrimSpace(part)
+			if idx := strings.Index(part, "->"); idx > 0 {
+				hostPart := strings.TrimSpace(part[:idx])
+				containerPart := strings.TrimSpace(part[idx+2:])
+				if hIdx := strings.LastIndex(hostPart, ":"); hIdx >= 0 {
+					hostPart = hostPart[hIdx+1:]
+				}
+				cPort := strings.TrimSuffix(containerPart, "/tcp")
+				mapping := fmt.Sprintf("%s:%s", hostPart, cPort)
+				if !seen[mapping] && hostPart != "" && cPort != "" {
+					seen[mapping] = true
+					runArgs = append(runArgs, "-p", mapping)
+				}
+			}
+		}
+	}
+
+	for _, m := range detail.Mounts {
+		if m.Source != "" && m.Destination != "" {
+			mode := "rw"
+			if !m.RW {
+				mode = "ro"
+			}
+			runArgs = append(runArgs, "-v", fmt.Sprintf("%s:%s:%s", m.Source, m.Destination, mode))
+		}
+	}
+
+	for _, e := range detail.Env {
+		if !strings.Contains(e, "********") && !strings.HasPrefix(e, "PATH=") {
+			runArgs = append(runArgs, "-e", e)
+		}
+	}
+
+	runArgs = append(runArgs, newImage)
+	if detail.Command != "" {
+		runArgs = append(runArgs, strings.Fields(detail.Command)...)
+	}
+
+	_ = exec.Command("docker", "stop", detail.ID).Run()
+	_ = exec.Command("docker", "rm", detail.ID).Run()
+
+	cmd := exec.Command("docker", runArgs...)
+	out, err := cmd.CombinedOutput()
+	appendLog(strings.TrimSpace(string(out)))
+	if err != nil {
+		return fmt.Errorf("docker run failed: %s (%w)", strings.TrimSpace(string(out)), err)
+	}
+
+	for _, net := range detail.Networks {
+		if net != "bridge" && net != "host" && net != "none" && net != "" {
+			_ = exec.Command("docker", "network", "connect", net, cname).Run()
+		}
+	}
+
+	return nil
 }
 
 func (s *DockerContainers) setContainerUpToDate(id, name, image string) {
@@ -1759,6 +1888,9 @@ func fetchRemoteManifestDigest(ctx context.Context, registry, repo, tag string) 
 		}
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusNotFound {
+		return "", nil, fmt.Errorf("public registry does not host this image (HTTP %d)", resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", nil, fmt.Errorf("registry returned HTTP %d", resp.StatusCode)
 	}
@@ -1785,4 +1917,60 @@ func fetchRemoteManifestDigest(ctx context.Context, registry, repo, tag string) 
 	}
 
 	return mainDigest, subDigests, nil
+}
+
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && !fi.IsDir()
+}
+
+func isDocktunContainer(name, image string) bool {
+	n := strings.ToLower(name)
+	img := strings.ToLower(image)
+	return n == "docktun" || n == "docktun-backend" || n == "docktun-frontend" ||
+		strings.Contains(n, "docktun") ||
+		img == "docktun" || img == "docktun:latest" ||
+		strings.HasSuffix(img, "-docktun:latest") ||
+		strings.Contains(img, "docktun")
+}
+
+func fetchLatestGitHubCommit(ctx context.Context, owner, repo, branch string) (string, string, error) {
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", owner, repo, branch)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("User-Agent", "DockTun-Dashboard/1.0")
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("github api returned %d", resp.StatusCode)
+	}
+
+	var data struct {
+		SHA    string `json:"sha"`
+		Commit struct {
+			Message string `json:"message"`
+		} `json:"commit"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return "", "", err
+	}
+
+	shortSHA := data.SHA
+	if len(shortSHA) > 7 {
+		shortSHA = shortSHA[:7]
+	}
+	firstLineMsg := strings.Split(data.Commit.Message, "\n")[0]
+	if len(firstLineMsg) > 50 {
+		firstLineMsg = firstLineMsg[:47] + "..."
+	}
+	return shortSHA, firstLineMsg, nil
 }
