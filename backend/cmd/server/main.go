@@ -7,6 +7,7 @@ import (
   "os"
   "os/signal"
   "path/filepath"
+  "strings"
   "syscall"
   "time"
 
@@ -194,11 +195,28 @@ func main() {
     fileServer := http.FileServer(http.Dir(staticDir))
     r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
       reqPath := filepath.Clean(r.URL.Path)
+      normalizedPath := filepath.ToSlash(reqPath)
       fullPath := filepath.Join(staticDir, reqPath)
+
+      // If requested file exists on disk, serve it
       if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
+        if strings.HasPrefix(normalizedPath, "/assets/") || strings.HasPrefix(normalizedPath, "assets/") {
+          w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+        }
         fileServer.ServeHTTP(w, r)
         return
       }
+
+      // If a hashed asset in /assets/ is requested and missing, return 404
+      // rather than serving index.html, so Vite's preloadError / dynamic import handlers trigger cleanly
+      if strings.HasPrefix(normalizedPath, "/assets/") || strings.HasPrefix(normalizedPath, "assets/") {
+        w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+        http.NotFound(w, r)
+        return
+      }
+
+      // SPA fallback to index.html with no-cache header
+      w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
       http.ServeFile(w, r, filepath.Join(staticDir, "index.html"))
     })
     log.Printf("[docktun] serving frontend UI directly from %s", staticDir)

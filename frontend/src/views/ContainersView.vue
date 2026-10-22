@@ -1122,15 +1122,35 @@ function checkRouteParams() {
   if (targetId || targetName) {
     const cleanTargetName = targetName.replace(/^\//, '').toLowerCase()
     const target = containers.value.find((c) => {
-      if (targetId && (c.id === targetId || c.id.startsWith(targetId))) return true
+      if (targetId) {
+        if (c.id === targetId || c.id.startsWith(targetId) || targetId.startsWith(c.id)) return true
+      }
       if (cleanTargetName) {
         const cName = c.name.replace(/^\//, '').toLowerCase()
-        return cName === cleanTargetName || cName.startsWith(cleanTargetName)
+        return cName === cleanTargetName || cName.startsWith(cleanTargetName) || cleanTargetName.startsWith(cName)
       }
       return false
     })
     if (target) {
       openContainerModal(target, initialTab)
+    } else {
+      // Fallback: If not found in current containers list, fetch directly from backend by targetId or name
+      const lookupKey = targetId || cleanTargetName
+      if (lookupKey && !selectedContainer.value) {
+        detailLoading.value = true
+        apiFetch<ContainerDetail>(`/api/docker/containers/${encodeURIComponent(lookupKey)}`)
+          .then((detail) => {
+            if (detail && detail.id) {
+              openContainerModal(detail, initialTab)
+            }
+          })
+          .catch((err) => {
+            console.warn('Could not auto-open container from query:', lookupKey, err)
+          })
+          .finally(() => {
+            detailLoading.value = false
+          })
+      }
     }
   }
 
@@ -1163,9 +1183,13 @@ watch(() => route.query, () => {
 })
 
 onMounted(async () => {
+  checkRouteParams()
   loading.value = true
-  await fetchContainers()
-  loading.value = false
+  try {
+    await fetchContainers()
+  } finally {
+    loading.value = false
+  }
   checkRouteParams()
 
   // Live polling every 4 seconds

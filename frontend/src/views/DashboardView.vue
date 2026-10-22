@@ -198,6 +198,46 @@ function formatTimeAgo(dateStr: string): string {
   }
 }
 
+function parseContainerPorts(portsStr?: string): { hostPort: string; targetPort: string } {
+  if (!portsStr) return { hostPort: '', targetPort: '80' }
+  const hostMatch = portsStr.match(/:(\d+)->(\d+)\/tcp/)
+  if (hostMatch) {
+    return { hostPort: hostMatch[1], targetPort: hostMatch[2] }
+  }
+  const simpleHostMatch = portsStr.match(/:(\d+)->/)
+  if (simpleHostMatch) {
+    return { hostPort: simpleHostMatch[1], targetPort: simpleHostMatch[1] }
+  }
+  const plainMatch = portsStr.match(/(\d+)\/tcp/)
+  if (plainMatch) {
+    return { hostPort: '', targetPort: plainMatch[1] }
+  }
+  return { hostPort: '', targetPort: '80' }
+}
+
+function resolveContainerUrls(c: any) {
+  const { hostPort, targetPort } = parseContainerPorts(c.ports)
+  const host = typeof window !== 'undefined' && window.location.hostname ? window.location.hostname : 'localhost'
+
+  const publicUrl = c.hostname ? `https://${c.hostname}` : null
+  const directUrl = hostPort ? `http://${host}:${hostPort}` : null
+  const effectivePort = targetPort || hostPort || '80'
+  const localUrl = `http://${c.name}.local${effectivePort !== '80' ? ':' + effectivePort : ''}`
+
+  // Best open URL: prefer public HTTPS if configured -> then direct host port if published -> fallback to local mDNS
+  const bestUrl = publicUrl || directUrl || localUrl
+
+  return {
+    publicUrl,
+    directUrl,
+    localUrl,
+    bestUrl,
+    hostPort,
+    targetPort: effectivePort,
+    isWebExposed: !!(publicUrl || directUrl),
+  }
+}
+
 function extractContainerFromService(service: string): string {
   if (!service) return ''
   try {
@@ -318,18 +358,21 @@ const filteredContainers = computed(() => {
   })
 })
 
-// Local mDNS services
+// Local & Network accessible container services
 const localServices = computed(() => {
-  return containers.value.filter((c) => c.running).map((c) => ({
-    id: c.id,
-    name: c.name,
-    image: c.image,
-    localUrl: `http://${c.name}.local`,
-    status: c.status,
-    uptime: c.uptime,
-    exposureMode: c.exposure_mode,
-    hostname: c.hostname,
-  }))
+  return containers.value.filter((c) => c.running).map((c) => {
+    const urls = resolveContainerUrls(c)
+    return {
+      id: c.id,
+      name: c.name,
+      image: c.image,
+      status: c.status,
+      uptime: c.uptime,
+      exposureMode: c.exposure_mode,
+      hostname: c.hostname,
+      ...urls,
+    }
+  })
 })
 
 const isTunnelRunning = computed(() => {
@@ -779,10 +822,10 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- Tab 2: Local Services (.local) -->
+      <!-- Tab 2: Local & Network Services (.local / Host Port) -->
       <div v-else class="space-y-3">
-        <div v-if="localServices.length === 0" class="py-6 text-center text-xs text-slate-500">
-          No active containers found to expose via mDNS.
+        <div v-if="localServices.length === 0" class="py-6 text-center text-xs text-slate-500 font-mono">
+          No active running containers found.
         </div>
         <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <div
@@ -796,31 +839,38 @@ onUnmounted(() => {
                 <router-link
                   :to="'/containers?id=' + encodeURIComponent(svc.id)"
                   class="font-mono text-xs font-semibold text-slate-200 hover:text-white truncate hover:underline"
-                  :title="`Inspect container '${svc.name}'`"
+                  :title="`Inspect container '${svc.name}' in Control Center`"
                 >
                   {{ svc.name }}
                 </router-link>
+                <span
+                  v-if="svc.hostPort"
+                  class="px-1.5 py-0.2 rounded bg-indigo-500/10 border border-indigo-500/30 text-[10px] font-mono text-indigo-300 font-semibold shrink-0"
+                  :title="`Published host port: ${svc.hostPort}`"
+                >
+                  :{{ svc.hostPort }}
+                </span>
               </div>
-              <div class="font-mono text-[11px] text-indigo-300 truncate mt-0.5">
-                {{ svc.localUrl }}
+              <div class="font-mono text-[11px] text-indigo-300 truncate mt-0.5" :title="svc.bestUrl">
+                {{ svc.directUrl || svc.publicUrl || svc.localUrl }}
               </div>
             </div>
 
             <div class="flex items-center gap-1 shrink-0">
               <button
-                @click="copyUrl(svc.localUrl)"
+                @click="copyUrl(svc.bestUrl)"
                 class="p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition"
-                :title="copiedHost === svc.localUrl ? 'Copied!' : 'Copy URL'"
+                :title="copiedHost === svc.bestUrl ? 'Copied!' : 'Copy URL'"
               >
-                <Check v-if="copiedHost === svc.localUrl" class="h-3.5 w-3.5 text-emerald-400" />
+                <Check v-if="copiedHost === svc.bestUrl" class="h-3.5 w-3.5 text-emerald-400" />
                 <Copy v-else class="h-3.5 w-3.5" />
               </button>
               <a
-                :href="svc.localUrl"
+                :href="svc.bestUrl"
                 target="_blank"
                 rel="noopener"
-                class="cyber-btn-secondary text-[11px] flex items-center gap-1 py-1 px-2.5 text-indigo-300"
-                title="Open local service in browser"
+                class="cyber-btn-secondary text-[11px] flex items-center gap-1 py-1 px-2.5 text-indigo-300 hover:text-white"
+                :title="`Open ${svc.bestUrl} in new tab`"
               >
                 <span>Open</span>
                 <ExternalLink class="h-3 w-3" />
@@ -928,10 +978,22 @@ onUnmounted(() => {
                 <router-link
                   :to="'/containers?id=' + encodeURIComponent(c.id)"
                   class="font-mono text-xs font-bold text-white hover:text-indigo-300 truncate hover:underline"
-                  :title="`Inspect container '${c.name}'`"
+                  :title="`Inspect container '${c.name}' in Control Center`"
                 >
                   {{ c.name }}
                 </router-link>
+
+                <!-- Web link if running & exposed -->
+                <a
+                  v-if="c.running && resolveContainerUrls(c).bestUrl"
+                  :href="resolveContainerUrls(c).bestUrl"
+                  target="_blank"
+                  rel="noopener"
+                  class="p-0.5 rounded text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition"
+                  :title="`Open Web App: ${resolveContainerUrls(c).bestUrl}`"
+                >
+                  <ExternalLink class="h-3 w-3" />
+                </a>
 
                 <!-- Compose Stack Badge -->
                 <button
@@ -979,6 +1041,25 @@ onUnmounted(() => {
 
             <!-- Action Buttons -->
             <div class="flex items-center gap-1">
+              <a
+                v-if="c.running && resolveContainerUrls(c).bestUrl"
+                :href="resolveContainerUrls(c).bestUrl"
+                target="_blank"
+                rel="noopener"
+                class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-indigo-300 transition"
+                :title="`Open Web UI: ${resolveContainerUrls(c).bestUrl}`"
+              >
+                <ExternalLink class="h-3.5 w-3.5" />
+              </a>
+
+              <router-link
+                :to="'/containers?id=' + encodeURIComponent(c.id)"
+                class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-indigo-300 transition"
+                :title="`Inspect container '${c.name}' in Control Center`"
+              >
+                <FolderOpen class="h-3.5 w-3.5" />
+              </router-link>
+
               <button
                 v-if="!c.running"
                 @click="runContainerAction(c, 'start')"

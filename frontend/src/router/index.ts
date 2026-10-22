@@ -30,4 +30,25 @@ router.beforeEach((to) => {
   if (to.path !== '/login' && !auth.isAuthenticated) return '/login'
 })
 
+router.onError((error, to) => {
+  const msg = error?.message || ''
+  const isChunkError =
+    /failed to fetch dynamically imported module|unexpected token '<'|importing a module script failed|error loading dynamically imported module/i.test(
+      msg
+    )
+  if (isChunkError) {
+    const reloadKey = `docktun_chunk_${to?.fullPath || 'route'}`
+    const lastReload = sessionStorage.getItem(reloadKey)
+    const now = Date.now()
+    if (!lastReload || now - parseInt(lastReload, 10) > 8000) {
+      sessionStorage.setItem(reloadKey, now.toString())
+      if (to?.fullPath) {
+        window.location.href = to.fullPath
+      } else {
+        window.location.reload()
+      }
+    }
+  }
+})
+
 export default router
