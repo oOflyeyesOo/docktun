@@ -1622,24 +1622,58 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 	cname := strings.TrimPrefix(detail.Name, "/")
 	appendLog(fmt.Sprintf("Recreating container %s natively with image %s...", cname, newImage))
 
+	var primaryNet string
+	var extraNets []string
+	for _, net := range detail.Networks {
+		if net != "bridge" && net != "host" && net != "none" && net != "" {
+			if primaryNet == "" {
+				primaryNet = net
+			} else {
+				extraNets = append(extraNets, net)
+			}
+		}
+	}
+
 	var runArgs []string
 	runArgs = append(runArgs, "run", "-d", "--name", cname, "--restart", "unless-stopped")
+	if primaryNet != "" {
+		runArgs = append(runArgs, "--network", primaryNet)
+	}
 
 	if detail.Ports != "" {
 		seen := make(map[string]bool)
 		for _, part := range strings.Split(detail.Ports, ",") {
 			part = strings.TrimSpace(part)
 			if idx := strings.Index(part, "->"); idx > 0 {
-				hostPart := strings.TrimSpace(part[:idx])
-				containerPart := strings.TrimSpace(part[idx+2:])
-				if hIdx := strings.LastIndex(hostPart, ":"); hIdx >= 0 {
-					hostPart = hostPart[hIdx+1:]
+				containerPart := strings.TrimSpace(part[:idx])
+				hostPart := strings.TrimSpace(part[idx+2:])
+
+				// Extract container port
+				cPort := strings.TrimSpace(strings.Split(containerPart, "/")[0])
+				proto := ""
+				if strings.Contains(containerPart, "/udp") {
+					proto = "/udp"
 				}
-				cPort := strings.TrimSuffix(containerPart, "/tcp")
-				mapping := fmt.Sprintf("%s:%s", hostPart, cPort)
-				if !seen[mapping] && hostPart != "" && cPort != "" {
-					seen[mapping] = true
-					runArgs = append(runArgs, "-p", mapping)
+
+				// Extract host port (hostPart is e.g. "0.0.0.0:7777" or "7777")
+				hPort := hostPart
+				if lastColon := strings.LastIndex(hostPart, ":"); lastColon >= 0 {
+					hPort = hostPart[lastColon+1:]
+				}
+				hPort = strings.TrimSpace(hPort)
+
+				if hPort != "" && cPort != "" {
+					mapping := fmt.Sprintf("%s:%s%s", hPort, cPort, proto)
+					if !seen[mapping] {
+						seen[mapping] = true
+						runArgs = append(runArgs, "-p", mapping)
+					}
+				}
+			} else if strings.TrimSpace(part) != "" {
+				cPort := strings.TrimSpace(strings.Split(part, "/")[0])
+				if cPort != "" && !seen[cPort] {
+					seen[cPort] = true
+					runArgs = append(runArgs, "--expose", cPort)
 				}
 			}
 		}
@@ -1676,10 +1710,8 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 		return fmt.Errorf("docker run failed: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
 
-	for _, net := range detail.Networks {
-		if net != "bridge" && net != "host" && net != "none" && net != "" {
-			_ = exec.Command("docker", "network", "connect", net, cname).Run()
-		}
+	for _, net := range extraNets {
+		_ = exec.Command("docker", "network", "connect", net, cname).Run()
 	}
 
 	return nil
