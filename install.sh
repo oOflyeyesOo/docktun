@@ -1467,7 +1467,7 @@ if [ ${#VALID_MOUNTS[@]} -gt 0 ]; then
     info "Configuring external project mounts in docker-compose.override.yml..."
     cat > "$SCRIPT_DIR/docker-compose.override.yml" << EOF
 services:
-  backend:
+  docktun:
     volumes:
 EOF
     for vdir in "${VALID_MOUNTS[@]}"; do

@@ -84,6 +84,11 @@ fi
 
 ensure_docker_compose
 
+# Migrate stale 'backend:' service name to unified 'docktun:' in docker-compose.override.yml if present
+if [ -f "$SCRIPT_DIR/docker-compose.override.yml" ]; then
+  sed -i -E 's/^[[:space:]]*backend:[[:space:]]*$/  docktun:/g' "$SCRIPT_DIR/docker-compose.override.yml" 2>/dev/null || true
+fi
+
 info "Pulling latest cloudflared base image..."
 "${COMPOSE_CMD[@]}" pull cloudflared || true
 
