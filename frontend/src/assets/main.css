@@ -7,61 +7,62 @@
 @layer base {
   body {
     @apply bg-slate-950 text-slate-100 antialiased;
-    background-image: radial-gradient(circle at top, rgba(148, 163, 184, 0.08), transparent 35%);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-image: radial-gradient(circle at top, rgba(99, 102, 241, 0.05), transparent 45%),
+                      radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.03), transparent 40%);
   }
 
   ::selection {
-    @apply bg-slate-300 text-slate-950;
+    @apply bg-indigo-500/30 text-indigo-100;
   }
 }
 
 @layer components {
+  /* Modern clean card */
   .cyber-card {
-    @apply rounded-xl border border-slate-800 bg-slate-900/80 p-4 shadow-sm shadow-slate-950/40;
+    @apply rounded-xl border border-slate-800/80 bg-slate-900/60 p-4 sm:p-5 shadow-sm backdrop-blur transition-all duration-200;
   }
 
   .cyber-card-glow {
-    @apply cyber-card transition-colors duration-200 hover:border-slate-600;
+    @apply cyber-card hover:border-slate-700 hover:bg-slate-900/80 hover:shadow-md;
   }
 
+  /* Modern Primary Button */
   .cyber-btn {
-    @apply inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium uppercase tracking-[0.18em] text-slate-100 transition-colors duration-200 hover:border-slate-500 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center font-medium rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white px-3.5 py-2 text-xs transition-colors duration-150 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
-  .cyber-btn-sm {
-    @apply inline-flex items-center justify-center rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] font-medium tracking-wider text-slate-200 transition-colors duration-200 hover:border-slate-500 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50;
-  }
-
+  /* Modern Secondary Button */
   .cyber-btn-secondary {
-    @apply inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium uppercase tracking-[0.18em] text-slate-200 transition-colors duration-200 hover:border-slate-500 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center font-medium rounded-lg bg-slate-800/90 hover:bg-slate-700/90 text-slate-200 border border-slate-700/80 px-3.5 py-2 text-xs transition-colors duration-150 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-500/30 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
+  /* Modern Small Button */
+  .cyber-btn-sm {
+    @apply inline-flex items-center justify-center font-medium rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/80 px-2.5 py-1 text-xs transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* Modern Danger Button */
   .cyber-btn-danger {
-    @apply inline-flex items-center justify-center rounded-lg border border-red-800 bg-red-950/40 px-3 py-2 text-xs font-medium uppercase tracking-[0.18em] text-red-200 transition-colors duration-200 hover:border-red-700 hover:bg-red-900/50 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center font-medium rounded-lg bg-rose-600/10 hover:bg-rose-600/20 text-rose-300 border border-rose-500/30 px-3.5 py-2 text-xs transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-rose-500/30 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
+  /* Modern Input */
   .cyber-input {
-    @apply w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none;
+    @apply w-full rounded-lg border border-slate-700/80 bg-slate-950/90 px-3.5 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none transition;
   }
 
+  /* Modern Badge */
   .cyber-badge {
-    @apply inline-flex items-center rounded-full border border-slate-700 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-slate-300;
+    @apply inline-flex items-center font-medium rounded-md px-2 py-0.5 text-xs text-slate-300 bg-slate-800 border border-slate-700/60;
   }
 
-  .scanlines {
-    pointer-events: none;
-    position: fixed;
-    inset: 0;
-    z-index: 9999;
-    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(15, 23, 42, 0.2) 2px, rgba(15, 23, 42, 0.2) 4px);
-    opacity: 0.25;
+  /* Headings */
+  .cyber-heading {
+    @apply text-lg font-semibold tracking-tight text-slate-100;
   }
 
   .text-glow {
     text-shadow: none;
-  }
-
-  .cyber-heading {
-    @apply text-lg font-semibold tracking-tight text-slate-100;
   }
 }

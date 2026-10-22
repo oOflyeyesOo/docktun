@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"docktun/internal/service"
+	"github.com/go-chi/chi/v5"
 )
 
 type RemoteAccess struct {
@@ -72,6 +73,30 @@ func (h *RemoteAccess) TailscaleDown(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
+func (h *RemoteAccess) TailscaleSetOptions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AdvertiseRoutes string `json:"advertise_routes"`
+		AdvertiseExitNode bool `json:"advertise_exit_node"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.svc.TailscaleSetOptions(req.AdvertiseRoutes, req.AdvertiseExitNode); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	userID, _ := r.Context().Value("user_id").(int)
+	if h.audit != nil {
+		h.audit.Log(userID, "tailscale_set_options", "Updated Tailscale advertised routes/exit-node", r.RemoteAddr)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
 func (h *RemoteAccess) TailscaleControl(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Action string `json:"action"`
@@ -128,6 +153,52 @@ func (h *RemoteAccess) WireguardControl(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
+func (h *RemoteAccess) WireguardAddPeer(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name           string `json:"name"`
+		AllowedIPsMode string `json:"allowed_ips_mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	peer, err := h.svc.WireguardAddPeer(req.Name, req.AllowedIPsMode)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	userID, _ := r.Context().Value("user_id").(int)
+	if h.audit != nil {
+		h.audit.Log(userID, "wireguard_add_peer", "Generated WireGuard client peer: "+req.Name, r.RemoteAddr)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(peer)
+}
+
+func (h *RemoteAccess) WireguardDeletePeer(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if name == "" {
+		jsonError(w, "peer name is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.svc.WireguardDeletePeer(name); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	userID, _ := r.Context().Value("user_id").(int)
+	if h.audit != nil {
+		h.audit.Log(userID, "wireguard_delete_peer", "Deleted WireGuard peer: "+name, r.RemoteAddr)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
 func (h *RemoteAccess) ZeroconfControl(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Action string `json:"action"`
@@ -145,6 +216,37 @@ func (h *RemoteAccess) ZeroconfControl(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("user_id").(int)
 	if h.audit != nil {
 		h.audit.Log(userID, "zeroconf_control", "Executed ZeroConf action: "+req.Action, r.RemoteAddr)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (h *RemoteAccess) ListContainers(w http.ResponseWriter, r *http.Request) {
+	items, err := h.svc.GetContainerExposures()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+func (h *RemoteAccess) SetContainerExposure(w http.ResponseWriter, r *http.Request) {
+	var req service.SetContainerExposureRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ContainerName == "" {
+		jsonError(w, "container_name is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.svc.SetContainerExposure(req); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	userID, _ := r.Context().Value("user_id").(int)
+	if h.audit != nil {
+		h.audit.Log(userID, "set_container_exposure", "Updated exposure for container: "+req.ContainerName, r.RemoteAddr)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

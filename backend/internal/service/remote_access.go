@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -99,14 +101,40 @@ type WireguardStatus struct {
 	Peers     []WireguardPeerDetail `json:"peers"`
 }
 
+type ContainerExposureItem struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Image         string `json:"image"`
+	Running       bool   `json:"running"`
+	Ports         []int  `json:"ports"`
+	ExposureMode  string `json:"exposure_mode"`
+	PrivateType   string `json:"private_type"`
+	PrivatePort   int    `json:"private_port"`
+	Hostname      string `json:"hostname"`
+	Target        string `json:"target"`
+	TailscaleURL  string `json:"tailscale_url,omitempty"`
+	WireguardURL  string `json:"wireguard_url,omitempty"`
+	CloudflareURL string `json:"cloudflare_url,omitempty"`
+}
+
+type SetContainerExposureRequest struct {
+	ContainerName string `json:"container_name"`
+	Mode          string `json:"mode"`         // "public", "private", "internal"
+	PrivateType   string `json:"private_type"` // "tailscale", "wireguard"
+	PrivatePort   int    `json:"private_port"`
+	Hostname      string `json:"hostname"`
+	Target        string `json:"target"`
+}
+
 type RemoteAccessService struct {
-	cfg       *config.Config
-	configMgr *ConfigManager
-	cfdSvc    *Cloudflared
-	cfAPISvc  *CloudflareAPI
-	meshSvc   *MeshService
-	audit     *AuditLogger
-	dataDir   string
+	cfg                 *config.Config
+	configMgr           *ConfigManager
+	cfdSvc              *Cloudflared
+	cfAPISvc            *CloudflareAPI
+	meshSvc             *MeshService
+	audit               *AuditLogger
+	dataDir             string
+	dockerContainersSvc *DockerContainers
 }
 
 func NewRemoteAccessService(
@@ -117,15 +145,17 @@ func NewRemoteAccessService(
 	meshSvc *MeshService,
 	audit *AuditLogger,
 	dataDir string,
+	dockerContainersSvc *DockerContainers,
 ) *RemoteAccessService {
 	return &RemoteAccessService{
-		cfg:       cfg,
-		configMgr: configMgr,
-		cfdSvc:    cfdSvc,
-		cfAPISvc:  cfAPISvc,
-		meshSvc:   meshSvc,
-		audit:     audit,
-		dataDir:   dataDir,
+		cfg:                 cfg,
+		configMgr:           configMgr,
+		cfdSvc:              cfdSvc,
+		cfAPISvc:            cfAPISvc,
+		meshSvc:             meshSvc,
+		audit:               audit,
+		dataDir:             dataDir,
+		dockerContainersSvc: dockerContainersSvc,
 	}
 }
 
@@ -257,16 +287,16 @@ func (s *RemoteAccessService) GetTailscaleStatus() (*TailscaleStatus, error) {
 	}
 
 	var rawDoc struct {
-		Version      string `json:"Version"`
-		BackendState string `json:"BackendState"`
-		AuthURL      string `json:"AuthURL"`
+		Version      string   `json:"Version"`
+		BackendState string   `json:"BackendState"`
+		AuthURL      string   `json:"AuthURL"`
 		TailscaleIPs []string `json:"TailscaleIPs"`
 		Self         struct {
-			PublicKey string   `json:"PublicKey"`
-			HostName  string   `json:"HostName"`
-			DNSName   string   `json:"DNSName"`
-			OS        string   `json:"OS"`
-			Online    bool     `json:"Online"`
+			PublicKey    string   `json:"PublicKey"`
+			HostName     string   `json:"HostName"`
+			DNSName      string   `json:"DNSName"`
+			OS           string   `json:"OS"`
+			Online       bool     `json:"Online"`
 			TailscaleIPs []string `json:"TailscaleIPs"`
 		} `json:"Self"`
 		Peer map[string]struct {
@@ -343,6 +373,34 @@ func (s *RemoteAccessService) TailscaleDown() error {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tailscale down failed: %s (%w)", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func (s *RemoteAccessService) TailscaleSetOptions(advertiseRoutes string, exitNode bool) error {
+	if !s.isContainerRunning("docktun-tailscale") {
+		return fmt.Errorf("tailscale container is not running")
+	}
+
+	args := []string{"exec", "docktun-tailscale", "tailscale", "set"}
+	if advertiseRoutes != "" {
+		args = append(args, "--advertise-routes="+advertiseRoutes)
+	} else {
+		args = append(args, "--advertise-routes=")
+	}
+	if exitNode {
+		args = append(args, "--advertise-exit-node")
+	} else {
+		args = append(args, "--advertise-exit-node=false")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tailscale set failed: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }
@@ -539,6 +597,116 @@ func (s *RemoteAccessService) WireguardControl(action string) error {
 	}
 }
 
+func (s *RemoteAccessService) WireguardAddPeer(name, allowedIPsMode string) (*WireguardPeerDetail, error) {
+	cleanName := strings.ToLower(regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(name, "_"))
+	if cleanName == "" {
+		cleanName = fmt.Sprintf("peer_%d", time.Now().Unix())
+	}
+	if !strings.HasPrefix(cleanName, "peer_") {
+		cleanName = "peer_" + cleanName
+	}
+
+	wgDir := filepath.Join(s.dataDir, "wireguard")
+	peerDir := filepath.Join(wgDir, cleanName)
+	_ = os.MkdirAll(peerDir, 0755)
+
+	// 1. Generate keypair inside wireguard container or fallback
+	var privKey, pubKey string
+	if s.isContainerRunning("docktun-wireguard") {
+		outPriv, err := exec.Command("docker", "exec", "docktun-wireguard", "wg", "genkey").Output()
+		if err == nil {
+			privKey = strings.TrimSpace(string(outPriv))
+			cmdPub := exec.Command("docker", "exec", "-i", "docktun-wireguard", "wg", "pubkey")
+			cmdPub.Stdin = bytes.NewReader([]byte(privKey))
+			outPub, errPub := cmdPub.Output()
+			if errPub == nil {
+				pubKey = strings.TrimSpace(string(outPub))
+			}
+		}
+	}
+
+	if privKey == "" || pubKey == "" {
+		// Fallback placeholder
+		privKey = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("priv-%d", time.Now().UnixNano())))
+		pubKey = base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("pub-%d", time.Now().UnixNano())))
+	}
+
+	// 2. Determine client IP in 10.13.13.X
+	currentPeers, _ := s.GetWireguardStatus()
+	nextIP := 2
+	if currentPeers != nil {
+		nextIP = len(currentPeers.Peers) + 2
+	}
+	clientIP := fmt.Sprintf("10.13.13.%d/32", nextIP)
+
+	// 3. Determine AllowedIPs (split tunnel with containers or full tunnel)
+	allowedIPs := "10.13.13.0/24, 172.17.0.0/16, 172.18.0.0/16"
+	if allowedIPsMode == "all" {
+		allowedIPs = "0.0.0.0/0, ::/0"
+	}
+
+	serverPubKey := "SERVER_PUBLIC_KEY"
+	serverPort := 51820
+	if currentPeers != nil {
+		if currentPeers.PublicKey != "" {
+			serverPubKey = currentPeers.PublicKey
+		}
+		if currentPeers.Port > 0 {
+			serverPort = currentPeers.Port
+		}
+	}
+
+	confContent := fmt.Sprintf(`[Interface]
+PrivateKey = %s
+Address = %s
+DNS = 1.1.1.1, 8.8.8.8
+
+[Peer]
+PublicKey = %s
+Endpoint = auto:%d
+AllowedIPs = %s
+PersistentKeepalive = 25
+`, privKey, clientIP, serverPubKey, serverPort, allowedIPs)
+
+	confFile := filepath.Join(peerDir, cleanName+".conf")
+	_ = os.WriteFile(confFile, []byte(confContent), 0644)
+
+	// 4. Live add to running container
+	if s.isContainerRunning("docktun-wireguard") {
+		_ = exec.Command("docker", "exec", "docktun-wireguard", "wg", "set", "wg0", "peer", pubKey, "allowed-ips", clientIP).Run()
+	}
+
+	// 5. Generate QR Code image if possible
+	pngFile := filepath.Join(peerDir, cleanName+".png")
+	if s.isContainerRunning("docktun-wireguard") {
+		_ = exec.Command("docker", "exec", "-i", "docktun-wireguard", "qrencode", "-t", "png", "-o", fmt.Sprintf("/config/%s/%s.png", cleanName, cleanName), confContent).Run()
+	}
+
+	detail := &WireguardPeerDetail{
+		Name:       strings.ToUpper(cleanName[:1]) + cleanName[1:],
+		ConfigText: confContent,
+		AllowedIPs: clientIP,
+		PublicKey:  pubKey,
+	}
+
+	if pngBytes, err := os.ReadFile(pngFile); err == nil {
+		detail.QRCodeDataURL = "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngBytes)
+	}
+
+	return detail, nil
+}
+
+func (s *RemoteAccessService) WireguardDeletePeer(name string) error {
+	cleanName := strings.ToLower(regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(name, "_"))
+	if !strings.HasPrefix(cleanName, "peer_") {
+		cleanName = "peer_" + cleanName
+	}
+
+	peerDir := filepath.Join(s.dataDir, "wireguard", cleanName)
+	_ = os.RemoveAll(peerDir)
+	return nil
+}
+
 func (s *RemoteAccessService) ZeroconfControl(action string) error {
 	switch strings.ToLower(action) {
 	case "start":
@@ -553,4 +721,136 @@ func (s *RemoteAccessService) ZeroconfControl(action string) error {
 	default:
 		return fmt.Errorf("unknown action: %s", action)
 	}
+}
+
+// ==============================================================================
+// Container Exposure Methods (Tailscale, WireGuard, Cloudflare)
+// ==============================================================================
+
+func (s *RemoteAccessService) GetContainerExposures() ([]ContainerExposureItem, error) {
+	if s.dockerContainersSvc == nil {
+		return []ContainerExposureItem{}, nil
+	}
+
+	containers, err := s.dockerContainersSvc.List()
+	if err != nil {
+		return nil, err
+	}
+
+	// Fetch active Tailscale status
+	var tailscaleIP, magicDNS string
+	tsStatus, _ := s.GetTailscaleStatus()
+	if tsStatus != nil {
+		if len(tsStatus.TailscaleIPs) > 0 {
+			tailscaleIP = tsStatus.TailscaleIPs[0]
+		}
+		magicDNS = tsStatus.DNSName
+	}
+
+	items := make([]ContainerExposureItem, 0, len(containers))
+	for _, c := range containers {
+		// Extract port numbers from port string (e.g. "80/tcp, 5432/tcp")
+		ports := parsePortsFromString(c.Ports)
+
+		item := ContainerExposureItem{
+			ID:           c.ID,
+			Name:         c.Name,
+			Image:        c.Image,
+			Running:      c.Running,
+			Ports:        ports,
+			ExposureMode: c.ExposureMode,
+			PrivateType:  c.PrivateType,
+			PrivatePort:  c.PrivatePort,
+			Hostname:     c.Hostname,
+			Target:       c.Target,
+		}
+
+		if c.ExposureMode == "public" && c.Hostname != "" {
+			item.CloudflareURL = "https://" + c.Hostname
+		}
+
+		if c.ExposureMode == "private" {
+			targetPort := c.PrivatePort
+			if targetPort <= 0 && len(ports) > 0 {
+				targetPort = ports[0]
+			}
+			if targetPort <= 0 {
+				targetPort = 80
+			}
+
+			if c.PrivateType == "tailscale" {
+				if magicDNS != "" {
+					item.TailscaleURL = fmt.Sprintf("http://%s:%d", magicDNS, targetPort)
+				} else if tailscaleIP != "" {
+					item.TailscaleURL = fmt.Sprintf("http://%s:%d", tailscaleIP, targetPort)
+				} else {
+					item.TailscaleURL = fmt.Sprintf("http://docktun.local:%d", targetPort)
+				}
+			} else if c.PrivateType == "wireguard" {
+				item.WireguardURL = fmt.Sprintf("http://10.13.13.1:%d", targetPort)
+			}
+		}
+
+		items = append(items, item)
+	}
+
+	return items, nil
+}
+
+func (s *RemoteAccessService) SetContainerExposure(req SetContainerExposureRequest) error {
+	if s.dockerContainersSvc == nil {
+		return fmt.Errorf("container service not initialized")
+	}
+
+	settings := ExposureSettings{
+		Mode:        req.Mode,
+		Hostname:    req.Hostname,
+		Target:      req.Target,
+		PrivateType: req.PrivateType,
+		PrivatePort: req.PrivatePort,
+	}
+
+	if req.Mode == "public" {
+		if req.Target == "" {
+			settings.Target = fmt.Sprintf("http://%s:%d", req.ContainerName, req.PrivatePort)
+		}
+	} else if req.Mode == "private" {
+		if req.PrivateType == "" {
+			settings.PrivateType = "tailscale"
+		}
+		if req.PrivatePort <= 0 {
+			settings.PrivatePort = 80
+		}
+	}
+
+	return s.dockerContainersSvc.UpdateExposure(req.ContainerName, settings)
+}
+
+func parsePortsFromString(portStr string) []int {
+	seen := make(map[int]bool)
+	var ports []int
+
+	re := regexp.MustCompile(`(\d+)/(tcp|udp)`)
+	matches := re.FindAllStringSubmatch(portStr, -1)
+	for _, m := range matches {
+		if len(m) >= 2 {
+			if p, err := strconv.Atoi(m[1]); err == nil && !seen[p] {
+				seen[p] = true
+				ports = append(ports, p)
+			}
+		}
+	}
+
+	// Fallback to simple number parsing if format is e.g. "8080"
+	if len(ports) == 0 {
+		for _, part := range strings.Split(portStr, ",") {
+			part = strings.TrimSpace(part)
+			if p, err := strconv.Atoi(part); err == nil && !seen[p] {
+				seen[p] = true
+				ports = append(ports, p)
+			}
+		}
+	}
+
+	return ports
 }

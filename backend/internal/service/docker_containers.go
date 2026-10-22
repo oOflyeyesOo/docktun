@@ -925,8 +925,8 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 		settings.Mode = "internal"
 	}
 
-	// 1. If public mode, connect container to cloudflared network; otherwise disconnect
-	if settings.Mode == "public" {
+	// 1. If public or private mode, connect container to cloudflared network; otherwise disconnect
+	if settings.Mode == "public" || settings.Mode == "private" {
 		if err := s.ConnectNetwork(name, "cloudflared"); err != nil {
 			log.Printf("[docktun] connect network cloudflared for %s: %v", name, err)
 		}

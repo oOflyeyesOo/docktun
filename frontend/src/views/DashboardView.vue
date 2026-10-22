@@ -296,8 +296,8 @@ onUnmounted(() => {
             {{ status.last_error }}
           </p>
           <div class="flex items-center gap-3 pt-1 text-[11px]">
-            <router-link to="/config" class="text-cyan-400 hover:underline font-semibold flex items-center gap-1">
-              <span>Inspect config.yml &rarr;</span>
+            <router-link to="/access?tab=cloudflare" class="text-indigo-400 hover:underline font-semibold flex items-center gap-1">
+              <span>Inspect Tunnel Config &rarr;</span>
             </router-link>
             <router-link to="/logs" class="text-slate-300 hover:underline font-semibold flex items-center gap-1">
               <span>View Tunnel Logs &rarr;</span>

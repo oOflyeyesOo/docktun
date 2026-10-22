@@ -150,7 +150,7 @@ onMounted(() => {
             <Globe class="w-4 h-4 text-cyan-400" />
             <h2 class="text-xs font-bold uppercase tracking-wider text-gray-200">Cloudflare Tunnel Status</h2>
           </div>
-          <router-link to="/config" class="text-xs text-cyan-400 hover:underline font-mono">
+          <router-link to="/access?tab=cloudflare" class="text-xs text-indigo-400 hover:underline font-mono">
             Full Config &rarr;
           </router-link>
         </div>
@@ -181,10 +181,10 @@ onMounted(() => {
 
         <div class="pt-2 border-t border-border">
           <router-link
-            to="/config"
-            class="cyber-btn-secondary w-full text-center text-xs flex items-center justify-center gap-2 py-2 text-cyan-300"
+            to="/access?tab=cloudflare"
+            class="cyber-btn-secondary w-full text-center text-xs flex items-center justify-center gap-2 py-2 text-indigo-300"
           >
-            <ShieldCheck class="w-3.5 h-3.5 text-cyan-400" />
+            <ShieldCheck class="w-3.5 h-3.5 text-indigo-400" />
             <span>Manage Cloudflare API Keys & Ingress Rules &rarr;</span>
           </router-link>
         </div>

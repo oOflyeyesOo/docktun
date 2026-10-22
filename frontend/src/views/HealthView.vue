@@ -318,7 +318,7 @@ function getContainerName(serviceUrl: string): string {
 
             <!-- Jump to Config Ingress View -->
             <RouterLink
-              to="/config"
+              to="/access?tab=cloudflare"
               class="p-1.5 text-muted hover:text-neon rounded hover:bg-dark-bg/80 transition-colors"
               title="Edit Ingress Route"
             >

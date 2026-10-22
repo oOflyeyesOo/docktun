@@ -35,7 +35,5 @@ onMounted(() => {
     <main class="flex-1 overflow-auto p-4 pt-16 lg:p-6 lg:pt-6">
       <router-view />
     </main>
-
-    <div class="scanlines"></div>
   </div>
 </template>
