@@ -165,6 +165,18 @@ interface ContainerExposure {
 const containerExposures = ref<ContainerExposure[]>([])
 const loadingContainers = ref(false)
 
+const tailscaleContainers = computed(() => {
+  return containerExposures.value.filter(
+    (c) => c.exposure_mode === 'private' && c.private_type === 'tailscale'
+  )
+})
+
+const wireguardContainers = computed(() => {
+  return containerExposures.value.filter(
+    (c) => c.exposure_mode === 'private' && c.private_type === 'wireguard'
+  )
+})
+
 // Expose Container Modal
 const showExposeModal = ref(false)
 const exposeTargetContainer = ref<ContainerExposure | null>(null)
@@ -374,17 +386,36 @@ function copyText(key: string, text: string) {
 }
 
 // Open Expose Modal for Container
-function openExposeModal(container: ContainerExposure, defaultMode: 'public' | 'private' = 'private', privateType: 'tailscale' | 'wireguard' = 'tailscale') {
+function openExposeModal(
+  container: ContainerExposure | null,
+  defaultMode: 'public' | 'private' = 'private',
+  privateType: 'tailscale' | 'wireguard' = 'tailscale'
+) {
+  if (!container && containerExposures.value.length > 0) {
+    const unexposed = containerExposures.value.find((c) => c.exposure_mode === 'internal')
+    container = unexposed || containerExposures.value[0]
+  }
   exposeTargetContainer.value = container
-  const defaultPort = container.ports && container.ports.length > 0 ? container.ports[0] : 80
+  const defaultPort = container?.ports && container.ports.length > 0 ? container.ports[0] : 80
   exposeForm.value = {
     mode: defaultMode,
     private_type: privateType,
-    private_port: container.private_port || defaultPort,
-    subdomain: container.name.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
+    private_port: container?.private_port || defaultPort,
+    subdomain: container ? container.name.toLowerCase().replace(/[^a-z0-9-]/g, '-') : '',
     domain: 'mightysprite.dev',
   }
   showExposeModal.value = true
+}
+
+function onExposeTargetChanged(event: Event) {
+  const targetId = (event.target as HTMLSelectElement).value
+  const found = containerExposures.value.find((c) => c.id === targetId || c.name === targetId)
+  if (found) {
+    exposeTargetContainer.value = found
+    const defaultPort = found.ports && found.ports.length > 0 ? found.ports[0] : 80
+    exposeForm.value.private_port = found.private_port || defaultPort
+    exposeForm.value.subdomain = found.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+  }
 }
 
 async function saveContainerExposure() {
@@ -487,13 +518,13 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
       </div>
     </div>
 
-    <!-- Overview Status Cards (3 Pillars: Cloudflare, Tailscale, WireGuard) -->
+    <!-- Overview Status Cards (3 Pillars: Cloudflare, Tailscale, WireGuard - Interactive Primary Tabs) -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
       <!-- 1. Cloudflare Tunnel Card -->
       <button
         @click="switchTab('cloudflare')"
-        class="cyber-card p-4 text-left transition hover:border-indigo-500/50 flex flex-col justify-between"
-        :class="activeTab === 'cloudflare' ? 'ring-1 ring-indigo-500/60 border-indigo-500/40 bg-slate-900/90' : 'bg-slate-950/70'"
+        class="cyber-card p-4 text-left transition relative flex flex-col justify-between"
+        :class="activeTab === 'cloudflare' ? 'ring-2 ring-orange-500/50 border-orange-500/70 bg-slate-900/90 shadow-md' : 'bg-slate-950/70 hover:border-slate-700'"
       >
         <div class="flex items-start justify-between w-full mb-3">
           <div class="flex items-center gap-2">
@@ -524,13 +555,14 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             Tunnel: {{ overview?.cloudflare.tunnel_id ? overview.cloudflare.tunnel_id.substring(0, 8) + '…' : 'Configured' }}
           </div>
         </div>
+        <div v-if="activeTab === 'cloudflare'" class="mt-3 h-0.5 w-full bg-orange-500 rounded-full"></div>
       </button>
 
       <!-- 2. Tailscale Card -->
       <button
         @click="switchTab('tailscale')"
-        class="cyber-card p-4 text-left transition hover:border-indigo-500/50 flex flex-col justify-between"
-        :class="activeTab === 'tailscale' ? 'ring-1 ring-indigo-500/60 border-indigo-500/40 bg-slate-900/90' : 'bg-slate-950/70'"
+        class="cyber-card p-4 text-left transition relative flex flex-col justify-between"
+        :class="activeTab === 'tailscale' ? 'ring-2 ring-purple-500/50 border-purple-500/70 bg-slate-900/90 shadow-md' : 'bg-slate-950/70 hover:border-slate-700'"
       >
         <div class="flex items-start justify-between w-full mb-3">
           <div class="flex items-center gap-2">
@@ -567,13 +599,14 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             {{ overview?.tailscale.peers_count ?? 0 }} tailnet peers connected
           </div>
         </div>
+        <div v-if="activeTab === 'tailscale'" class="mt-3 h-0.5 w-full bg-purple-500 rounded-full"></div>
       </button>
 
       <!-- 3. WireGuard Card -->
       <button
         @click="switchTab('wireguard')"
-        class="cyber-card p-4 text-left transition hover:border-indigo-500/50 flex flex-col justify-between"
-        :class="activeTab === 'wireguard' ? 'ring-1 ring-indigo-500/60 border-indigo-500/40 bg-slate-900/90' : 'bg-slate-950/70'"
+        class="cyber-card p-4 text-left transition relative flex flex-col justify-between"
+        :class="activeTab === 'wireguard' ? 'ring-2 ring-emerald-500/50 border-emerald-500/70 bg-slate-900/90 shadow-md' : 'bg-slate-950/70 hover:border-slate-700'"
       >
         <div class="flex items-start justify-between w-full mb-3">
           <div class="flex items-center gap-2">
@@ -604,36 +637,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             {{ overview?.wireguard.peers_count ?? 0 }} client peers configured
           </div>
         </div>
-      </button>
-    </div>
-
-    <!-- Navigation Tab Pill Bar -->
-    <div class="flex items-center gap-2 border-b border-slate-800/80 pb-3 overflow-x-auto">
-      <button
-        @click="switchTab('cloudflare')"
-        class="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition"
-        :class="activeTab === 'cloudflare' ? 'bg-orange-500/10 text-orange-300 border border-orange-500/30 font-semibold' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'"
-      >
-        <Globe class="h-4 w-4" />
-        Cloudflare Edge Tunnel
-      </button>
-
-      <button
-        @click="switchTab('tailscale')"
-        class="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition"
-        :class="activeTab === 'tailscale' ? 'bg-purple-500/10 text-purple-300 border border-purple-500/30 font-semibold' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'"
-      >
-        <Radio class="h-4 w-4" />
-        Tailscale Mesh VPN
-      </button>
-
-      <button
-        @click="switchTab('wireguard')"
-        class="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition"
-        :class="activeTab === 'wireguard' ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-semibold' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'"
-      >
-        <Shield class="h-4 w-4" />
-        WireGuard Peer VPN
+        <div v-if="activeTab === 'wireguard'" class="mt-3 h-0.5 w-full bg-emerald-500 rounded-full"></div>
       </button>
     </div>
 
@@ -863,23 +867,44 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           <div class="flex items-center gap-2">
             <Box class="h-4 w-4 text-purple-400" />
             <h3 class="text-xs font-semibold text-slate-200">Exposed Containers on Tailscale</h3>
+            <span class="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300 font-mono">
+              {{ tailscaleContainers.length }} routed
+            </span>
           </div>
-          <span class="text-[11px] text-slate-400">Containers reachable via MagicDNS & Tailscale IP</span>
+          <button
+            @click="openExposeModal(null, 'private', 'tailscale')"
+            class="cyber-btn flex items-center gap-1.5 text-xs bg-purple-600 hover:bg-purple-500 py-1 px-2.5"
+          >
+            <Plus class="h-3.5 w-3.5" />
+            <span>Expose Container</span>
+          </button>
         </div>
 
-        <div class="overflow-x-auto">
+        <div v-if="tailscaleContainers.length === 0" class="py-8 text-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl bg-slate-950/40 space-y-2">
+          <Box class="h-6 w-6 text-slate-600 mx-auto" />
+          <p>No containers currently routed directly through Tailscale mesh.</p>
+          <button
+            @click="openExposeModal(null, 'private', 'tailscale')"
+            class="cyber-btn-secondary text-xs text-purple-300 hover:border-purple-500/50 inline-flex items-center gap-1.5"
+          >
+            <Plus class="h-3 w-3" />
+            <span>Expose a Container</span>
+          </button>
+        </div>
+
+        <div v-else class="overflow-x-auto">
           <table class="w-full text-left text-xs font-mono">
             <thead>
               <tr class="border-b border-slate-800 text-[11px] text-slate-400 font-medium">
                 <th class="py-2.5 px-3">Container</th>
                 <th class="py-2.5 px-3">Status</th>
-                <th class="py-2.5 px-3">Internal Ports</th>
+                <th class="py-2.5 px-3">Internal Port</th>
                 <th class="py-2.5 px-3">Tailscale Access URL</th>
                 <th class="py-2.5 px-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-800/60">
-              <tr v-for="c in containerExposures" :key="c.id" class="hover:bg-slate-900/50 transition">
+              <tr v-for="c in tailscaleContainers" :key="c.id" class="hover:bg-slate-900/50 transition">
                 <td class="py-2.5 px-3 font-semibold text-white">
                   {{ c.name }}
                   <span class="block text-[10px] text-slate-500 font-normal truncate max-w-xs">{{ c.image }}</span>
@@ -891,11 +916,11 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                   <span v-else class="text-slate-500 text-[10px]">Stopped</span>
                 </td>
                 <td class="py-2.5 px-3 text-slate-300">
-                  {{ c.ports && c.ports.length ? c.ports.join(', ') : 'None' }}
+                  {{ c.private_port || (c.ports && c.ports.length ? c.ports[0] : 80) }}
                 </td>
                 <td class="py-2.5 px-3">
-                  <div v-if="c.exposure_mode === 'private' && c.private_type === 'tailscale'" class="flex items-center gap-2">
-                    <span class="text-purple-300 font-bold truncate max-w-xs">{{ c.tailscale_url || 'Active' }}</span>
+                  <div class="flex items-center gap-2">
+                    <span class="text-purple-300 font-bold truncate max-w-xs">{{ c.tailscale_url || `http://${tailscale?.hostname || 'docktun'}:${c.private_port || 80}` }}</span>
                     <button
                       v-if="c.tailscale_url"
                       @click="copyText('ts_url_' + c.name, c.tailscale_url)"
@@ -905,21 +930,9 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                       <Copy v-else class="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  <span v-else-if="c.exposure_mode === 'public'" class="text-orange-400 text-[11px]">
-                    Exposed via Cloudflare ({{ c.hostname }})
-                  </span>
-                  <span v-else class="text-slate-600 text-[11px]">Not Exposed</span>
                 </td>
-                <td class="py-2.5 px-3 text-right space-x-1.5">
+                <td class="py-2.5 px-3 text-right">
                   <button
-                    v-if="c.exposure_mode !== 'private' || c.private_type !== 'tailscale'"
-                    @click="openExposeModal(c, 'private', 'tailscale')"
-                    class="cyber-btn-sm text-purple-300 border-purple-500/30 hover:bg-purple-950/60"
-                  >
-                    Expose
-                  </button>
-                  <button
-                    v-else
                     @click="removeExposure(c)"
                     class="cyber-btn-sm text-rose-300 border-rose-500/30 hover:bg-rose-950/60"
                   >
@@ -1068,23 +1081,44 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           <div class="flex items-center gap-2">
             <Box class="h-4 w-4 text-emerald-400" />
             <h3 class="text-xs font-semibold text-slate-200">Exposed Containers on WireGuard VPN</h3>
+            <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 font-mono">
+              {{ wireguardContainers.length }} routed
+            </span>
           </div>
-          <span class="text-[11px] text-slate-400">Containers reachable via WireGuard gateway (10.13.13.1)</span>
+          <button
+            @click="openExposeModal(null, 'private', 'wireguard')"
+            class="cyber-btn flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 py-1 px-2.5"
+          >
+            <Plus class="h-3.5 w-3.5" />
+            <span>Expose Container</span>
+          </button>
         </div>
 
-        <div class="overflow-x-auto">
+        <div v-if="wireguardContainers.length === 0" class="py-8 text-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl bg-slate-950/40 space-y-2">
+          <Shield class="h-6 w-6 text-slate-600 mx-auto" />
+          <p>No containers currently routed directly through WireGuard VPN gateway.</p>
+          <button
+            @click="openExposeModal(null, 'private', 'wireguard')"
+            class="cyber-btn-secondary text-xs text-emerald-300 hover:border-emerald-500/50 inline-flex items-center gap-1.5"
+          >
+            <Plus class="h-3 w-3" />
+            <span>Expose a Container</span>
+          </button>
+        </div>
+
+        <div v-else class="overflow-x-auto">
           <table class="w-full text-left text-xs font-mono">
             <thead>
               <tr class="border-b border-slate-800 text-[11px] text-slate-400 font-medium">
                 <th class="py-2.5 px-3">Container</th>
                 <th class="py-2.5 px-3">Status</th>
-                <th class="py-2.5 px-3">Internal Ports</th>
+                <th class="py-2.5 px-3">Internal Port</th>
                 <th class="py-2.5 px-3">WireGuard Access URL</th>
                 <th class="py-2.5 px-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-800/60">
-              <tr v-for="c in containerExposures" :key="c.id" class="hover:bg-slate-900/50 transition">
+              <tr v-for="c in wireguardContainers" :key="c.id" class="hover:bg-slate-900/50 transition">
                 <td class="py-2.5 px-3 font-semibold text-white">
                   {{ c.name }}
                   <span class="block text-[10px] text-slate-500 font-normal truncate max-w-xs">{{ c.image }}</span>
@@ -1096,11 +1130,11 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                   <span v-else class="text-slate-500 text-[10px]">Stopped</span>
                 </td>
                 <td class="py-2.5 px-3 text-slate-300">
-                  {{ c.ports && c.ports.length ? c.ports.join(', ') : 'None' }}
+                  {{ c.private_port || (c.ports && c.ports.length ? c.ports[0] : 80) }}
                 </td>
                 <td class="py-2.5 px-3">
-                  <div v-if="c.exposure_mode === 'private' && c.private_type === 'wireguard'" class="flex items-center gap-2">
-                    <span class="text-emerald-300 font-bold truncate max-w-xs">{{ c.wireguard_url || 'Active' }}</span>
+                  <div class="flex items-center gap-2">
+                    <span class="text-emerald-300 font-bold truncate max-w-xs">{{ c.wireguard_url || `http://10.13.13.1:${c.private_port || 80}` }}</span>
                     <button
                       v-if="c.wireguard_url"
                       @click="copyText('wg_url_' + c.name, c.wireguard_url)"
@@ -1110,21 +1144,9 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                       <Copy v-else class="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  <span v-else-if="c.exposure_mode === 'public'" class="text-orange-400 text-[11px]">
-                    Exposed via Cloudflare ({{ c.hostname }})
-                  </span>
-                  <span v-else class="text-slate-600 text-[11px]">Not Exposed</span>
                 </td>
-                <td class="py-2.5 px-3 text-right space-x-1.5">
+                <td class="py-2.5 px-3 text-right">
                   <button
-                    v-if="c.exposure_mode !== 'private' || c.private_type !== 'wireguard'"
-                    @click="openExposeModal(c, 'private', 'wireguard')"
-                    class="cyber-btn-sm text-emerald-300 border-emerald-500/30 hover:bg-emerald-950/60"
-                  >
-                    Expose
-                  </button>
-                  <button
-                    v-else
                     @click="removeExposure(c)"
                     class="cyber-btn-sm text-rose-300 border-rose-500/30 hover:bg-rose-950/60"
                   >
@@ -1386,6 +1408,20 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
         </div>
 
         <div class="space-y-3.5 text-xs">
+          <!-- Target Docker Container -->
+          <div>
+            <label class="block text-[11px] font-medium text-slate-300 mb-1">Target Docker Container</label>
+            <select
+              :value="exposeTargetContainer.id"
+              @change="onExposeTargetChanged"
+              class="cyber-input font-mono text-xs w-full bg-slate-900"
+            >
+              <option v-for="c in containerExposures" :key="c.id" :value="c.id">
+                {{ c.name }} ({{ c.image }})
+              </option>
+            </select>
+          </div>
+
           <!-- Exposure Mode Selection -->
           <div>
             <label class="block text-[11px] font-medium text-slate-300 mb-1.5">Network Route Type</label>

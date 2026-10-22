@@ -248,18 +248,72 @@ const containerStats = computed(() => {
   }
 })
 
-// Filtered Containers
+// Stacks Filter State
+const stackFilter = ref<string>('all')
+
+const availableStacks = computed(() => {
+  const set = new Set<string>()
+  for (const c of containers.value) {
+    if (c.project_name) set.add(c.project_name)
+  }
+  for (const p of projects.value) {
+    if (p.name) set.add(p.name)
+  }
+  return Array.from(set).sort()
+})
+
+// Origin Health lookup mapped by Hostname
+const healthByHostname = computed(() => {
+  const map: Record<string, { service: string; status: string; latency: string }> = {}
+  for (const h of healthList.value) {
+    if (h.hostname) {
+      map[h.hostname] = h
+    }
+  }
+  return map
+})
+
+// Unified Public Routes Combining Cloudflare Configured Hostnames & Health Probe Latencies
+const publicRoutes = computed(() => {
+  const hostSet = new Set<string>()
+  if (status.value?.hostnames && Array.isArray(status.value.hostnames)) {
+    status.value.hostnames.forEach((h: string) => {
+      if (h) hostSet.add(h)
+    })
+  }
+  healthList.value.forEach((h: any) => {
+    if (h.hostname) hostSet.add(h.hostname)
+  })
+
+  return Array.from(hostSet).map((hostname) => {
+    const health = healthByHostname.value[hostname]
+    return {
+      hostname,
+      service: health?.service || '',
+      status: health?.status || (isTunnelRunning.value ? 'up' : 'unknown'),
+      latency: health?.latency || '—',
+      container: health?.service ? extractContainerFromService(health.service) : null,
+    }
+  })
+})
+
+// Filtered Containers with Stack, State, and Search Query
 const filteredContainers = computed(() => {
   return containers.value.filter((c) => {
     if (containerFilter.value === 'running' && !c.running) return false
     if (containerFilter.value === 'stopped' && c.running) return false
     if (containerFilter.value === 'updates' && !c.update_available) return false
+    if (stackFilter.value !== 'all') {
+      if (stackFilter.value === '__standalone__' && c.project_name) return false
+      if (stackFilter.value !== '__standalone__' && c.project_name !== stackFilter.value) return false
+    }
     if (!searchQuery.value) return true
     const q = searchQuery.value.toLowerCase()
     return (
       c.name.toLowerCase().includes(q) ||
       (c.image && c.image.toLowerCase().includes(q)) ||
-      (c.hostname && c.hostname.toLowerCase().includes(q))
+      (c.hostname && c.hostname.toLowerCase().includes(q)) ||
+      (c.project_name && c.project_name.toLowerCase().includes(q))
     )
   })
 })
@@ -592,156 +646,145 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Active Ingress Origin Health & Latency Monitor (Merged Health) -->
-    <div v-if="healthList.length > 0" class="cyber-card p-5 space-y-3">
-      <div class="flex items-center justify-between border-b border-slate-800/80 pb-3">
-        <div class="flex items-center gap-2">
-          <Activity class="h-4 w-4 text-emerald-400" />
-          <h2 class="text-xs font-semibold text-white">
-            Active Ingress Targets & Origin Latency
-          </h2>
-          <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
-            {{ healthList.length }} endpoints probed
-          </span>
-        </div>
-        <div class="flex items-center gap-3">
-          <router-link to="/access?tab=cloudflare" class="text-xs text-indigo-400 hover:underline">
-            Manage Rules &rarr;
-          </router-link>
-          <button
-            @click="fetchHealth"
-            :disabled="probingHealth"
-            class="text-xs text-slate-400 hover:text-white flex items-center gap-1 font-mono transition"
-          >
-            <RotateCcw class="h-3 w-3" :class="probingHealth ? 'animate-spin' : ''" />
-            <span>{{ probingHealth ? 'Probing…' : 'Re-probe' }}</span>
-          </button>
-        </div>
-      </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
-        <div
-          v-for="h in healthList"
-          :key="h.hostname"
-          class="flex items-center justify-between rounded-xl border border-slate-800/90 bg-slate-950 p-3 hover:border-slate-700 transition"
-        >
-          <div class="truncate pr-2">
-            <div class="flex items-center gap-1.5">
-              <span
-                class="h-2 w-2 rounded-full shrink-0"
-                :class="h.status === 'up' ? 'bg-emerald-400' : 'bg-rose-500'"
-              ></span>
-              <span class="font-mono text-xs font-semibold text-white truncate">{{ h.hostname }}</span>
-            </div>
-            <router-link
-              v-if="extractContainerFromService(h.service)"
-              :to="'/containers?name=' + encodeURIComponent(extractContainerFromService(h.service))"
-              class="text-[11px] text-slate-400 hover:text-indigo-300 font-mono truncate mt-0.5 block hover:underline"
-              :title="`Inspect container '${extractContainerFromService(h.service)}'`"
-            >
-              &rarr; {{ h.service }}
-            </router-link>
-            <div v-else class="text-[11px] text-slate-500 font-mono truncate mt-0.5">
-              &rarr; {{ h.service }}
-            </div>
-          </div>
-
-          <div class="text-right shrink-0">
-            <span
-              class="rounded-md px-2 py-0.5 text-[10px] font-mono font-semibold"
-              :class="h.status === 'up' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/10 text-rose-400 border border-rose-500/30'"
-            >
-              {{ h.status === 'up' ? h.latency : 'TIMEOUT' }}
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Active Routing Directory -->
+    <!-- Combined Ingress Routing & Origin Health Directory -->
     <div class="cyber-card space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
         <div class="flex items-center gap-2">
           <Layers class="h-4 w-4 text-indigo-400" />
           <h2 class="text-xs font-semibold text-white">
-            Active Routing Directory
+            Ingress Routing & Origin Health
           </h2>
         </div>
 
-        <!-- Route Switcher Tabs -->
-        <div class="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950 p-1 text-xs">
-          <button
-            @click="routesTab = 'public'"
-            class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition"
-            :class="routesTab === 'public' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
-          >
-            <Globe class="h-3.5 w-3.5 text-orange-400" />
-            <span>Public Hostnames (Cloudflare)</span>
-            <span class="rounded bg-slate-900 px-1.5 py-0.2 text-[10px] text-orange-300 font-mono">{{ status?.hostnames?.length || 0 }}</span>
-          </button>
+        <div class="flex items-center gap-2 flex-wrap">
+          <!-- Route Switcher Tabs -->
+          <div class="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950 p-1 text-xs">
+            <button
+              @click="routesTab = 'public'"
+              class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition"
+              :class="routesTab === 'public' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+            >
+              <Globe class="h-3.5 w-3.5 text-orange-400" />
+              <span>Public Hostnames (Cloudflare)</span>
+              <span class="rounded bg-slate-900 px-1.5 py-0.2 text-[10px] text-orange-300 font-mono">{{ publicRoutes.length }}</span>
+            </button>
 
+            <button
+              @click="routesTab = 'local'"
+              class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition"
+              :class="routesTab === 'local' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+            >
+              <Wifi class="h-3.5 w-3.5 text-indigo-400" />
+              <span>Local Network (.local)</span>
+              <span class="rounded bg-slate-900 px-1.5 py-0.2 text-[10px] text-indigo-300 font-mono">{{ localServices.length }}</span>
+            </button>
+          </div>
+
+          <!-- Actions -->
           <button
-            @click="routesTab = 'local'"
-            class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition"
-            :class="routesTab === 'local' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+            @click="fetchHealth"
+            :disabled="probingHealth"
+            class="cyber-btn-secondary text-xs flex items-center gap-1 py-1 px-2.5 text-slate-300"
+            title="Probe live latency of ingress origins"
           >
-            <Wifi class="h-3.5 w-3.5 text-indigo-400" />
-            <span>Local Services (.local)</span>
-            <span class="rounded bg-slate-900 px-1.5 py-0.2 text-[10px] text-indigo-300 font-mono">{{ localServices.length }}</span>
+            <RotateCcw class="h-3 w-3" :class="probingHealth ? 'animate-spin' : ''" />
+            <span>{{ probingHealth ? 'Probing…' : 'Probe Latency' }}</span>
           </button>
+          <router-link
+            to="/access?tab=cloudflare"
+            class="cyber-btn-secondary text-xs flex items-center gap-1 py-1 px-2.5 text-indigo-300 hover:text-white"
+          >
+            <span>Manage Rules</span>
+            <ArrowRight class="h-3 w-3" />
+          </router-link>
         </div>
       </div>
 
-      <!-- Tab Content 1: Public Cloudflare Hostnames -->
+      <!-- Tab 1: Public Cloudflare Hostnames with Origin Latency & Target Service -->
       <div v-if="routesTab === 'public'" class="space-y-3">
-        <div v-if="!status?.hostnames || status.hostnames.length === 0" class="py-6 text-center text-xs text-slate-500">
-          No public ingress hostnames currently bound in Cloudflare configuration.
+        <div v-if="publicRoutes.length === 0" class="py-6 text-center text-xs text-slate-500 font-mono">
+          No public ingress routes configured. Add routes in Remote Access &rarr; Cloudflare.
         </div>
-        <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+        <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           <div
-            v-for="h in status.hostnames"
-            :key="h"
-            class="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 p-3 hover:border-slate-700 transition group shadow-sm"
+            v-for="r in publicRoutes"
+            :key="r.hostname"
+            class="flex flex-col justify-between rounded-xl border border-slate-800/90 bg-slate-950 p-3.5 hover:border-slate-700 transition group shadow-sm"
           >
-            <div class="truncate pr-2">
-              <div class="flex items-center gap-1.5">
-                <ShieldCheck class="h-3.5 w-3.5 text-indigo-400 shrink-0" />
-                <span class="font-mono text-xs font-semibold text-white truncate">{{ h }}</span>
+            <div>
+              <div class="flex items-center justify-between gap-2 mb-1.5">
+                <div class="flex items-center gap-2 truncate">
+                  <ShieldCheck class="h-4 w-4 text-emerald-400 shrink-0" />
+                  <a
+                    :href="`https://${r.hostname}`"
+                    target="_blank"
+                    rel="noopener"
+                    class="font-mono text-xs font-bold text-white hover:text-indigo-300 truncate hover:underline"
+                    :title="`Open https://${r.hostname}`"
+                  >
+                    {{ r.hostname }}
+                  </a>
+                </div>
+
+                <!-- Latency Badge -->
+                <span
+                  class="rounded-md px-2 py-0.5 text-[10px] font-mono font-semibold shrink-0"
+                  :class="r.status === 'up' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : (r.status === 'down' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30' : 'bg-slate-800 text-slate-400 border border-slate-700')"
+                >
+                  <span v-if="r.status === 'up'" class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 mr-1 animate-pulse"></span>
+                  {{ r.status === 'up' ? r.latency : (r.status === 'down' ? 'TIMEOUT' : 'Edge Active') }}
+                </span>
               </div>
-              <div class="text-[10px] text-slate-500 font-mono truncate mt-0.5">
-                HTTPS &bull; Cloudflare Edge
+
+              <!-- Target Origin Container Link -->
+              <div class="flex items-center gap-1.5 text-[11px] text-slate-400 font-mono truncate">
+                <span class="text-slate-500">&rarr;</span>
+                <span v-if="!r.service" class="text-slate-500">Cloudflare Edge Ingress</span>
+                <router-link
+                  v-else-if="r.container"
+                  :to="'/containers?name=' + encodeURIComponent(r.container)"
+                  class="text-indigo-400 hover:text-indigo-300 hover:underline truncate"
+                  :title="`Inspect container '${r.container}'`"
+                >
+                  {{ r.service }}
+                </router-link>
+                <span v-else class="text-slate-400 truncate">{{ r.service }}</span>
               </div>
             </div>
 
-            <div class="flex items-center gap-1 shrink-0">
-              <button
-                @click="copyUrl(`https://${h}`)"
-                class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition"
-                :title="copiedHost === `https://${h}` ? 'Copied!' : 'Copy URL'"
-              >
-                <Check v-if="copiedHost === `https://${h}`" class="h-3.5 w-3.5 text-emerald-400" />
-                <Copy v-else class="h-3.5 w-3.5" />
-              </button>
-              <a
-                :href="`https://${h}`"
-                target="_blank"
-                rel="noopener"
-                class="rounded-lg p-1.5 text-indigo-400 hover:bg-indigo-500/10 hover:text-indigo-300 transition"
-                title="Open in new tab"
-              >
-                <ExternalLink class="h-3.5 w-3.5" />
-              </a>
+            <!-- Actions Bar -->
+            <div class="flex items-center justify-between pt-2.5 mt-2.5 border-t border-slate-800/60 text-xs">
+              <span class="text-[10px] font-mono text-slate-500 uppercase">HTTPS &bull; Cloudflare Edge</span>
+              <div class="flex items-center gap-1">
+                <button
+                  @click="copyUrl(`https://${r.hostname}`)"
+                  class="p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition"
+                  :title="copiedHost === `https://${r.hostname}` ? 'Copied!' : 'Copy URL'"
+                >
+                  <Check v-if="copiedHost === `https://${r.hostname}`" class="h-3.5 w-3.5 text-emerald-400" />
+                  <Copy v-else class="h-3.5 w-3.5" />
+                </button>
+                <a
+                  :href="`https://${r.hostname}`"
+                  target="_blank"
+                  rel="noopener"
+                  class="p-1.5 rounded-lg text-indigo-400 hover:bg-indigo-500/10 hover:text-indigo-300 transition"
+                  title="Open URL in new tab"
+                >
+                  <ExternalLink class="h-3.5 w-3.5" />
+                </a>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Tab Content 2: Local Services (.local) -->
+      <!-- Tab 2: Local Services (.local) -->
       <div v-else class="space-y-3">
         <div v-if="localServices.length === 0" class="py-6 text-center text-xs text-slate-500">
           No active containers found to expose via mDNS.
         </div>
-        <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+        <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <div
             v-for="svc in localServices"
             :key="svc.id"
@@ -763,243 +806,268 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <a
-              :href="svc.localUrl"
-              target="_blank"
-              rel="noopener"
-              class="cyber-btn-secondary text-[11px] flex items-center gap-1 py-1 px-2.5 text-indigo-300 shrink-0"
-              title="Open local service in browser"
-            >
-              <span>Open</span>
-              <ExternalLink class="h-3 w-3" />
-            </a>
+            <div class="flex items-center gap-1 shrink-0">
+              <button
+                @click="copyUrl(svc.localUrl)"
+                class="p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition"
+                :title="copiedHost === svc.localUrl ? 'Copied!' : 'Copy URL'"
+              >
+                <Check v-if="copiedHost === svc.localUrl" class="h-3.5 w-3.5 text-emerald-400" />
+                <Copy v-else class="h-3.5 w-3.5" />
+              </button>
+              <a
+                :href="svc.localUrl"
+                target="_blank"
+                rel="noopener"
+                class="cyber-btn-secondary text-[11px] flex items-center gap-1 py-1 px-2.5 text-indigo-300"
+                title="Open local service in browser"
+              >
+                <span>Open</span>
+                <ExternalLink class="h-3 w-3" />
+              </a>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Main Live Containers Monitor & Compose Snapshot -->
-    <div class="grid gap-6 lg:grid-cols-3">
-      <!-- Left 2 Cols: Live Containers Snapshot with Power Matrix & Search -->
-      <div class="lg:col-span-2 cyber-card space-y-4 flex flex-col justify-between">
-        <div>
-          <!-- Header & Quick Search -->
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
-            <div class="flex items-center gap-2">
-              <Server class="h-4 w-4 text-emerald-400" />
-              <h2 class="text-xs font-semibold text-white">
-                Container Fleet Matrix ({{ filteredContainers.length }} / {{ containers.length }})
-              </h2>
-            </div>
+    <!-- Combined Container Fleet & Managed Compose Stacks (Full-Width Unified Section) -->
+    <div class="cyber-card space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+        <div class="flex items-center gap-2 flex-wrap">
+          <Server class="h-4 w-4 text-emerald-400" />
+          <h2 class="text-xs font-semibold text-white">
+            Container Fleet & Managed Stacks
+          </h2>
+          <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
+            {{ filteredContainers.length }} / {{ containers.length }} containers
+          </span>
+          <span v-if="projects.length > 0" class="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300 border border-purple-500/30 font-mono">
+            {{ projects.length }} stacks
+          </span>
+        </div>
 
-            <!-- Search & Filters -->
-            <div class="flex items-center gap-2">
-              <div class="relative w-44 sm:w-52">
-                <Search class="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                <input
-                  v-model="searchQuery"
-                  type="text"
-                  placeholder="Filter containers…"
-                  class="w-full pl-8 pr-2.5 py-1 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <select
-                v-model="containerFilter"
-                class="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-slate-300 focus:outline-none focus:border-indigo-500"
-              >
-                <option value="all">All</option>
-                <option value="running">Running</option>
-                <option value="stopped">Stopped</option>
-                <option value="updates">Updates</option>
-              </select>
-            </div>
+        <!-- Search & Filters -->
+        <div class="flex items-center gap-2 flex-wrap">
+          <div class="relative w-44 sm:w-52">
+            <Search class="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              v-model="searchQuery"
+              type="text"
+              placeholder="Search containers or stacks…"
+              class="w-full pl-8 pr-2.5 py-1 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
+            />
           </div>
 
-          <div v-if="filteredContainers.length === 0" class="py-8 text-center text-xs text-slate-500">
-            No containers match the current filter or search criteria.
-          </div>
+          <!-- Stack Filter -->
+          <select
+            v-if="availableStacks.length > 0"
+            v-model="stackFilter"
+            class="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-slate-300 focus:outline-none focus:border-indigo-500 font-mono"
+          >
+            <option value="all">All Stacks</option>
+            <option v-for="stk in availableStacks" :key="stk" :value="stk">Stack: {{ stk }}</option>
+            <option value="__standalone__">Standalone</option>
+          </select>
 
-          <div v-else class="divide-y divide-slate-800/60">
-            <div
-              v-for="c in filteredContainers.slice(0, 8)"
-              :key="c.id"
-              class="flex flex-col sm:flex-row sm:items-center justify-between py-2.5 gap-2 transition hover:bg-slate-900/40 px-2 rounded-lg"
-            >
-              <!-- Container Name & Details -->
-              <div class="flex items-center gap-2.5 overflow-hidden">
+          <!-- State Filter -->
+          <select
+            v-model="containerFilter"
+            class="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-slate-300 focus:outline-none focus:border-indigo-500 font-mono"
+          >
+            <option value="all">All States</option>
+            <option value="running">Running</option>
+            <option value="stopped">Stopped</option>
+            <option value="updates">Updates</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Compose Stacks Quick Jump Bar (if any projects registered) -->
+      <div v-if="projects.length > 0" class="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+        <span class="text-slate-500 font-mono text-[11px] shrink-0">Stacks:</span>
+        <button
+          v-for="p in projects"
+          :key="p.id"
+          @click="stackFilter = (stackFilter === p.name ? 'all' : p.name)"
+          class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-mono transition shrink-0"
+          :class="stackFilter === p.name ? 'bg-purple-950/60 border-purple-500/50 text-purple-200' : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'"
+        >
+          <FolderOpen class="h-3 w-3 text-purple-400" />
+          <span class="font-semibold">{{ p.name }}</span>
+          <router-link
+            :to="'/containers?project=' + p.id"
+            @click.stop
+            class="text-slate-500 hover:text-purple-300 ml-1"
+            :title="`Inspect stack ${p.name} files`"
+          >
+            <ExternalLink class="h-3 w-3" />
+          </router-link>
+        </button>
+      </div>
+
+      <!-- Container Fleet List -->
+      <div v-if="filteredContainers.length === 0" class="py-8 text-center text-xs text-slate-500 font-mono">
+        No containers match the current filter or search criteria.
+      </div>
+
+      <div v-else class="divide-y divide-slate-800/60">
+        <div
+          v-for="c in filteredContainers.slice(0, 10)"
+          :key="c.id"
+          class="flex flex-col sm:flex-row sm:items-center justify-between py-2.5 gap-2 transition hover:bg-slate-900/40 px-2 rounded-lg"
+        >
+          <!-- Left: Status dot, Name, Stack, Exposure, Updates, Image, Uptime -->
+          <div class="flex items-center gap-3 overflow-hidden">
+            <span
+              class="h-2.5 w-2.5 flex-shrink-0 rounded-full"
+              :class="c.running ? 'bg-emerald-400 shadow-sm shadow-emerald-500/50' : 'bg-slate-600'"
+            ></span>
+            <div class="truncate">
+              <div class="flex items-center gap-2 flex-wrap">
+                <router-link
+                  :to="'/containers?id=' + encodeURIComponent(c.id)"
+                  class="font-mono text-xs font-bold text-white hover:text-indigo-300 truncate hover:underline"
+                  :title="`Inspect container '${c.name}'`"
+                >
+                  {{ c.name }}
+                </router-link>
+
+                <!-- Compose Stack Badge -->
+                <button
+                  v-if="c.project_name"
+                  @click="stackFilter = c.project_name"
+                  class="rounded bg-indigo-950/60 border border-indigo-500/30 px-1.5 py-0.2 text-[10px] text-indigo-300 font-mono hover:bg-indigo-900/60 transition"
+                  :title="`Filter by stack '${c.project_name}'`"
+                >
+                  stack: {{ c.project_name }}
+                </button>
+
+                <!-- Exposure Mode Badge -->
                 <span
-                  class="h-2 w-2 flex-shrink-0 rounded-full"
-                  :class="c.running ? 'bg-emerald-400' : 'bg-slate-600'"
-                ></span>
-                <div class="truncate">
-                  <div class="flex items-center gap-2">
-                    <router-link
-                      :to="'/containers?id=' + encodeURIComponent(c.id)"
-                      class="font-mono text-xs font-semibold text-white hover:text-indigo-300 truncate hover:underline"
-                      :title="`Inspect container '${c.name}'`"
-                    >
-                      {{ c.name }}
-                    </router-link>
-                    <span
-                      class="rounded-full px-2 py-0.2 text-[9px] font-mono font-medium"
-                      :class="c.exposure_mode === 'public' ? 'bg-orange-500/10 text-orange-300 border border-orange-500/30' : (c.exposure_mode === 'private' ? 'bg-purple-500/10 text-purple-300 border border-purple-500/30' : 'bg-slate-800 text-slate-400')"
-                      :title="c.exposure_mode === 'public' ? `Public: ${c.hostname}` : 'Internal'"
-                    >
-                      {{ c.exposure_mode === 'public' ? 'Public' : (c.exposure_mode === 'private' ? c.private_type : 'Internal') }}
-                    </span>
-                    <span
-                      v-if="c.update_available"
-                      class="rounded-full px-1.5 py-0.2 text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                    >
-                      Update
-                    </span>
-                  </div>
-                  <div class="text-[11px] text-slate-400 truncate font-mono mt-0.5">
-                    {{ c.image }} &bull; <Clock class="inline h-2.5 w-2.5 text-slate-500" /> {{ c.uptime || c.status }}
-                  </div>
-                </div>
+                  class="rounded-full px-2 py-0.2 text-[9px] font-mono font-medium"
+                  :class="c.exposure_mode === 'public' ? 'bg-orange-500/10 text-orange-300 border border-orange-500/30' : (c.exposure_mode === 'private' ? 'bg-purple-500/10 text-purple-300 border border-purple-500/30' : 'bg-slate-800 text-slate-400')"
+                  :title="c.exposure_mode === 'public' ? `Public: ${c.hostname}` : 'Internal'"
+                >
+                  {{ c.exposure_mode === 'public' ? 'Public' : (c.exposure_mode === 'private' ? c.private_type : 'Internal') }}
+                </span>
+
+                <!-- Update Available Badge -->
+                <span
+                  v-if="c.update_available"
+                  class="rounded-full px-1.5 py-0.2 text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse"
+                >
+                  Update
+                </span>
               </div>
 
-              <!-- Metrics & Quick Actions -->
-              <div class="flex items-center justify-between sm:justify-end gap-3 self-end sm:self-auto w-full sm:w-auto">
-                <div v-if="c.running" class="text-right font-mono text-[11px]">
-                  <span class="text-indigo-400 font-bold mr-2">{{ c.cpu || '0.0%' }}</span>
-                  <span class="text-slate-400">{{ c.memory?.split('/')[0] || '' }}</span>
-                </div>
-                <div v-else class="text-[11px] text-slate-500 font-mono">
-                  stopped
-                </div>
-
-                <!-- Container Actions -->
-                <div class="flex items-center gap-1">
-                  <button
-                    v-if="!c.running"
-                    @click="runContainerAction(c, 'start')"
-                    :disabled="!!containerActionLoading[c.id]"
-                    class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-emerald-400 transition"
-                    title="Start container"
-                  >
-                    <Play class="h-3.5 w-3.5 fill-current" />
-                  </button>
-                  <button
-                    v-if="c.running"
-                    @click="runContainerAction(c, 'stop')"
-                    :disabled="!!containerActionLoading[c.id]"
-                    class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-rose-400 transition"
-                    title="Stop container"
-                  >
-                    <Square class="h-3.5 w-3.5 fill-current" />
-                  </button>
-                  <button
-                    @click="runContainerAction(c, 'restart')"
-                    :disabled="!!containerActionLoading[c.id]"
-                    class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition"
-                    title="Restart container"
-                  >
-                    <RotateCcw
-                      class="h-3.5 w-3.5"
-                      :class="containerActionLoading[c.id] === 'restart' ? 'animate-spin' : ''"
-                    />
-                  </button>
-                </div>
+              <div class="text-[11px] text-slate-400 truncate font-mono mt-0.5">
+                {{ c.image }} &bull; <Clock class="inline h-2.5 w-2.5 text-slate-500" /> {{ c.uptime || c.status }}
               </div>
+            </div>
+          </div>
+
+          <!-- Right: Live Metrics & Power Actions -->
+          <div class="flex items-center justify-between sm:justify-end gap-3 self-end sm:self-auto w-full sm:w-auto shrink-0">
+            <div v-if="c.running" class="text-right font-mono text-[11px]">
+              <span class="text-indigo-400 font-bold mr-2">{{ c.cpu || '0.0%' }}</span>
+              <span class="text-slate-400">{{ c.memory?.split('/')[0] || '' }}</span>
+            </div>
+            <div v-else class="text-[11px] text-slate-500 font-mono">
+              stopped
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex items-center gap-1">
+              <button
+                v-if="!c.running"
+                @click="runContainerAction(c, 'start')"
+                :disabled="!!containerActionLoading[c.id]"
+                class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-emerald-400 transition"
+                title="Start container"
+              >
+                <Play class="h-3.5 w-3.5 fill-current" />
+              </button>
+              <button
+                v-if="c.running"
+                @click="runContainerAction(c, 'stop')"
+                :disabled="!!containerActionLoading[c.id]"
+                class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-rose-400 transition"
+                title="Stop container"
+              >
+                <Square class="h-3.5 w-3.5 fill-current" />
+              </button>
+              <button
+                @click="runContainerAction(c, 'restart')"
+                :disabled="!!containerActionLoading[c.id]"
+                class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition"
+                title="Restart container"
+              >
+                <RotateCcw
+                  class="h-3.5 w-3.5"
+                  :class="containerActionLoading[c.id] === 'restart' ? 'animate-spin' : ''"
+                />
+              </button>
             </div>
           </div>
         </div>
+      </div>
 
-        <div class="pt-3 border-t border-slate-800/80">
+      <!-- Footer Bar -->
+      <div class="pt-3 border-t border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+        <span class="text-slate-400 font-mono text-[11px]">
+          Showing {{ Math.min(filteredContainers.length, 10) }} of {{ filteredContainers.length }} filtered containers
+        </span>
+        <div class="flex items-center gap-3">
+          <router-link
+            to="/containers?tab=stacks"
+            class="text-purple-400 hover:text-purple-300 font-medium flex items-center gap-1"
+          >
+            <FolderOpen class="h-3.5 w-3.5" />
+            <span>Manage Stacks &rarr;</span>
+          </router-link>
           <router-link
             to="/containers"
-            class="cyber-btn-secondary w-full text-center text-xs flex items-center justify-center gap-2 py-2"
+            class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-3"
           >
-            <span>Open All Containers & Stacks</span>
+            <span>Open All Containers</span>
             <ArrowUpRight class="h-3.5 w-3.5" />
           </router-link>
         </div>
       </div>
+    </div>
 
-      <!-- Right 1 Col: Compose Stacks & Recent Activity Feed -->
-      <div class="space-y-6 flex flex-col justify-between">
-        <!-- Compose Stacks Snapshot -->
-        <div class="cyber-card space-y-3">
-          <div class="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
-            <div class="flex items-center gap-2">
-              <FolderOpen class="h-4 w-4 text-purple-400" />
-              <h2 class="text-xs font-semibold text-white">
-                Compose Stacks ({{ projects.length }})
-              </h2>
-            </div>
-            <router-link to="/containers" class="text-xs text-indigo-400 hover:underline">
-              All &rarr;
-            </router-link>
-          </div>
-
-          <div v-if="projects.length === 0" class="py-4 text-center text-xs text-slate-500">
-            No Compose stacks registered yet.
-          </div>
-
-          <div v-else class="space-y-2">
-            <div
-              v-for="p in projects.slice(0, 4)"
-              :key="p.id"
-              class="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 p-2.5 transition hover:border-slate-700"
-            >
-              <div class="truncate pr-2">
-                <router-link
-                  :to="'/containers?project=' + p.id"
-                  class="font-mono text-xs font-semibold text-white hover:text-indigo-300 truncate hover:underline block"
-                  :title="`Inspect stack '${p.name}' in Containers`"
-                >
-                  {{ p.name }}
-                </router-link>
-                <div class="text-[10px] text-slate-400 font-mono truncate">{{ p.path }}</div>
-              </div>
-
-              <router-link
-                :to="'/containers?project=' + p.id"
-                class="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-300 hover:border-indigo-500 hover:text-white shrink-0 font-medium transition"
-                title="Inspect Compose stack"
-              >
-                Inspect
-              </router-link>
-            </div>
-          </div>
+    <!-- Recent System Events & Audit Trail Feed -->
+    <div class="cyber-card space-y-3">
+      <div class="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+        <div class="flex items-center gap-2">
+          <Shield class="h-4 w-4 text-indigo-400" />
+          <h2 class="text-xs font-semibold text-white">Recent System Events & Audit Trail</h2>
         </div>
+        <router-link to="/audit" class="text-xs text-indigo-400 hover:underline">
+          View Full Audit Log &rarr;
+        </router-link>
+      </div>
 
-        <!-- Recent Audit Trail Feed -->
-        <div class="cyber-card space-y-3">
-          <div class="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
-            <div class="flex items-center gap-2">
-              <Shield class="h-4 w-4 text-indigo-400" />
-              <h2 class="text-xs font-semibold text-white">Recent System Events</h2>
-            </div>
-            <router-link to="/audit" class="text-xs text-indigo-400 hover:underline">
-              Audit &rarr;
-            </router-link>
-          </div>
+      <div v-if="recentAudits.length === 0" class="py-4 text-center text-xs text-slate-500 font-mono">
+        No audit records logged yet.
+      </div>
 
-          <div v-if="recentAudits.length === 0" class="py-4 text-center text-xs text-slate-500">
-            No audit records logged yet.
+      <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2.5">
+        <div
+          v-for="item in recentAudits.slice(0, 4)"
+          :key="item.id"
+          class="p-3 rounded-xl border border-slate-800 bg-slate-950/70 text-xs space-y-1 hover:border-slate-700 transition"
+        >
+          <div class="flex items-center justify-between">
+            <span class="font-semibold text-slate-200 capitalize truncate">
+              {{ item.action.replace(/_/g, ' ') }}
+            </span>
+            <span class="text-[10px] text-slate-500 font-mono">{{ formatTimeAgo(item.created_at) }}</span>
           </div>
-
-          <div v-else class="space-y-2">
-            <div
-              v-for="item in recentAudits.slice(0, 4)"
-              :key="item.id"
-              class="p-2.5 rounded-xl border border-slate-800 bg-slate-950/70 text-xs space-y-1"
-            >
-              <div class="flex items-center justify-between">
-                <span class="font-medium text-slate-200 capitalize truncate max-w-[140px]">
-                  {{ item.action.replace(/_/g, ' ') }}
-                </span>
-                <span class="text-[10px] text-slate-500 font-mono">{{ formatTimeAgo(item.created_at) }}</span>
-              </div>
-              <p class="text-[11px] text-slate-400 truncate" :title="item.detail || item.action">
-                {{ item.detail || 'Executed action' }}
-              </p>
-            </div>
-          </div>
+          <p class="text-[11px] text-slate-400 truncate" :title="item.detail || item.action">
+            {{ item.detail || 'Executed action' }}
+          </p>
         </div>
       </div>
     </div>

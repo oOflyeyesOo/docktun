@@ -652,8 +652,8 @@ onUnmounted(() => {
     <!-- TAB 1: OVERVIEW & DIAGNOSTICS                            -->
     <!-- ======================================================== -->
     <div v-if="activeTab === 'overview'" class="space-y-5">
-      <!-- Quick Telemetry Row -->
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <!-- Quick Telemetry Row (Shown when standalone page) -->
+      <div v-if="!embedded" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <!-- Tunnel Status -->
         <div class="cyber-card p-4 space-y-2">
           <div class="flex items-center justify-between text-xs text-slate-400">
@@ -712,6 +712,31 @@ onUnmounted(() => {
             {{ rules.length }}
           </div>
           <p class="text-[11px] text-slate-500">Active ingress mappings</p>
+        </div>
+      </div>
+
+      <!-- Compact Live Traffic Row (When embedded in Remote Access) -->
+      <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="cyber-card p-4 space-y-2">
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <span class="uppercase tracking-wider font-semibold text-[10px]">Total Routed Requests</span>
+            <Activity class="h-4 w-4 text-emerald-400" />
+          </div>
+          <div class="text-2xl font-bold font-mono text-emerald-400">
+            {{ tunnelStatus?.running ? (metrics?.total_requests?.toLocaleString() || '0') : '0' }}
+          </div>
+          <p class="text-[11px] text-slate-500">Cumulative ingress proxy traffic</p>
+        </div>
+
+        <div class="cyber-card p-4 space-y-2">
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <span class="uppercase tracking-wider font-semibold text-[10px]">Active Edge Conns</span>
+            <Network class="h-4 w-4 text-violet-400" />
+          </div>
+          <div class="text-2xl font-bold font-mono text-violet-300">
+            {{ tunnelStatus?.running ? (metrics?.active_connections ?? 0) : 0 }}
+          </div>
+          <p class="text-[11px] text-slate-500">QUIC / HTTP2 streams to Cloudflare edge</p>
         </div>
       </div>
 
