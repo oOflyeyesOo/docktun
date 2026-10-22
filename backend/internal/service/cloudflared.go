@@ -56,6 +56,10 @@ func (s *Cloudflared) findContainer() string {
 	return name
 }
 
+func (s *Cloudflared) IsRunning() bool {
+	return s.Status().Running
+}
+
 func (s *Cloudflared) Status() ProcessState {
 	cName := s.findContainer()
 	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Status}} {{.State.StartedAt}}", cName).Output()
