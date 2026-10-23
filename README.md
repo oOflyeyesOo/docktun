@@ -31,32 +31,55 @@ Self-hosted web dashboard to manage and monitor Cloudflare Tunnel (cloudflared) 
 
 ## Quick Start
 
-### Prerequisites
+### Option 1: Docker Compose (Recommended)
 
-- Docker & Docker Compose
-- A configured Cloudflare Tunnel (`cloudflared`)
-- Docker network `cloudflared` created:
-  ```bash
-  docker network create cloudflared
-  ```
-
-### Setup
+Start DockTun with zero initial configuration. The interactive **First-Run Setup Wizard** will guide you through setting up admin credentials, activating tunnels, and importing your existing containers:
 
 ```bash
 git clone https://github.com/oOflyeyesOo/docktun.git /opt/docktun
 cd /opt/docktun
 
-# Configure environment
-cp .env.example .env
-nano .env
-
-# Place your cloudflared config and credentials
-mkdir -p cloudflared
-# Copy your config.yml and credentials.json into ./cloudflared/
-
-# Start
+# Start containers (creates network and persistent data directory automatically)
+docker network create cloudflared 2>/dev/null || true
 docker compose up -d
+
+# Open in your browser to launch the Onboarding Wizard:
+# http://localhost:8080 or http://<your-server-ip>:8080
 ```
+
+### Option 2: Single Docker Run Command
+
+```bash
+docker network create cloudflared 2>/dev/null || true
+
+docker run -d --name docktun \
+  -p 8080:3001 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v docktun_data:/app/data \
+  --network cloudflared \
+  --restart unless-stopped \
+  ghcr.io/ooflyeyesoo/docktun:latest
+```
+
+### Option 3: Guided CLI Terminal Installer
+
+For dedicated Linux servers or VMs, the automated script installs Docker, cloudflared, sets up systemd/LXC nesting, and configures everything:
+
+```bash
+sudo ./install.sh
+```
+
+### First-Run Setup Wizard
+
+When you open DockTun in your browser for the first time, the guided onboarding wizard will:
+1. **Admin Credentials**: Create your secure administrator account.
+2. **Tunnel Activation**: Select and activate your remote access tunnel:
+   - **Cloudflare Tunnel (Zero Trust)**: Enter your tunnel connector token or API token.
+   - **WireGuard**: Configure a high-speed point-to-point VPN tunnel.
+   - **Tailscale**: Connect via Tailscale auth key into your secure mesh tailnet.
+   - **Local Only (ZeroConf)**: Access services locally via `<container>.local` mDNS.
+3. **Auto-Discovery & Import**: Discover all existing containers running on your Docker daemon, attach them to the tunnel network, and automatically import Compose projects.
+4. **Incident Alerts (Optional)**: Configure Discord, Telegram, Slack, or Ntfy push notifications.
 
 ### Automated Installation, Updates & Reset
 

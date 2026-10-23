@@ -1,4 +1,4 @@
-﻿package handler
+package handler
 
 import (
 	"encoding/json"
@@ -19,8 +19,10 @@ type Auth struct {
 }
 
 func NewAuth(cfg *config.Config, db *db.DB, audit *service.AuditLogger) *Auth {
-	hash, _ := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), 12)
-	db.Exec(`INSERT OR IGNORE INTO users (username, password_hash) VALUES (?, ?)`, cfg.AdminUsername, string(hash))
+	if cfg.AdminPassword != "" {
+		hash, _ := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), 12)
+		db.Exec(`INSERT OR IGNORE INTO users (username, password_hash) VALUES (?, ?)`, cfg.AdminUsername, string(hash))
+	}
 	return &Auth{cfg: cfg, db: db, audit: audit}
 }
 
@@ -50,8 +52,8 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	access, _ := h.generateToken(id, req.Username, 15*time.Minute)
-	refresh, _ := h.generateToken(id, req.Username, 7*24*time.Hour)
+	access, _ := h.GenerateToken(id, req.Username, 15*time.Minute)
+	refresh, _ := h.GenerateToken(id, req.Username, 7*24*time.Hour)
 
 	h.audit.Log(id, "login", "", r.RemoteAddr)
 
@@ -74,7 +76,7 @@ func (h *Auth) Refresh(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("user_id").(int)
 	username, _ := r.Context().Value("username").(string)
 
-	access, _ := h.generateToken(userID, username, 15*time.Minute)
+	access, _ := h.GenerateToken(userID, username, 15*time.Minute)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(tokenResponse{
@@ -83,7 +85,7 @@ func (h *Auth) Refresh(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Auth) generateToken(userID int, username string, duration time.Duration) (string, error) {
+func (h *Auth) GenerateToken(userID int, username string, duration time.Duration) (string, error) {
 	claims := jwt.MapClaims{
 		"sub":      userID,
 		"username": username,

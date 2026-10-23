@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { HardDrive, Trash2, RotateCcw, ShieldCheck, KeyRound, Globe, CheckCircle2, AlertCircle } from 'lucide-vue-next'
+import { HardDrive, Trash2, RotateCcw, ShieldCheck, KeyRound, Globe, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
 const { apiFetch } = useApi()
@@ -225,6 +225,31 @@ onMounted(() => {
         <button @click="changePassword" :disabled="loading" class="cyber-btn w-full">
           {{ loading ? 'UPDATING PASSWORD...' : 'UPDATE PASSWORD' }}
         </button>
+      </div>
+
+      <!-- 4. First-Run Setup & Onboarding Wizard -->
+      <div class="cyber-card space-y-4">
+        <div class="flex items-center gap-2 border-b border-border pb-3">
+          <Sparkles class="w-4 h-4 text-cyan-400" />
+          <h2 class="text-xs font-bold uppercase tracking-wider text-gray-200">First-Run Setup & Onboarding</h2>
+        </div>
+
+        <p class="text-xs text-muted leading-relaxed">
+          Need to reconfigure your Cloudflare tunnel, re-discover previous Docker containers, or switch between WireGuard and Tailscale?
+        </p>
+
+        <div class="p-3 rounded border border-border/60 bg-void/50 text-xs font-mono space-y-1">
+          <span class="text-cyan-300 font-bold block">Guided Reconfiguration Wizard</span>
+          <span class="text-muted text-[11px]">Walks through tunnel activation, network attachments, and container imports step-by-step.</span>
+        </div>
+
+        <router-link
+          to="/setup?force=true"
+          class="cyber-btn-secondary w-full text-center text-xs flex items-center justify-center gap-2 py-2 text-cyan-300 hover:text-cyan-200"
+        >
+          <RotateCcw class="w-3.5 h-3.5" />
+          <span>Launch Setup Wizard &rarr;</span>
+        </router-link>
       </div>
     </div>
   </div>

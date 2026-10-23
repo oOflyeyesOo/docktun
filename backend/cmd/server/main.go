@@ -81,7 +81,11 @@ func main() {
   meshHandler := handler.NewMesh(meshSvc)
   remoteAccessHandler := handler.NewRemoteAccess(remoteAccessSvc, auditSvc)
   cloudflareHandler := handler.NewCloudflareHandler(cfAPISvc, configSvc)
+  setupSvc := service.NewSetupService(cfg, database, dockerContainersSvc, cfAPISvc, configSvc, meshSvc, auditSvc, dataDir)
+  setupHandler := handler.NewSetup(setupSvc, authHandler)
 
+  r.Get("/api/setup/status", setupHandler.Status)
+  r.Post("/api/setup/complete", setupHandler.Complete)
   r.Post("/auth/login", authHandler.Login)
   r.Get("/api/logs/ws", logsHandler.Stream)
 

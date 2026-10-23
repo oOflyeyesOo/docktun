@@ -19,13 +19,37 @@ const router = createRouter({
     { path: '/tcp-access', redirect: (to) => ({ path: '/access', query: { tab: 'cloudflare', ...to.query } }) },
     { path: '/audit', redirect: (to) => ({ path: '/logs', query: { tab: 'audit', ...to.query } }) },
     { path: '/notifications', component: () => import('../views/NotificationsView.vue') },
+    { path: '/setup', component: () => import('../views/SetupView.vue') },
     { path: '/settings', component: () => import('../views/SettingsView.vue') },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
 
-router.beforeEach((to) => {
+let setupChecked = false
+
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
+
+  // First-run setup check
+  if (!setupChecked && to.path !== '/setup') {
+    try {
+      const res = await fetch('/api/setup/status')
+      if (res.ok) {
+        const data = await res.json()
+        setupChecked = true
+        if (!data.completed && to.query.force !== 'false') {
+          return '/setup'
+        }
+      }
+    } catch {
+      setupChecked = true
+    }
+  }
+
+  if (to.path === '/setup') {
+    return true
+  }
+
   if (to.path !== '/login' && !auth.isAuthenticated) return '/login'
 })
 

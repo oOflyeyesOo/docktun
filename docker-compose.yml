@@ -19,10 +19,9 @@ services:
     restart: unless-stopped
     ports:
       - "${PORT:-8080}:3001"
-    expose:
-      - "3001"
-      - "80"
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - ./data:/app/data
       - ./cloudflared:/etc/cloudflared
