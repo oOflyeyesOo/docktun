@@ -27,7 +27,10 @@ import {
   Server,
   Zap,
   KeyRound,
-  Network
+  Network,
+  Gamepad2,
+  Info,
+  Radio
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
@@ -1074,6 +1077,60 @@ onUnmounted(() => {
     <!-- TAB 3: TCP CLIENT ACCESS HELPER                          -->
     <!-- ======================================================== -->
     <div v-if="activeTab === 'tcp'" class="space-y-5">
+      <!-- Architectural Note: Free Tier TCP/UDP Reality, Workarounds & Playit.gg -->
+      <div class="cyber-card p-5 border-amber-500/30 bg-gradient-to-br from-slate-900/90 via-slate-950 to-amber-950/20 max-w-3xl space-y-3">
+        <div class="flex items-start gap-3">
+          <div class="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 mt-0.5 shrink-0">
+            <Info class="h-5 w-5" />
+          </div>
+          <div class="space-y-2 text-xs flex-1">
+            <div class="flex items-center gap-2">
+              <h3 class="font-bold text-white text-sm">Protocol Architecture: Free Tier Limitations & Workarounds</h3>
+              <span class="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                Architectural Note
+              </span>
+            </div>
+            <p class="text-slate-300 leading-relaxed">
+              Does arbitrary <strong class="text-white">TCP/UDP</strong> work natively on Cloudflare's Free Tier? 
+              <strong class="text-amber-300">No, the command below is a WebSocket encapsulation workaround.</strong>
+              Cloudflare edge public proxies listen only on HTTP/HTTPS ports (80/443).
+            </p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+              <div class="p-3 rounded-lg bg-slate-950/70 border border-slate-800 space-y-1.5">
+                <div class="text-[11px] font-semibold text-cyan-300 flex items-center gap-1.5">
+                  <Terminal class="h-3.5 w-3.5" />
+                  <span>The `cloudflared access tcp` Workaround</span>
+                </div>
+                <p class="text-[11px] text-slate-400 leading-normal">
+                  Wraps raw TCP into a WebSocket stream over port 443 through Cloudflare edge.
+                  <strong class="text-slate-300 block mt-1">Requirement:</strong> The client machine must run <code class="text-cyan-400 font-mono">cloudflared access tcp</code> locally. Excellent for personal SSH, RDP, and DB admin.
+                </p>
+              </div>
+
+              <div class="p-3 rounded-lg bg-slate-950/70 border border-slate-800 space-y-1.5">
+                <div class="text-[11px] font-semibold text-rose-300 flex items-center gap-1.5">
+                  <Gamepad2 class="h-3.5 w-3.5" />
+                  <span>Gaming & Raw UDP (Minecraft, Rust, Palworld)</span>
+                </div>
+                <p class="text-[11px] text-slate-400 leading-normal">
+                  Standard game clients cannot connect to Cloudflare Free tunnels without client-side software. Raw public TCP/UDP requires <strong class="text-slate-300">Cloudflare Spectrum</strong> (Enterprise/paid).
+                </p>
+              </div>
+            </div>
+
+            <div class="p-3 rounded-lg bg-indigo-950/40 border border-indigo-500/30 text-[11px] text-slate-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2 mt-1">
+              <div class="flex items-center gap-2">
+                <Gamepad2 class="h-4 w-4 text-indigo-400 shrink-0" />
+                <span>
+                  <strong>Need public game hosting without player software?</strong>
+                  Use <strong class="text-indigo-300">Playit.gg</strong> (Anycast public TCP/UDP) or invite friends to your private <strong class="text-purple-300">Tailscale</strong> network.
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="cyber-card p-5 space-y-4 max-w-3xl">
         <div class="border-b border-slate-800 pb-3">
           <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
