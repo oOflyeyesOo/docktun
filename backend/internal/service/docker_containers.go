@@ -605,11 +605,15 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		}
 		for _, b := range bindings {
 			if b.HostPort != "" {
-				hostIP := b.HostIP
-				if hostIP == "" {
-					hostIP = "0.0.0.0"
+				hostIP := strings.TrimSpace(b.HostIP)
+				if hostIP == "" || hostIP == "0.0.0.0" || hostIP == "::" || hostIP == "[::]" || hostIP == ":::" {
+					ports = append(ports, fmt.Sprintf("%s->%s", b.HostPort, port))
+				} else {
+					if strings.Contains(hostIP, ":") && !strings.HasPrefix(hostIP, "[") {
+						hostIP = "[" + hostIP + "]"
+					}
+					ports = append(ports, fmt.Sprintf("%s:%s->%s", hostIP, b.HostPort, port))
 				}
-				ports = append(ports, fmt.Sprintf("%s:%s->%s", hostIP, b.HostPort, port))
 			} else {
 				ports = append(ports, port)
 			}
@@ -2417,6 +2421,47 @@ func fetchLatestGitHubCommit(ctx context.Context, owner, repo, branch string) (s
 	return shortSHA, firstLineMsg, nil
 }
 
+func cleanPortNumber(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, `"'[] `)
+	s = strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(s), "/tcp"), "/udp")
+	s = strings.TrimPrefix(strings.TrimPrefix(strings.ToLower(s), "tcp/"), "udp/")
+	s = strings.TrimSpace(s)
+	if lastColon := strings.LastIndex(s, ":"); lastColon >= 0 {
+		s = s[lastColon+1:]
+	}
+	s = strings.TrimSpace(s)
+	if n, err := strconv.Atoi(s); err == nil && n > 0 && n <= 65535 {
+		return strconv.Itoa(n)
+	}
+	return ""
+}
+
+func extractAllPortNumbers(s string) []string {
+	var nums []string
+	var current strings.Builder
+	for _, ch := range s {
+		if ch >= '0' && ch <= '9' {
+			current.WriteRune(ch)
+		} else {
+			if current.Len() > 0 {
+				str := current.String()
+				if n, err := strconv.Atoi(str); err == nil && n > 0 && n <= 65535 {
+					nums = append(nums, str)
+				}
+				current.Reset()
+			}
+		}
+	}
+	if current.Len() > 0 {
+		str := current.String()
+		if n, err := strconv.Atoi(str); err == nil && n > 0 && n <= 65535 {
+			nums = append(nums, str)
+		}
+	}
+	return nums
+}
+
 type ParsedPortMapping struct {
 	HostIP        string
 	HostPort      string
@@ -2429,25 +2474,35 @@ func (p ParsedPortMapping) FormatForCompose() string {
 	if p.Protocol == "udp" {
 		proto = "/udp"
 	}
-	if p.HostIP != "" && p.HostIP != "0.0.0.0" && p.HostIP != "::" && p.HostIP != "[::]" {
-		return fmt.Sprintf("%s:%s:%s%s", p.HostIP, p.HostPort, p.ContainerPort, proto)
+	h := cleanPortNumber(p.HostPort)
+	c := cleanPortNumber(p.ContainerPort)
+	if c == "" {
+		c = h
 	}
-	return fmt.Sprintf("%s:%s%s", p.HostPort, p.ContainerPort, proto)
+	if h == "" {
+		h = c
+	}
+	if h == "" && c == "" {
+		return ""
+	}
+
+	ip := strings.Trim(p.HostIP, `"'[] `)
+	if ip != "" && ip != "0.0.0.0" && ip != "::" && ip != ":::" && ip != "[::]" {
+		if strings.Contains(ip, ":") && !strings.HasPrefix(ip, "[") {
+			ip = "[" + ip + "]"
+		}
+		return fmt.Sprintf("%s:%s:%s%s", ip, h, c, proto)
+	}
+	return fmt.Sprintf("%s:%s%s", h, c, proto)
 }
 
 func (p ParsedPortMapping) FormatForDockerRun() string {
-	proto := ""
-	if p.Protocol == "udp" {
-		proto = "/udp"
-	}
-	if p.HostIP != "" && p.HostIP != "0.0.0.0" && p.HostIP != "::" && p.HostIP != "[::]" {
-		return fmt.Sprintf("%s:%s:%s%s", p.HostIP, p.HostPort, p.ContainerPort, proto)
-	}
-	return fmt.Sprintf("%s:%s%s", p.HostPort, p.ContainerPort, proto)
+	return p.FormatForCompose()
 }
 
 func parsePortMapping(raw string) (ParsedPortMapping, bool) {
 	raw = strings.TrimSpace(raw)
+	raw = strings.Trim(raw, `"'`)
 	if raw == "" {
 		return ParsedPortMapping{}, false
 	}
@@ -2470,32 +2525,24 @@ func parsePortMapping(raw string) (ParsedPortMapping, bool) {
 		} else if strings.Contains(right, "/tcp") || strings.Contains(right, "/udp") {
 			containerSide = right
 			hostSide = left
-		} else if strings.Contains(left, ".") || strings.Contains(left, "::") {
+		} else if strings.Contains(left, ".") || strings.Contains(left, ":") {
 			hostSide = left
 			containerSide = right
-		} else if strings.Contains(right, ".") || strings.Contains(right, "::") {
-			hostSide = right
-			containerSide = left
 		} else {
 			hostSide = left
 			containerSide = right
 		}
 
-		cPort := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(containerSide), "/tcp"), "/udp")
-		cPort = strings.TrimSpace(cPort)
-		if lastC := strings.LastIndex(cPort, ":"); lastC >= 0 {
-			cPort = cPort[lastC+1:]
-		}
-
+		cPort := cleanPortNumber(containerSide)
 		hostIP := ""
-		hostPort := hostSide
+		hostPort := ""
 		if lastColon := strings.LastIndex(hostSide, ":"); lastColon >= 0 {
 			hostIP = strings.TrimSpace(hostSide[:lastColon])
-			hostPort = strings.TrimSpace(hostSide[lastColon+1:])
+			hostPort = cleanPortNumber(hostSide[lastColon+1:])
+		} else {
+			hostPort = cleanPortNumber(hostSide)
 		}
 		hostIP = strings.Trim(hostIP, "[]")
-		hostPort = strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(hostPort), "/tcp"), "/udp")
-		hostPort = strings.TrimSpace(hostPort)
 
 		if cPort != "" && hostPort != "" {
 			return ParsedPortMapping{
@@ -2504,10 +2551,54 @@ func parsePortMapping(raw string) (ParsedPortMapping, bool) {
 				ContainerPort: cPort,
 				Protocol:      proto,
 			}, true
+		} else if cPort != "" {
+			return ParsedPortMapping{
+				HostPort:      cPort,
+				ContainerPort: cPort,
+				Protocol:      proto,
+			}, true
 		}
 	}
 
-	// Case 2: standard mapping without "->", e.g. "7777:7777" or "0.0.0.0:7777:7777" or inverted "7777/tcp:0.0.0.0:7777"
+	// Case 2: Contains multiple colons or malformed IPv6, e.g. "7777/tcp:::7777" or ":::7777:7777" or "7777/tcp:::"
+	if strings.Contains(raw, ":::") || strings.Contains(raw, "::::") {
+		nums := extractAllPortNumbers(raw)
+		if len(nums) >= 2 {
+			return ParsedPortMapping{
+				HostPort:      nums[0],
+				ContainerPort: nums[1],
+				Protocol:      proto,
+			}, true
+		} else if len(nums) == 1 {
+			return ParsedPortMapping{
+				HostPort:      nums[0],
+				ContainerPort: nums[0],
+				Protocol:      proto,
+			}, true
+		}
+	}
+
+	// Case 3: bracketed IPv6, e.g. "[::]:7777:7777" or "[::1]:7777:7777"
+	if strings.HasPrefix(raw, "[") && strings.Contains(raw, "]:") {
+		bracketEnd := strings.Index(raw, "]:")
+		ip := raw[1:bracketEnd]
+		rest := raw[bracketEnd+2:]
+		restParts := strings.Split(rest, ":")
+		if len(restParts) == 2 {
+			hPort := cleanPortNumber(restParts[0])
+			cPort := cleanPortNumber(restParts[1])
+			if hPort != "" && cPort != "" {
+				return ParsedPortMapping{
+					HostIP:        ip,
+					HostPort:      hPort,
+					ContainerPort: cPort,
+					Protocol:      proto,
+				}, true
+			}
+		}
+	}
+
+	// Case 4: standard colon separated e.g. "host:container" or "ip:host:container"
 	if strings.Contains(raw, ":") {
 		colons := strings.Split(raw, ":")
 		if len(colons) == 2 {
@@ -2516,57 +2607,79 @@ func parsePortMapping(raw string) (ParsedPortMapping, bool) {
 
 			// If part1 has /tcp or /udp, e.g. "7777/tcp:7777" -> part1 is container!
 			if strings.Contains(strings.ToLower(part1), "/tcp") || strings.Contains(strings.ToLower(part1), "/udp") {
-				c := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(part1), "/tcp"), "/udp")
-				h := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(part2), "/tcp"), "/udp")
+				c := cleanPortNumber(part1)
+				h := cleanPortNumber(part2)
+				if c != "" && h != "" {
+					return ParsedPortMapping{
+						HostPort:      h,
+						ContainerPort: c,
+						Protocol:      proto,
+					}, true
+				}
+			}
+
+			// Normal "host:container"
+			h := cleanPortNumber(part1)
+			c := cleanPortNumber(part2)
+			if h != "" && c != "" {
 				return ParsedPortMapping{
 					HostPort:      h,
 					ContainerPort: c,
 					Protocol:      proto,
 				}, true
 			}
-
-			// Normal "host:container"
-			c := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(part2), "/tcp"), "/udp")
-			h := strings.TrimSpace(part1)
-			return ParsedPortMapping{
-				HostPort:      h,
-				ContainerPort: c,
-				Protocol:      proto,
-			}, true
 		} else if len(colons) == 3 {
-			// Could be "0.0.0.0:7777:7777" OR malformed "7777/tcp:0.0.0.0:7777"
 			part1 := strings.TrimSpace(colons[0])
 			part2 := strings.TrimSpace(colons[1])
 			part3 := strings.TrimSpace(colons[2])
 
 			if strings.Contains(strings.ToLower(part1), "/tcp") || strings.Contains(strings.ToLower(part1), "/udp") {
-				// Malformed "7777/tcp:0.0.0.0:7777" -> container is part1, host port is part3
-				c := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(part1), "/tcp"), "/udp")
-				h := strings.TrimSpace(part3)
+				c := cleanPortNumber(part1)
+				h := cleanPortNumber(part3)
+				if c != "" && h != "" {
+					return ParsedPortMapping{
+						HostPort:      h,
+						ContainerPort: c,
+						Protocol:      proto,
+					}, true
+				}
+			}
+
+			ip := strings.Trim(part1, "[]")
+			h := cleanPortNumber(part2)
+			c := cleanPortNumber(part3)
+			if h != "" && c != "" {
 				return ParsedPortMapping{
+					HostIP:        ip,
 					HostPort:      h,
 					ContainerPort: c,
 					Protocol:      proto,
 				}, true
 			}
-
-			ip := strings.Trim(part1, "[]")
-			h := part2
-			c := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(part3), "/tcp"), "/udp")
-			return ParsedPortMapping{
-				HostIP:        ip,
-				HostPort:      h,
-				ContainerPort: c,
-				Protocol:      proto,
-			}, true
+		} else {
+			// len(colons) > 3, e.g. multiple colons or IPv6 addresses
+			nums := extractAllPortNumbers(raw)
+			if len(nums) >= 2 {
+				return ParsedPortMapping{
+					HostPort:      nums[0],
+					ContainerPort: nums[1],
+					Protocol:      proto,
+				}, true
+			} else if len(nums) == 1 {
+				return ParsedPortMapping{
+					HostPort:      nums[0],
+					ContainerPort: nums[0],
+					Protocol:      proto,
+				}, true
+			}
 		}
 	}
 
-	// Case 3: single port, e.g. "7777/tcp" or "7777"
-	clean := strings.TrimSuffix(strings.TrimSuffix(strings.ToLower(raw), "/tcp"), "/udp")
-	clean = strings.TrimSpace(clean)
+	// Case 5: single port number
+	clean := cleanPortNumber(raw)
 	if clean != "" {
 		return ParsedPortMapping{
+			HostPort:      clean,
 			ContainerPort: clean,
 			Protocol:      proto,
 		}, true
@@ -2575,7 +2688,7 @@ func parsePortMapping(raw string) (ParsedPortMapping, bool) {
 	return ParsedPortMapping{}, false
 }
 
-func sanitizeComposeFile(composePath string) bool {
+func SanitizeComposeFile(composePath string) bool {
 	contentBytes, err := os.ReadFile(composePath)
 	if err != nil {
 		return false
@@ -2584,23 +2697,61 @@ func sanitizeComposeFile(composePath string) bool {
 	lines := strings.Split(content, "\n")
 	modified := false
 	inPorts := false
+	seenPorts := make(map[string]bool)
 
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "ports:") {
 			inPorts = true
+			seenPorts = make(map[string]bool)
 			continue
 		}
 		if inPorts {
 			if strings.HasPrefix(trimmed, "-") {
 				rawPort := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+				// Remove inline comment if present
+				if cIdx := strings.Index(rawPort, "#"); cIdx != -1 {
+					rawPort = strings.TrimSpace(rawPort[:cIdx])
+				}
 				rawPort = strings.Trim(rawPort, `"'`)
-				if parsed, ok := parsePortMapping(rawPort); ok && parsed.HostPort != "" && parsed.ContainerPort != "" {
+
+				parsed, ok := parsePortMapping(rawPort)
+				if ok {
 					correctCompose := parsed.FormatForCompose()
-					if rawPort != correctCompose {
+					if correctCompose != "" {
+						if seenPorts[correctCompose] {
+							dashIdx := strings.Index(line, "-")
+							indent := line[:dashIdx]
+							lines[i] = fmt.Sprintf("%s# duplicate port removed: %s", indent, rawPort)
+							modified = true
+							continue
+						}
+						seenPorts[correctCompose] = true
+
+						if rawPort != correctCompose || strings.Contains(line, ":::") || strings.Contains(line, "/tcp::") {
+							dashIdx := strings.Index(line, "-")
+							indent := line[:dashIdx]
+							lines[i] = fmt.Sprintf("%s- \"%s\"", indent, correctCompose)
+							modified = true
+						}
+					}
+				} else if strings.Contains(line, ":::") || strings.Contains(line, "/tcp:") {
+					// Fallback for severely corrupted port line
+					nums := extractAllPortNumbers(line)
+					if len(nums) > 0 {
+						hNum := nums[0]
+						cNum := nums[len(nums)-1]
+						proto := ""
+						if strings.Contains(strings.ToLower(line), "udp") {
+							proto = "/udp"
+						}
+						correct := fmt.Sprintf("%s:%s%s", hNum, cNum, proto)
 						dashIdx := strings.Index(line, "-")
-						indent := line[:dashIdx]
-						lines[i] = fmt.Sprintf("%s- \"%s\"", indent, correctCompose)
+						indent := "      "
+						if dashIdx >= 0 {
+							indent = line[:dashIdx]
+						}
+						lines[i] = fmt.Sprintf("%s- \"%s\"", indent, correct)
 						modified = true
 					}
 				}
@@ -2616,5 +2767,9 @@ func sanitizeComposeFile(composePath string) bool {
 		return true
 	}
 	return false
+}
+
+func sanitizeComposeFile(composePath string) bool {
+	return SanitizeComposeFile(composePath)
 }
 

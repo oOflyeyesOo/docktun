@@ -232,6 +232,14 @@ func (s *Projects) DeployStream(id int, p Project, ref string, onDone func(strin
 }
 
 func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
+	for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
+		f := filepath.Join(path, name)
+		if fileExists(f) {
+			SanitizeComposeFile(f)
+			break
+		}
+	}
+
 	cmdArgs := []string{"compose"}
 	if p, err := s.GetByID(id); err == nil && p.Name != "" {
 		cmdArgs = append(cmdArgs, "-p", p.Name)
