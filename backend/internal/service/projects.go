@@ -84,6 +84,12 @@ func (s *Projects) markDone(id int) {
 }
 
 func (s *Projects) List() ([]Project, error) {
+	// Auto-prune ghost stacks and duplicate container-name entries
+	_, _ = s.db.Exec(`DELETE FROM projects WHERE name = 'public-cloudflare-tunnel-cloudflared' OR name LIKE '%cloudflare-tunnel%'`)
+	_, _ = s.db.Exec(`DELETE FROM projects WHERE name IN ('docktun-cloudflared', 'docktun-wireguard', 'docktun-tailscale', 'docktun-zeroconf')`)
+	_, _ = s.db.Exec(`DELETE FROM projects WHERE name = 'mediastorm-postgres' AND EXISTS (SELECT 1 FROM projects p2 WHERE p2.name = 'mediastorm')`)
+	_, _ = s.db.Exec(`DELETE FROM projects WHERE name = 'tun' AND EXISTS (SELECT 1 FROM projects p2 WHERE p2.name = 'docktun')`)
+
 	rows, err := s.db.Query("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects ORDER BY name")
 	if err != nil {
 		return nil, err
@@ -100,6 +106,21 @@ func (s *Projects) List() ([]Project, error) {
 		projects = append(projects, p)
 	}
 	return projects, nil
+}
+
+func (s *Projects) PruneOrphans() (int, error) {
+	res, err := s.db.Exec(`
+		DELETE FROM projects 
+		WHERE name IN ('public-cloudflare-tunnel-cloudflared', 'docktun-cloudflared', 'docktun-wireguard', 'docktun-tailscale', 'docktun-zeroconf')
+		   OR name LIKE '%cloudflare-tunnel%'
+		   OR (name = 'mediastorm-postgres' AND EXISTS (SELECT 1 FROM projects p2 WHERE p2.name = 'mediastorm'))
+		   OR (name = 'tun' AND EXISTS (SELECT 1 FROM projects p2 WHERE p2.name = 'docktun'))
+	`)
+	if err != nil {
+		return 0, err
+	}
+	affected, _ := res.RowsAffected()
+	return int(affected), nil
 }
 
 func (s *Projects) Create(name, path, repoURL, gitUsername, gitToken string) (Project, error) {

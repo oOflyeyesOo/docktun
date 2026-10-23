@@ -306,11 +306,19 @@ func (s *DockerContainers) List() ([]Container, error) {
 			cLower == "wireguard" ||
 			cLower == "wg-easy" ||
 			cLower == "tailscale" ||
+			cLower == "zeroconf" ||
 			strings.EqualFold(c.ProjectName, "docktun") ||
 			strings.EqualFold(c.ProjectName, "tun")
 
-		if isDocktunCore && c.ProjectID == 0 {
+		if isDocktunCore {
 			c.ProjectName = "docktun"
+			if p, ok := projectsByName["docktun"]; ok {
+				c.ProjectID = p.ID
+				c.ProjectPath = p.Path
+			} else if p, ok := projectsByName["tun"]; ok {
+				c.ProjectID = p.ID
+				c.ProjectPath = p.Path
+			}
 		}
 
 		if c.Running {
@@ -787,12 +795,24 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		cLower == "wireguard" ||
 		cLower == "wg-easy" ||
 		cLower == "tailscale" ||
+		cLower == "zeroconf" ||
 		strings.EqualFold(detail.ProjectName, "docktun") ||
 		strings.EqualFold(detail.ProjectName, "tun")
 
-	if isDocktunCore && detail.ProjectID == 0 {
+	if isDocktunCore {
 		detail.ProjectName = "docktun"
 		detail.Container.ProjectName = "docktun"
+		if p, ok := projectsByName["docktun"]; ok {
+			detail.ProjectID = p.ID
+			detail.ProjectPath = p.Path
+			detail.Container.ProjectID = p.ID
+			detail.Container.ProjectPath = p.Path
+		} else if p, ok := projectsByName["tun"]; ok {
+			detail.ProjectID = p.ID
+			detail.ProjectPath = p.Path
+			detail.Container.ProjectID = p.ID
+			detail.Container.ProjectPath = p.Path
+		}
 	}
 
 	if u, ok := s.getUpdateFromDB(detail.ID); ok {
@@ -873,10 +893,70 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 	if cname == "" {
 		cname = id
 	}
+	cLower := strings.ToLower(cname)
 
-	destDir := filepath.Join("/opt/projects", cname)
-	if s.cfg.SelfPath != "" {
-		destDir = filepath.Join(filepath.Dir(s.cfg.SelfPath), cname)
+	// Determine canonical Stack / Project Name
+	targetProjectName := strings.TrimSpace(detail.ProjectName)
+	targetProjectPath := strings.TrimSpace(detail.ProjectPath)
+
+	isDocktunCore := strings.HasPrefix(cLower, "docktun") ||
+		cLower == "cloudflared" ||
+		cLower == "wireguard" ||
+		cLower == "tailscale" ||
+		cLower == "zeroconf" ||
+		strings.EqualFold(detail.ProjectName, "docktun") ||
+		strings.EqualFold(detail.ProjectName, "tun")
+
+	if isDocktunCore {
+		targetProjectName = "docktun"
+		if s.cfg.SelfPath != "" {
+			targetProjectPath = filepath.Dir(s.cfg.SelfPath)
+		} else {
+			targetProjectPath = "./"
+		}
+	}
+
+	if targetProjectName == "" {
+		// Check if container name is part of an existing stack (e.g. mediastorm-postgres -> mediastorm)
+		if s.db != nil {
+			rows, _ := s.db.Query(`SELECT id, name, path FROM projects`)
+			if rows != nil {
+				var existingID int
+				for rows.Next() {
+					var pid int
+					var pName, pPath string
+					if err := rows.Scan(&pid, &pName, &pPath); err == nil {
+						pLower := strings.ToLower(pName)
+						if strings.HasPrefix(cLower, pLower+"-") || strings.HasPrefix(cLower, pLower+"_") {
+							existingID = pid
+							break
+						}
+					}
+				}
+				rows.Close()
+				if existingID > 0 {
+					return existingID, nil
+				}
+			}
+		}
+		targetProjectName = cname
+	}
+
+	// If this project is already registered in SQLite, return existing ID
+	if s.db != nil {
+		var existingID int
+		_ = s.db.QueryRow(`SELECT id FROM projects WHERE LOWER(name) = LOWER(?)`, targetProjectName).Scan(&existingID)
+		if existingID > 0 {
+			return existingID, nil
+		}
+	}
+
+	destDir := targetProjectPath
+	if destDir == "" {
+		destDir = filepath.Join("/opt/projects", targetProjectName)
+		if s.cfg.SelfPath != "" {
+			destDir = filepath.Join(filepath.Dir(s.cfg.SelfPath), targetProjectName)
+		}
 	}
 
 	if err := os.MkdirAll(destDir, 0755); err != nil {
@@ -1010,10 +1090,10 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 	}
 
 	if s.db != nil {
-		_, _ = s.db.Exec(`INSERT OR IGNORE INTO projects (name, path) VALUES (?, ?)`, cname, destDir)
-		_, _ = s.db.Exec(`UPDATE projects SET path = ? WHERE name = ?`, destDir, cname)
+		_, _ = s.db.Exec(`INSERT OR IGNORE INTO projects (name, path) VALUES (?, ?)`, targetProjectName, destDir)
+		_, _ = s.db.Exec(`UPDATE projects SET path = ? WHERE name = ?`, destDir, targetProjectName)
 		var projID int
-		_ = s.db.QueryRow(`SELECT id FROM projects WHERE path = ? OR name = ?`, destDir, cname).Scan(&projID)
+		_ = s.db.QueryRow(`SELECT id FROM projects WHERE LOWER(name) = LOWER(?) OR path = ?`, targetProjectName, destDir).Scan(&projID)
 		if projID > 0 {
 			return projID, nil
 		}

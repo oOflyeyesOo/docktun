@@ -28,7 +28,11 @@ import {
   Filter,
   ArrowRight,
   Box,
-  HardDrive
+  HardDrive,
+  ChevronDown,
+  ChevronRight,
+  Sliders,
+  Code2
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
@@ -309,18 +313,81 @@ const containerStats = computed(() => {
   }
 })
 
-// Stacks Filter State
+// Stacks Filter & Grouping State
+interface DashboardStackGroup {
+  key: string
+  name: string
+  isStack: boolean
+  projectId?: number
+  projectPath?: string
+  containers: any[]
+  runningCount: number
+  totalCount: number
+  totalCpu: string
+  hasUpdates: boolean
+}
+
 const stackFilter = ref<string>('all')
+const collapsedStacks = ref<Record<string, boolean>>({})
+
+function toggleStackCollapse(key: string) {
+  collapsedStacks.value[key] = !collapsedStacks.value[key]
+}
+
+function expandAllStacks() {
+  collapsedStacks.value = {}
+}
+
+function collapseAllStacks() {
+  const next: Record<string, boolean> = {}
+  dashboardStackGroups.value.forEach((g) => {
+    next[g.key] = true
+  })
+  collapsedStacks.value = next
+}
+
+const areAllCollapsed = computed(() => {
+  if (dashboardStackGroups.value.length === 0) return false
+  return dashboardStackGroups.value.every((g) => collapsedStacks.value[g.key])
+})
+
+const stackActionLoading = ref<Record<number, string>>({})
+
+async function runStackAction(projectId: number, action: 'up' | 'restart' | 'stop') {
+  if (!projectId) return
+  stackActionLoading.value[projectId] = action
+  try {
+    await apiFetch(`/api/projects/${projectId}/action/${action}`, { method: 'POST' })
+    await fetchContainers()
+  } catch (e: any) {
+    alert(e.message || `Failed to ${action} stack`)
+  } finally {
+    delete stackActionLoading.value[projectId]
+  }
+}
 
 const availableStacks = computed(() => {
   const set = new Set<string>()
   for (const c of containers.value) {
-    if (c.project_name) set.add(c.project_name)
+    let pName = c.project_name ? c.project_name.trim() : ''
+    const cLower = c.name.toLowerCase()
+    if (!pName && (cLower.startsWith('docktun') || cLower === 'cloudflared' || cLower === 'wireguard' || cLower === 'tailscale')) {
+      pName = 'docktun'
+    }
+    if (pName && pName !== 'public-cloudflare-tunnel-cloudflared' && !pName.includes('cloudflare-tunnel')) {
+      set.add(pName)
+    }
   }
   for (const p of projects.value) {
-    if (p.name) set.add(p.name)
+    if (p.name && p.name !== 'public-cloudflare-tunnel-cloudflared' && !p.name.includes('cloudflare-tunnel') && !p.name.startsWith('docktun-')) {
+      set.add(p.name)
+    }
   }
-  return Array.from(set).sort()
+  return Array.from(set).sort((a, b) => {
+    if (a === 'docktun') return -1
+    if (b === 'docktun') return 1
+    return a.localeCompare(b)
+  })
 })
 
 // Origin Health lookup mapped by Hostname
@@ -381,19 +448,119 @@ const filteredContainers = computed(() => {
     if (containerFilter.value === 'running' && !c.running) return false
     if (containerFilter.value === 'stopped' && c.running) return false
     if (containerFilter.value === 'updates' && !c.update_available) return false
+    
+    // Canonical stack name resolution for filtering
+    let cProj = c.project_name || ''
+    const cLower = c.name.toLowerCase()
+    if (
+      cLower.startsWith('docktun') ||
+      cLower === 'wireguard' ||
+      cLower === 'cloudflared' ||
+      cLower === 'tailscale' ||
+      cLower === 'wg-easy' ||
+      cLower === 'zeroconf' ||
+      cProj === 'docktun' ||
+      cProj === 'tun'
+    ) {
+      cProj = 'docktun'
+    }
+
     if (stackFilter.value !== 'all') {
-      if (stackFilter.value === '__standalone__' && c.project_name) return false
-      if (stackFilter.value !== '__standalone__' && c.project_name !== stackFilter.value) return false
+      if (stackFilter.value === '__standalone__' && cProj) return false
+      if (stackFilter.value !== '__standalone__' && cProj !== stackFilter.value) return false
     }
     if (!searchQuery.value) return true
     const q = searchQuery.value.toLowerCase()
     return (
       c.name.toLowerCase().includes(q) ||
-      (c.image && c.image.toLowerCase().includes(q)) ||
       (c.hostname && c.hostname.toLowerCase().includes(q)) ||
-      (c.project_name && c.project_name.toLowerCase().includes(q))
+      cProj.toLowerCase().includes(q)
     )
   })
+})
+
+// Compute Grouped Stacks for the Dashboard
+const dashboardStackGroups = computed<DashboardStackGroup[]>(() => {
+  const list = filteredContainers.value
+  const map = new Map<string, any[]>()
+
+  list.forEach((c) => {
+    let key = c.project_name ? c.project_name.trim() : ''
+    const lower = c.name.toLowerCase()
+    if (
+      !key ||
+      lower.startsWith('docktun') ||
+      lower === 'wireguard' ||
+      lower === 'cloudflared' ||
+      lower === 'tailscale' ||
+      lower === 'wg-easy' ||
+      lower === 'zeroconf'
+    ) {
+      if (
+        lower.startsWith('docktun') ||
+        lower === 'wireguard' ||
+        lower === 'cloudflared' ||
+        lower === 'tailscale' ||
+        lower === 'wg-easy' ||
+        lower === 'zeroconf' ||
+        key === 'docktun' ||
+        key === 'tun'
+      ) {
+        key = 'docktun'
+      }
+    }
+    if (!key) {
+      key = '__standalone__'
+    }
+    if (!map.has(key)) {
+      map.set(key, [])
+    }
+    map.get(key)!.push(c)
+  })
+
+  const groups: DashboardStackGroup[] = []
+  map.forEach((items, key) => {
+    let cpuSum = 0
+    items.forEach((c) => {
+      if (c.running && c.cpu) {
+        const p = parseFloat(c.cpu.replace('%', ''))
+        if (!isNaN(p)) cpuSum += p
+      }
+    })
+
+    const isStack = key !== '__standalone__'
+    const firstWithProj = items.find((c) => c.project_id)
+    const projectId = firstWithProj?.project_id
+    const projectPath = firstWithProj?.project_path
+
+    let groupName = isStack ? key : 'Standalone Containers'
+    if (key === 'docktun') {
+      groupName = 'DockTun Core'
+    }
+
+    groups.push({
+      key,
+      name: groupName,
+      isStack,
+      projectId,
+      projectPath,
+      containers: items,
+      runningCount: items.filter((c) => c.running).length,
+      totalCount: items.length,
+      totalCpu: cpuSum.toFixed(1) + '%',
+      hasUpdates: items.some((c) => c.update_available),
+    })
+  })
+
+  groups.sort((a, b) => {
+    if (a.key === 'docktun') return -1
+    if (b.key === 'docktun') return 1
+    if (a.isStack && !b.isStack) return -1
+    if (!a.isStack && b.isStack) return 1
+    return a.name.localeCompare(b.name)
+  })
+
+  return groups
 })
 
 // Local & Network accessible container services
@@ -533,74 +700,7 @@ onUnmounted(() => {
       </button>
     </div>
 
-    <!-- System Hardware & Engine Telemetry Strip -->
-    <div v-if="status?.docker_system" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-      <!-- Engine Version & Arch -->
-      <div class="px-3 py-2 rounded-xl border border-slate-800 bg-slate-900/40 flex items-center justify-between text-xs">
-        <div class="flex items-center gap-2 min-w-0">
-          <Server class="h-4 w-4 text-indigo-400 shrink-0" />
-          <div class="min-w-0">
-            <div class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Docker Engine</div>
-            <div class="font-mono text-white font-bold truncate" :title="status.docker_system.server_version">
-              v{{ status.docker_system.server_version || '—' }}
-            </div>
-          </div>
-        </div>
-        <span class="text-[10px] font-mono text-slate-400 px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 shrink-0 ml-1">
-          {{ status.docker_system.architecture || 'x86_64' }}
-        </span>
-      </div>
-
-      <!-- Host OS & CPUs -->
-      <div class="px-3 py-2 rounded-xl border border-slate-800 bg-slate-900/40 flex items-center justify-between text-xs">
-        <div class="flex items-center gap-2 min-w-0">
-          <Cpu class="h-4 w-4 text-purple-400 shrink-0" />
-          <div class="min-w-0">
-            <div class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Host System</div>
-            <div class="font-medium text-slate-200 truncate" :title="status.docker_system.operating_system">
-              {{ status.docker_system.operating_system || 'Linux Host' }}
-            </div>
-          </div>
-        </div>
-        <span class="text-[10px] font-mono text-purple-300 font-semibold shrink-0 ml-1">
-          {{ status.docker_system.cpus ? `${status.docker_system.cpus} vCPU` : 'Host' }}
-        </span>
-      </div>
-
-      <!-- Host Memory & Images -->
-      <div class="px-3 py-2 rounded-xl border border-slate-800 bg-slate-900/40 flex items-center justify-between text-xs">
-        <div class="flex items-center gap-2 min-w-0">
-          <HardDrive class="h-4 w-4 text-emerald-400 shrink-0" />
-          <div class="min-w-0">
-            <div class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Host Memory</div>
-            <div class="font-mono text-emerald-300 font-bold truncate">
-              {{ status.docker_system.mem_total_str || containerStats.totalLimitStr }}
-            </div>
-          </div>
-        </div>
-        <span class="text-[10px] font-mono text-slate-400 shrink-0 ml-1">
-          {{ status.docker_system.images_count || 0 }} images
-        </span>
-      </div>
-
-      <!-- Origin Health Probe Ratio -->
-      <div class="px-3 py-2 rounded-xl border border-slate-800 bg-slate-900/40 flex items-center justify-between text-xs">
-        <div class="flex items-center gap-2 min-w-0">
-          <Activity class="h-4 w-4 shrink-0" :class="originHealthSummary.allUp ? 'text-emerald-400' : 'text-amber-400'" />
-          <div class="min-w-0">
-            <div class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Origin Health</div>
-            <div class="font-mono font-bold truncate" :class="originHealthSummary.allUp ? 'text-emerald-400' : 'text-amber-300'">
-              {{ originHealthSummary.up }}/{{ originHealthSummary.total }} Healthy
-            </div>
-          </div>
-        </div>
-        <span class="text-[10px] font-mono text-cyan-300 px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 shrink-0 ml-1">
-          {{ originHealthSummary.avgLatency }}
-        </span>
-      </div>
-    </div>
-
-    <!-- 4 High-Resolution Telemetry Metric Cards -->
+    <!-- 4 High-Density Executive Telemetry Metric Cards -->
     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <!-- 1. Cloudflare Tunnel Card -->
       <div class="cyber-card flex flex-col justify-between">
@@ -652,11 +752,11 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 2. Traffic & Stream Activity Card -->
+      <!-- 2. Traffic & Origin Health Card -->
       <div class="cyber-card flex flex-col justify-between">
         <div>
           <div class="flex items-center justify-between text-slate-400">
-            <span class="text-[11px] font-semibold uppercase tracking-wider">Tunnel Traffic</span>
+            <span class="text-[11px] font-semibold uppercase tracking-wider">Traffic & Origins</span>
             <div class="p-1 rounded-md bg-emerald-500/10 text-emerald-400">
               <Activity class="h-3.5 w-3.5" />
             </div>
@@ -666,6 +766,20 @@ onUnmounted(() => {
               {{ status?.total_requests?.toLocaleString() || '0' }}
             </span>
             <span class="text-xs text-slate-400">total requests</span>
+          </div>
+
+          <!-- Origin Health Dial Probe -->
+          <div class="mt-2 flex items-center gap-2 text-xs">
+            <span
+              class="inline-flex items-center gap-1 text-[11px] font-mono font-bold"
+              :class="originHealthSummary.allUp ? 'text-emerald-400' : 'text-amber-400'"
+            >
+              <Activity class="h-3 w-3" />
+              <span>{{ originHealthSummary.up }}/{{ originHealthSummary.total }} Healthy</span>
+            </span>
+            <span class="text-[10px] font-mono text-cyan-300 px-1.5 py-0.2 rounded bg-slate-800 border border-slate-700">
+              {{ originHealthSummary.avgLatency }}
+            </span>
           </div>
         </div>
 
@@ -677,11 +791,11 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 3. Container Fleet Card -->
+      <!-- 3. Container Fleet & Stacks Card -->
       <div class="cyber-card flex flex-col justify-between">
         <div>
           <div class="flex items-center justify-between text-slate-400">
-            <span class="text-[11px] font-semibold uppercase tracking-wider">Docker Fleet</span>
+            <span class="text-[11px] font-semibold uppercase tracking-wider">Container Fleet</span>
             <div class="p-1 rounded-md bg-indigo-500/10 text-indigo-400">
               <Server class="h-3.5 w-3.5" />
             </div>
@@ -690,13 +804,19 @@ onUnmounted(() => {
             <span class="text-2xl font-bold text-white font-mono">{{ containerStats.running }}</span>
             <span class="text-xs text-slate-400">/ {{ containerStats.total }} running</span>
           </div>
+
+          <div class="mt-2 flex items-center gap-2 text-xs">
+            <span class="text-[11px] font-mono text-purple-300 bg-purple-500/10 border border-purple-500/20 px-2 py-0.2 rounded">
+              {{ dashboardStackGroups.length }} Stacks
+            </span>
+            <span :class="containerStats.stopped > 0 ? 'text-amber-400 font-medium' : 'text-slate-500'" class="text-[11px] font-mono">
+              {{ containerStats.stopped }} stopped
+            </span>
+          </div>
         </div>
 
         <div class="mt-3 border-t border-slate-800/80 pt-2 flex items-center justify-between text-xs text-slate-400">
-          <div class="flex items-center gap-2">
-            <span :class="containerStats.stopped > 0 ? 'text-amber-400 font-medium' : 'text-slate-500'">
-              {{ containerStats.stopped }} stopped
-            </span>
+          <div>
             <router-link
               v-if="containerStats.updatesCount > 0"
               to="/containers"
@@ -706,6 +826,9 @@ onUnmounted(() => {
               <Sparkles class="h-2.5 w-2.5" />
               {{ containerStats.updatesCount }} update{{ containerStats.updatesCount > 1 ? 's' : '' }}
             </router-link>
+            <span v-else class="text-[11px] text-slate-500 font-mono">
+              All up to date
+            </span>
           </div>
           <router-link to="/containers" class="text-indigo-400 hover:underline">Manage &rarr;</router-link>
         </div>
@@ -715,7 +838,7 @@ onUnmounted(() => {
       <div class="cyber-card flex flex-col justify-between">
         <div>
           <div class="flex items-center justify-between text-slate-400">
-            <span class="text-[11px] font-semibold uppercase tracking-wider">Resource Load</span>
+            <span class="text-[11px] font-semibold uppercase tracking-wider">Host Resources</span>
             <div class="p-1 rounded-md bg-purple-500/10 text-purple-400">
               <Cpu class="h-3.5 w-3.5" />
             </div>
@@ -727,17 +850,18 @@ onUnmounted(() => {
             </div>
             <div class="text-right font-mono text-xs">
               <span class="text-emerald-400 font-bold">{{ containerStats.totalMemStr }}</span>
-              <span class="text-[10px] text-slate-500 block">RAM</span>
+              <span class="text-[10px] text-slate-500 block">/ {{ status?.docker_system?.mem_total_str || containerStats.totalLimitStr }}</span>
             </div>
+          </div>
+
+          <div class="mt-2 flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span>Engine: v{{ status?.docker_system?.server_version || '—' }} ({{ status?.docker_system?.architecture || 'x86_64' }})</span>
+            <span class="text-purple-300 font-semibold">{{ status?.docker_system?.cpus ? `${status.docker_system.cpus} vCPU` : '' }}</span>
           </div>
         </div>
 
         <!-- Progress Bar -->
-        <div class="mt-3 border-t border-slate-800/80 pt-2 space-y-1.5">
-          <div class="flex items-center justify-between text-[10px] text-slate-400">
-            <span>Container Stack CPU</span>
-            <span class="font-mono">{{ containerStats.cpuPercent }}</span>
-          </div>
+        <div class="mt-3 border-t border-slate-800/80 pt-2 space-y-1">
           <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
             <div
               class="h-full bg-indigo-500 transition-all duration-300 rounded-full"
@@ -1016,7 +1140,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Combined Container Fleet & Managed Compose Stacks (Full-Width Unified Section) -->
+    <!-- Grouped Container Fleet & Managed Compose Stacks -->
     <div class="cyber-card space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
         <div class="flex items-center gap-2 flex-wrap">
@@ -1027,19 +1151,19 @@ onUnmounted(() => {
           <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
             {{ filteredContainers.length }} / {{ containers.length }} containers
           </span>
-          <span v-if="projects.length > 0" class="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300 border border-purple-500/30 font-mono">
-            {{ projects.length }} stacks
+          <span v-if="dashboardStackGroups.length > 0" class="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300 border border-purple-500/30 font-mono">
+            {{ dashboardStackGroups.length }} stacks
           </span>
         </div>
 
-        <!-- Search & Filters -->
+        <!-- Search & Filter Controls -->
         <div class="flex items-center gap-2 flex-wrap">
-          <div class="relative w-44 sm:w-52">
+          <div class="relative w-40 sm:w-48">
             <Search class="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
               v-model="searchQuery"
               type="text"
-              placeholder="Search containers or stacks…"
+              placeholder="Search services…"
               class="w-full pl-8 pr-2.5 py-1 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
             />
           </div>
@@ -1051,7 +1175,9 @@ onUnmounted(() => {
             class="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-slate-300 focus:outline-none focus:border-indigo-500 font-mono"
           >
             <option value="all">All Stacks</option>
-            <option v-for="stk in availableStacks" :key="stk" :value="stk">Stack: {{ stk }}</option>
+            <option v-for="stk in availableStacks" :key="stk" :value="stk">
+              {{ stk === 'docktun' ? 'DockTun Core' : stk }}
+            </option>
             <option value="__standalone__">Standalone</option>
           </select>
 
@@ -1065,165 +1191,276 @@ onUnmounted(() => {
             <option value="stopped">Stopped</option>
             <option value="updates">Updates</option>
           </select>
+
+          <!-- Expand / Collapse All Toggle -->
+          <button
+            @click="areAllCollapsed ? expandAllStacks() : collapseAllStacks()"
+            class="cyber-btn-secondary text-xs flex items-center gap-1 py-1 px-2.5 text-slate-300"
+            :title="areAllCollapsed ? 'Expand all stacks' : 'Collapse all stacks'"
+          >
+            <component :is="areAllCollapsed ? ChevronRight : ChevronDown" class="h-3.5 w-3.5" />
+            <span>{{ areAllCollapsed ? 'Expand' : 'Collapse' }}</span>
+          </button>
         </div>
       </div>
 
-      <!-- Compose Stacks Quick Jump Bar (if any projects registered) -->
-      <div v-if="projects.length > 0" class="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
-        <span class="text-slate-500 font-mono text-[11px] shrink-0">Stacks:</span>
-        <button
-          v-for="p in projects"
-          :key="p.id"
-          @click="stackFilter = (stackFilter === p.name ? 'all' : p.name)"
-          class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-mono transition shrink-0"
-          :class="stackFilter === p.name ? 'bg-purple-950/60 border-purple-500/50 text-purple-200' : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'"
-        >
-          <FolderOpen class="h-3 w-3 text-purple-400" />
-          <span class="font-semibold">{{ p.name }}</span>
-          <router-link
-            :to="'/containers?project=' + p.id"
-            @click.stop
-            class="text-slate-500 hover:text-purple-300 ml-1"
-            :title="`Inspect stack ${p.name} files`"
-          >
-            <ExternalLink class="h-3 w-3" />
-          </router-link>
-        </button>
+      <!-- Empty State -->
+      <div v-if="dashboardStackGroups.length === 0" class="py-8 text-center text-xs text-slate-500 font-mono">
+        No containers or stacks match the current filter or search criteria.
       </div>
 
-      <!-- Container Fleet List -->
-      <div v-if="filteredContainers.length === 0" class="py-8 text-center text-xs text-slate-500 font-mono">
-        No containers match the current filter or search criteria.
-      </div>
-
-      <div v-else class="divide-y divide-slate-800/60">
+      <!-- Grouped Stacks Accordion Cards -->
+      <div v-else class="space-y-3">
         <div
-          v-for="c in filteredContainers.slice(0, 10)"
-          :key="c.id"
-          class="flex flex-col sm:flex-row sm:items-center justify-between py-2.5 gap-2 transition hover:bg-slate-900/40 px-2 rounded-lg"
+          v-for="group in dashboardStackGroups"
+          :key="group.key"
+          class="rounded-xl border border-slate-800/90 bg-slate-950/70 overflow-hidden transition-all duration-200 hover:border-slate-700/80 shadow-sm"
         >
-          <!-- Left: Status dot, Name, Stack, Exposure, Updates, Image, Uptime -->
-          <div class="flex items-center gap-3 overflow-hidden">
-            <span
-              class="h-2.5 w-2.5 flex-shrink-0 rounded-full"
-              :class="c.running ? 'bg-emerald-400 shadow-sm shadow-emerald-500/50' : 'bg-slate-600'"
-            ></span>
-            <div class="truncate">
-              <div class="flex items-center gap-2 flex-wrap">
-                <router-link
-                  :to="'/containers?id=' + encodeURIComponent(c.id)"
-                  class="font-mono text-xs font-bold text-white hover:text-indigo-300 truncate hover:underline"
-                  :title="`Inspect container '${c.name}' in Control Center`"
-                >
-                  {{ c.name }}
-                </router-link>
+          <!-- Stack Header Bar -->
+          <div
+            @click="toggleStackCollapse(group.key)"
+            class="flex flex-col sm:flex-row sm:items-center justify-between px-3.5 py-2.5 gap-2.5 bg-slate-900/60 cursor-pointer select-none transition hover:bg-slate-900/90"
+          >
+            <!-- Left: Toggle Chevron + Stack Icon + Title + Metrics -->
+            <div class="flex items-center gap-2.5 flex-wrap">
+              <component
+                :is="collapsedStacks[group.key] ? ChevronRight : ChevronDown"
+                class="h-4 w-4 text-slate-400 hover:text-indigo-400 transition-colors"
+              />
+              <component
+                :is="group.key === 'docktun' ? ShieldCheck : (group.isStack ? Layers : Box)"
+                class="h-4 w-4"
+                :class="group.key === 'docktun' ? 'text-cyan-400' : (group.isStack ? 'text-indigo-400' : 'text-slate-400')"
+              />
+              <span class="font-mono text-xs font-bold text-white">
+                {{ group.name }}
+              </span>
 
-                <!-- Web link if running & exposed -->
-                <a
-                  v-if="c.running && resolveContainerUrls(c).bestUrl"
-                  :href="resolveContainerUrls(c).bestUrl"
-                  target="_blank"
-                  rel="noopener"
-                  class="p-0.5 rounded text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition"
-                  :title="`Open Web App: ${resolveContainerUrls(c).bestUrl}`"
-                >
-                  <ExternalLink class="h-3 w-3" />
-                </a>
+              <!-- Badge: Core or Compose -->
+              <span
+                v-if="group.key === 'docktun'"
+                class="rounded bg-cyan-500/10 border border-cyan-500/30 px-1.5 py-0.2 text-[10px] font-mono text-cyan-300 font-semibold"
+              >
+                Core Stack
+              </span>
+              <span
+                v-else-if="group.isStack"
+                class="rounded bg-indigo-500/10 border border-indigo-500/30 px-1.5 py-0.2 text-[10px] font-mono text-indigo-300"
+              >
+                Compose Stack
+              </span>
 
-                <!-- Compose Stack Badge -->
-                <button
-                  v-if="c.project_name"
-                  @click="stackFilter = c.project_name"
-                  class="rounded bg-indigo-950/60 border border-indigo-500/30 px-1.5 py-0.2 text-[10px] text-indigo-300 font-mono hover:bg-indigo-900/60 transition"
-                  :title="`Filter by stack '${c.project_name}'`"
-                >
-                  stack: {{ c.project_name }}
-                </button>
+              <!-- Running count pill -->
+              <span
+                class="rounded-full px-2 py-0.2 text-[10px] font-mono font-semibold"
+                :class="group.runningCount === group.totalCount && group.totalCount > 0
+                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                  : group.runningCount > 0
+                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
+                    : 'bg-slate-800 text-slate-400 border border-slate-700'"
+              >
+                {{ group.runningCount }}/{{ group.totalCount }} running
+              </span>
 
-                <!-- Exposure Mode Badge -->
-                <span
-                  class="rounded-full px-2 py-0.2 text-[9px] font-mono font-medium"
-                  :class="c.exposure_mode === 'public' ? 'bg-orange-500/10 text-orange-300 border border-orange-500/30' : (c.exposure_mode === 'private' ? 'bg-purple-500/10 text-purple-300 border border-purple-500/30' : 'bg-slate-800 text-slate-400')"
-                  :title="c.exposure_mode === 'public' ? `Public: ${c.hostname}` : 'Internal'"
-                >
-                  {{ c.exposure_mode === 'public' ? 'Public' : (c.exposure_mode === 'private' ? c.private_type : 'Internal') }}
-                </span>
+              <!-- Stack CPU -->
+              <span
+                v-if="group.runningCount > 0"
+                class="text-[10px] font-mono text-indigo-300 bg-slate-900 px-1.5 py-0.2 rounded border border-slate-800"
+              >
+                CPU: {{ group.totalCpu }}
+              </span>
 
-                <!-- Update Available Badge -->
-                <span
-                  v-if="c.update_available"
-                  class="rounded-full px-1.5 py-0.2 text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse"
-                >
-                  Update
-                </span>
-              </div>
+              <!-- Updates pill -->
+              <span
+                v-if="group.hasUpdates"
+                class="rounded-full bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.2 text-[10px] font-bold text-amber-300 animate-pulse"
+              >
+                Update Available
+              </span>
+            </div>
 
-              <div class="text-[11px] text-slate-400 truncate font-mono mt-0.5">
-                {{ c.image }} &bull; <Clock class="inline h-2.5 w-2.5 text-slate-500" /> {{ c.uptime || c.status }}
-              </div>
+            <!-- Right: Stack Compose Actions -->
+            <div class="flex items-center gap-1.5 self-end sm:self-auto" @click.stop>
+              <!-- Compose link if project exists -->
+              <router-link
+                v-if="group.projectId"
+                :to="'/containers?project=' + group.projectId + '&tab=compose'"
+                class="cyber-btn-secondary text-[11px] flex items-center gap-1 py-1 px-2 text-indigo-300 hover:text-white"
+                title="Edit Compose YAML & environment"
+              >
+                <Code2 class="h-3 w-3" />
+                <span>Compose</span>
+              </router-link>
+
+              <!-- Restart Stack action -->
+              <button
+                v-if="group.projectId"
+                @click="runStackAction(group.projectId, 'restart')"
+                :disabled="!!stackActionLoading[group.projectId]"
+                class="cyber-btn-secondary text-[11px] flex items-center gap-1 py-1 px-2 text-slate-300 hover:text-white"
+                :title="`Restart all services in stack ${group.name}`"
+              >
+                <RotateCcw class="h-3 w-3" :class="stackActionLoading[group.projectId] === 'restart' ? 'animate-spin' : ''" />
+                <span>Restart</span>
+              </button>
+
+              <button
+                @click="toggleStackCollapse(group.key)"
+                class="text-slate-400 hover:text-white p-1 text-xs"
+                :title="collapsedStacks[group.key] ? 'Expand' : 'Collapse'"
+              >
+                <span class="text-[10px] font-mono uppercase">{{ collapsedStacks[group.key] ? 'Expand' : 'Hide' }}</span>
+              </button>
             </div>
           </div>
 
-          <!-- Right: Live Metrics & Power Actions -->
-          <div class="flex items-center justify-between sm:justify-end gap-3 self-end sm:self-auto w-full sm:w-auto shrink-0">
-            <div v-if="c.running" class="text-right font-mono text-[11px]">
-              <span class="text-indigo-400 font-bold mr-2">{{ c.cpu || '0.0%' }}</span>
-              <span class="text-slate-400">{{ c.memory?.split('/')[0] || '' }}</span>
-            </div>
-            <div v-else class="text-[11px] text-slate-500 font-mono">
-              stopped
-            </div>
+          <!-- Stack Member Containers (Collapsible) -->
+          <div v-show="!collapsedStacks[group.key]" class="divide-y divide-slate-800/50 p-1 bg-slate-950/40">
+            <div
+              v-for="c in group.containers"
+              :key="c.id"
+              class="flex flex-col sm:flex-row sm:items-center justify-between py-2.5 px-3 gap-2 transition hover:bg-slate-900/50 rounded-lg"
+            >
+              <!-- Left: Pulsing status, Name, Exposure badge, Uptime (NO image name to keep it clean!) -->
+              <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                <span
+                  class="h-2.5 w-2.5 flex-shrink-0 rounded-full"
+                  :class="c.running ? 'bg-emerald-400 shadow-sm shadow-emerald-500/50' : 'bg-slate-600'"
+                ></span>
 
-            <!-- Action Buttons -->
-            <div class="flex items-center gap-1">
-              <a
-                v-if="c.running && resolveContainerUrls(c).bestUrl"
-                :href="resolveContainerUrls(c).bestUrl"
-                target="_blank"
-                rel="noopener"
-                class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-indigo-300 transition"
-                :title="`Open Web UI: ${resolveContainerUrls(c).bestUrl}`"
-              >
-                <ExternalLink class="h-3.5 w-3.5" />
-              </a>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <router-link
+                      :to="'/containers?id=' + encodeURIComponent(c.id)"
+                      class="font-mono text-xs font-bold text-white hover:text-indigo-300 truncate hover:underline"
+                      :title="`Open ${c.name} in Control Center`"
+                    >
+                      {{ c.name }}
+                    </router-link>
 
-              <router-link
-                :to="'/containers?id=' + encodeURIComponent(c.id)"
-                class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-indigo-300 transition"
-                :title="`Inspect container '${c.name}' in Control Center`"
-              >
-                <FolderOpen class="h-3.5 w-3.5" />
-              </router-link>
+                    <!-- Web app link if running -->
+                    <a
+                      v-if="c.running && resolveContainerUrls(c).bestUrl"
+                      :href="resolveContainerUrls(c).bestUrl"
+                      target="_blank"
+                      rel="noopener"
+                      class="p-0.5 rounded text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition"
+                      :title="`Open Web Application: ${resolveContainerUrls(c).bestUrl}`"
+                    >
+                      <ExternalLink class="h-3 w-3" />
+                    </a>
 
-              <button
-                v-if="!c.running"
-                @click="runContainerAction(c, 'start')"
-                :disabled="!!containerActionLoading[c.id]"
-                class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-emerald-400 transition"
-                title="Start container"
-              >
-                <Play class="h-3.5 w-3.5 fill-current" />
-              </button>
-              <button
-                v-if="c.running"
-                @click="runContainerAction(c, 'stop')"
-                :disabled="!!containerActionLoading[c.id]"
-                class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-rose-400 transition"
-                title="Stop container"
-              >
-                <Square class="h-3.5 w-3.5 fill-current" />
-              </button>
-              <button
-                @click="runContainerAction(c, 'restart')"
-                :disabled="!!containerActionLoading[c.id]"
-                class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition"
-                title="Restart container"
-              >
-                <RotateCcw
-                  class="h-3.5 w-3.5"
-                  :class="containerActionLoading[c.id] === 'restart' ? 'animate-spin' : ''"
-                />
-              </button>
+                    <!-- Exposure Badge -->
+                    <span
+                      v-if="c.exposure_mode === 'public'"
+                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[9px] font-mono font-semibold bg-orange-500/10 text-orange-300 border border-orange-500/30"
+                    >
+                      <Globe class="h-2.5 w-2.5 text-orange-400" />
+                      <span>Public: {{ c.hostname }}</span>
+                    </span>
+                    <span
+                      v-else-if="c.exposure_mode === 'private'"
+                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[9px] font-mono font-semibold bg-purple-500/10 text-purple-300 border border-purple-500/30"
+                    >
+                      <Shield class="h-2.5 w-2.5 text-purple-400" />
+                      <span>Private Mesh</span>
+                    </span>
+                    <span
+                      v-else-if="c.running"
+                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[9px] font-mono text-slate-400 bg-slate-900 border border-slate-800"
+                    >
+                      <Wifi class="h-2.5 w-2.5 text-indigo-400" />
+                      <span>{{ c.name }}.local</span>
+                    </span>
+                    <span
+                      v-else
+                      class="rounded-full px-2 py-0.2 text-[9px] font-mono text-slate-500 bg-slate-900"
+                    >
+                      Internal
+                    </span>
+
+                    <!-- Update Available Badge -->
+                    <span
+                      v-if="c.update_available"
+                      class="rounded-full px-1.5 py-0.2 text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse"
+                    >
+                      Update
+                    </span>
+                  </div>
+
+                  <!-- Uptime without image (Image is kept in Control Panel) -->
+                  <div class="text-[11px] text-slate-400 font-mono mt-0.5 flex items-center gap-1.5">
+                    <Clock class="h-2.5 w-2.5 text-slate-500" />
+                    <span>{{ c.uptime || c.status }}</span>
+                    <span v-if="c.ports" class="text-slate-500 truncate max-w-[200px]" :title="c.ports">
+                      &bull; {{ c.ports }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Right: Live CPU/RAM & Actions -->
+              <div class="flex items-center justify-between sm:justify-end gap-3 self-end sm:self-auto shrink-0">
+                <div v-if="c.running" class="text-right font-mono text-[11px]">
+                  <span class="text-indigo-400 font-bold mr-2">{{ c.cpu || '0.0%' }}</span>
+                  <span class="text-slate-400">{{ c.memory?.split('/')[0] || '' }}</span>
+                </div>
+                <div v-else class="text-[11px] text-slate-500 font-mono">
+                  stopped
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex items-center gap-1">
+                  <a
+                    v-if="c.running && resolveContainerUrls(c).bestUrl"
+                    :href="resolveContainerUrls(c).bestUrl"
+                    target="_blank"
+                    rel="noopener"
+                    class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-indigo-300 transition"
+                    :title="`Open Web UI: ${resolveContainerUrls(c).bestUrl}`"
+                  >
+                    <ExternalLink class="h-3.5 w-3.5" />
+                  </a>
+
+                  <router-link
+                    :to="'/containers?id=' + encodeURIComponent(c.id)"
+                    class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-indigo-300 transition"
+                    :title="`Inspect container '${c.name}' in Control Center`"
+                  >
+                    <Sliders class="h-3.5 w-3.5" />
+                  </router-link>
+
+                  <button
+                    v-if="!c.running"
+                    @click="runContainerAction(c, 'start')"
+                    :disabled="!!containerActionLoading[c.id]"
+                    class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-emerald-400 transition"
+                    title="Start container"
+                  >
+                    <Play class="h-3.5 w-3.5 fill-current" />
+                  </button>
+                  <button
+                    v-if="c.running"
+                    @click="runContainerAction(c, 'stop')"
+                    :disabled="!!containerActionLoading[c.id]"
+                    class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-rose-400 transition"
+                    title="Stop container"
+                  >
+                    <Square class="h-3.5 w-3.5 fill-current" />
+                  </button>
+                  <button
+                    @click="runContainerAction(c, 'restart')"
+                    :disabled="!!containerActionLoading[c.id]"
+                    class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition"
+                    title="Restart container"
+                  >
+                    <RotateCcw
+                      class="h-3.5 w-3.5"
+                      :class="containerActionLoading[c.id] === 'restart' ? 'animate-spin' : ''"
+                    />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1232,7 +1469,7 @@ onUnmounted(() => {
       <!-- Footer Bar -->
       <div class="pt-3 border-t border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
         <span class="text-slate-400 font-mono text-[11px]">
-          Showing {{ Math.min(filteredContainers.length, 10) }} of {{ filteredContainers.length }} filtered containers
+          Showing {{ dashboardStackGroups.length }} stacks ({{ filteredContainers.length }} containers)
         </span>
         <div class="flex items-center gap-3">
           <router-link

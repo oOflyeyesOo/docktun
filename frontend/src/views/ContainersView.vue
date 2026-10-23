@@ -798,7 +798,7 @@ const summary = computed(() => {
     localCount,
     publicCount,
     privateCount,
-    stackCount: new Set(containers.value.filter((c) => c.project_name).map((c) => c.project_name)).size,
+    stackCount: containerGroups.value.filter((g) => g.isStack).length,
     cpuUsage: totalCpu.toFixed(1) + '%',
   }
 })
@@ -966,17 +966,18 @@ const containerGroups = computed<ContainerGroup[]>(() => {
   const map = new Map<string, ContainerItem[]>()
   list.forEach((c) => {
     let key = c.project_name ? c.project_name.trim() : ''
-    if (!key) {
-      const lower = c.name.toLowerCase()
-      if (
-        lower.startsWith('docktun') ||
-        lower === 'wireguard' ||
-        lower === 'cloudflared' ||
-        lower === 'tailscale' ||
-        lower === 'wg-easy'
-      ) {
-        key = 'docktun'
-      }
+    const lower = c.name.toLowerCase()
+    if (
+      lower.startsWith('docktun') ||
+      lower === 'wireguard' ||
+      lower === 'cloudflared' ||
+      lower === 'tailscale' ||
+      lower === 'wg-easy' ||
+      lower === 'zeroconf' ||
+      key === 'docktun' ||
+      key === 'tun'
+    ) {
+      key = 'docktun'
     }
     if (!key) {
       key = '__standalone__'
