@@ -83,6 +83,7 @@ type ContainerDetail struct {
 	ProjectPath            string           `json:"project_path,omitempty"`
 	ComposeFile            string           `json:"compose_file,omitempty"`
 	Env                    []string         `json:"env,omitempty"`
+	RawEnv                 []string         `json:"-"`
 	Mounts                 []ContainerMount `json:"mounts,omitempty"`
 	IPAddress              string           `json:"ip_address,omitempty"`
 	Gateway                string           `json:"gateway,omitempty"`
@@ -557,6 +558,7 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 
 	detail.Container = c
 	detail.Env = maskedEnv
+	detail.RawEnv = inspect.Config.Env
 	detail.Mounts = mounts
 	detail.IPAddress = inspect.NetworkSettings.IPAddress
 	detail.Gateway = inspect.NetworkSettings.Gateway
@@ -719,9 +721,13 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 				}
 			}
 		}
-		if len(detail.Env) > 0 {
+		envToUse := detail.RawEnv
+		if len(envToUse) == 0 {
+			envToUse = detail.Env
+		}
+		if len(envToUse) > 0 {
 			b.WriteString("    environment:\n")
-			for _, e := range detail.Env {
+			for _, e := range envToUse {
 				if !strings.Contains(e, "********") && !strings.HasPrefix(e, "PATH=") {
 					b.WriteString(fmt.Sprintf("      - %s\n", e))
 				}
@@ -1524,6 +1530,14 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 				}
 			}
 			if validComposeDir == "" {
+				if idx := strings.Index(compDir, "/compose/"); idx != -1 {
+					mapped := filepath.Join("/opt/projects", compDir[idx+len("/compose/"):])
+					if fi, err := os.Stat(mapped); err == nil && fi.IsDir() {
+						validComposeDir = mapped
+					}
+				}
+			}
+			if validComposeDir == "" {
 				cDir := filepath.Join("/opt/projects", cname)
 				if fi, err := os.Stat(cDir); err == nil && fi.IsDir() {
 					validComposeDir = cDir
@@ -1684,7 +1698,11 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 		}
 	}
 
-	for _, e := range detail.Env {
+	envToUse := detail.RawEnv
+	if len(envToUse) == 0 {
+		envToUse = detail.Env
+	}
+	for _, e := range envToUse {
 		if !strings.Contains(e, "********") && !strings.HasPrefix(e, "PATH=") {
 			runArgs = append(runArgs, "-e", e)
 		}
