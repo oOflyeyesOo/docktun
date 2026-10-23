@@ -818,10 +818,23 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 	return detail, nil
 }
 
+func (s *DockerContainers) EnsureNetwork(network string) error {
+	if network == "" {
+		network = "cloudflared"
+	}
+	cmd := exec.Command("docker", "network", "inspect", network)
+	if err := cmd.Run(); err != nil {
+		createCmd := exec.Command("docker", "network", "create", network)
+		_ = createCmd.Run()
+	}
+	return nil
+}
+
 func (s *DockerContainers) ConnectNetwork(id string, network string) error {
 	if network == "" {
 		network = "cloudflared"
 	}
+	_ = s.EnsureNetwork(network)
 	cmd := exec.Command("docker", "network", "connect", network, id)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

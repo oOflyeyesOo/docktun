@@ -668,8 +668,15 @@ function selectTemplate(tmpl: ComposeTemplate) {
   launchTab.value = 'compose'
 }
 
-function insertComposeSnippet(snip: string) {
-  composeDeployForm.value.compose_content += '\n' + snip
+function insertComposeSnippet(type: 'network' | 'restart' | 'ports' | 'volumes' | string) {
+  const snippets: Record<string, string> = {
+    network: '    networks:\n      - cloudflared\n\nnetworks:\n  cloudflared:\n    external: true',
+    restart: '    restart: unless-stopped',
+    ports: '    ports:\n      - "8080:80"',
+    volumes: '    volumes:\n      - ./data:/data',
+  }
+  const content = snippets[type] || type
+  composeDeployForm.value.compose_content += '\n' + content
 }
 
 async function deployComposeStack() {
@@ -4304,28 +4311,28 @@ onUnmounted(() => {
                 <span class="text-[10px] uppercase font-semibold text-slate-500 mr-0.5">Quick Insert:</span>
                 <button
                   type="button"
-                  @click="insertComposeSnippet('    networks:\n      - cloudflared\n\nnetworks:\n  cloudflared:\n    external: true')"
+                  @click="insertComposeSnippet('network')"
                   class="rounded border border-slate-800 bg-slate-950 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300 hover:border-cyan-600 hover:bg-slate-900 transition"
                 >
                   + Cloudflared Net
                 </button>
                 <button
                   type="button"
-                  @click="insertComposeSnippet('    restart: unless-stopped')"
+                  @click="insertComposeSnippet('restart')"
                   class="rounded border border-slate-800 bg-slate-950 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300 hover:border-cyan-600 hover:bg-slate-900 transition"
                 >
                   + Restart
                 </button>
                 <button
                   type="button"
-                  @click="insertComposeSnippet('    ports:\n      - \"8080:80\"')"
+                  @click="insertComposeSnippet('ports')"
                   class="rounded border border-slate-800 bg-slate-950 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300 hover:border-cyan-600 hover:bg-slate-900 transition"
                 >
                   + Port Map
                 </button>
                 <button
                   type="button"
-                  @click="insertComposeSnippet('    volumes:\n      - ./data:/data')"
+                  @click="insertComposeSnippet('volumes')"
                   class="rounded border border-slate-800 bg-slate-950 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300 hover:border-cyan-600 hover:bg-slate-900 transition"
                 >
                   + Volume
