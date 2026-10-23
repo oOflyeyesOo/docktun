@@ -162,6 +162,8 @@ interface ContainerExposure {
   cloudflare_url?: string
   zero_trust_enabled?: boolean
   zero_trust_emails?: string
+  zero_trust_auth_type?: string
+  zero_trust_session?: string
 }
 
 const containerExposures = ref<ContainerExposure[]>([])
@@ -190,6 +192,8 @@ const exposeForm = ref({
   domain: 'mightysprite.dev',
   zero_trust_enabled: false,
   zero_trust_emails: '',
+  zero_trust_auth_type: 'email' as 'email' | 'domain' | 'everyone' | 'ip' | 'bypass_ip',
+  zero_trust_session: '24h',
 })
 const exposingSaving = ref(false)
 
@@ -409,6 +413,8 @@ function openExposeModal(
     domain: 'mightysprite.dev',
     zero_trust_enabled: container?.zero_trust_enabled || false,
     zero_trust_emails: container?.zero_trust_emails || '',
+    zero_trust_auth_type: (container?.zero_trust_auth_type as any) || 'email',
+    zero_trust_session: container?.zero_trust_session || '24h',
   }
   showExposeModal.value = true
 }
@@ -423,6 +429,8 @@ function onExposeTargetChanged(event: Event) {
     exposeForm.value.subdomain = found.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
     exposeForm.value.zero_trust_enabled = found.zero_trust_enabled || false
     exposeForm.value.zero_trust_emails = found.zero_trust_emails || ''
+    exposeForm.value.zero_trust_auth_type = (found.zero_trust_auth_type as any) || 'email'
+    exposeForm.value.zero_trust_session = found.zero_trust_session || '24h'
   }
 }
 
@@ -446,6 +454,8 @@ async function saveContainerExposure() {
         target: `http://${exposeTargetContainer.value.name}:${exposeForm.value.private_port}`,
         zero_trust_enabled: exposeForm.value.mode === 'public' && exposeForm.value.zero_trust_enabled,
         zero_trust_emails: exposeForm.value.zero_trust_emails?.trim() || '',
+        zero_trust_auth_type: exposeForm.value.zero_trust_auth_type,
+        zero_trust_session: exposeForm.value.zero_trust_session,
       }),
     })
 
@@ -1533,20 +1543,57 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 </div>
               </label>
 
-              <!-- Optional Email filter (if Zero Trust enabled) -->
-              <div v-if="exposeForm.zero_trust_enabled" class="pl-6 space-y-1">
-                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                  Allowed Emails / Domains (Optional)
-                </label>
-                <input
-                  v-model="exposeForm.zero_trust_emails"
-                  type="text"
-                  placeholder="admin@example.com, @yourdomain.com (or blank for any authenticated user)"
-                  class="cyber-input text-xs font-mono"
-                />
-                <p class="text-[10px] text-slate-500">
-                  Leave blank to allow any user with your Zero Trust authentication.
-                </p>
+              <!-- Rich Zero Trust Options (if Zero Trust enabled) -->
+              <div v-if="exposeForm.zero_trust_enabled" class="pl-6 space-y-2.5">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                      Authentication Method
+                    </label>
+                    <select v-model="exposeForm.zero_trust_auth_type" class="cyber-input text-xs w-full">
+                      <option value="email">Email OTP PIN (Specific Users)</option>
+                      <option value="domain">Corporate / Domain Whitelist</option>
+                      <option value="everyone">Any Authenticated User / Everyone</option>
+                      <option value="ip">IP / CIDR Network Whitelist</option>
+                      <option value="bypass_ip">IP / CIDR Bypass (No Prompt)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                      Session Timeout
+                    </label>
+                    <select v-model="exposeForm.zero_trust_session" class="cyber-input text-xs w-full">
+                      <option value="15m">15 Minutes</option>
+                      <option value="1h">1 Hour</option>
+                      <option value="24h">24 Hours (Default)</option>
+                      <option value="7d">7 Days</option>
+                      <option value="30d">30 Days</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div v-if="exposeForm.zero_trust_auth_type !== 'everyone'">
+                  <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                    <span v-if="exposeForm.zero_trust_auth_type === 'email'">Allowed Email Addresses (Comma-separated)</span>
+                    <span v-else-if="exposeForm.zero_trust_auth_type === 'domain'">Allowed Email Domains (e.g. company.com)</span>
+                    <span v-else-if="exposeForm.zero_trust_auth_type === 'ip'">Allowed Client IP / CIDRs</span>
+                    <span v-else-if="exposeForm.zero_trust_auth_type === 'bypass_ip'">Bypass Client IP / CIDRs</span>
+                  </label>
+                  <input
+                    v-model="exposeForm.zero_trust_emails"
+                    type="text"
+                    :placeholder="
+                      exposeForm.zero_trust_auth_type === 'email' ? 'admin@example.com, developer@company.com' :
+                      exposeForm.zero_trust_auth_type === 'domain' ? 'company.com, myfamily.org' :
+                      '192.168.1.0/24, 73.120.45.6/32'
+                    "
+                    class="cyber-input text-xs font-mono w-full"
+                  />
+                </div>
+                <div v-else class="text-[10px] text-indigo-300/80 bg-indigo-950/30 border border-indigo-900/40 rounded p-2">
+                  All users who successfully authenticate with your Cloudflare Zero Trust Identity Provider will be allowed.
+                </div>
               </div>
             </div>
           </div>

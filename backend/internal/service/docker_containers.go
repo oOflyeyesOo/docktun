@@ -24,16 +24,18 @@ import (
 )
 
 type ExposureSettings struct {
-	Mode             string `json:"mode"`
-	Hostname         string `json:"hostname,omitempty"`
-	Target           string `json:"target,omitempty"`
-	PrivateType      string `json:"private_type,omitempty"`
-	PrivateHost      string `json:"private_host,omitempty"`
-	PrivatePort      int    `json:"private_port,omitempty"`
-	Notes            string `json:"notes,omitempty"`
-	ZeroTrustEnabled bool   `json:"zero_trust_enabled,omitempty"`
-	ZeroTrustEmails  string `json:"zero_trust_emails,omitempty"`
-	ZeroTrustAppID   string `json:"zero_trust_app_id,omitempty"`
+	Mode              string `json:"mode"`
+	Hostname          string `json:"hostname,omitempty"`
+	Target            string `json:"target,omitempty"`
+	PrivateType       string `json:"private_type,omitempty"`
+	PrivateHost       string `json:"private_host,omitempty"`
+	PrivatePort       int    `json:"private_port,omitempty"`
+	Notes             string `json:"notes,omitempty"`
+	ZeroTrustEnabled  bool   `json:"zero_trust_enabled,omitempty"`
+	ZeroTrustEmails   string `json:"zero_trust_emails,omitempty"`
+	ZeroTrustAuthType string `json:"zero_trust_auth_type,omitempty"`
+	ZeroTrustSession  string `json:"zero_trust_session,omitempty"`
+	ZeroTrustAppID    string `json:"zero_trust_app_id,omitempty"`
 }
 
 type ContainerMount struct {
@@ -62,6 +64,8 @@ type Container struct {
 	Notes                  string           `json:"notes,omitempty"`
 	ZeroTrustEnabled       bool             `json:"zero_trust_enabled,omitempty"`
 	ZeroTrustEmails        string           `json:"zero_trust_emails,omitempty"`
+	ZeroTrustAuthType      string           `json:"zero_trust_auth_type,omitempty"`
+	ZeroTrustSession       string           `json:"zero_trust_session,omitempty"`
 	CPU                    string           `json:"cpu,omitempty"`
 	Memory                 string           `json:"memory,omitempty"`
 	Network                string           `json:"network,omitempty"`
@@ -601,13 +605,17 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		c.Target = ing.Service
 		c.ZeroTrustEnabled = exp.ZeroTrustEnabled
 		c.ZeroTrustEmails = exp.ZeroTrustEmails
+		c.ZeroTrustAuthType = exp.ZeroTrustAuthType
+		c.ZeroTrustSession = exp.ZeroTrustSession
 		c.Exposure = ExposureSettings{
-			Mode:             "public",
-			Hostname:         ing.Hostname,
-			Target:           ing.Service,
-			ZeroTrustEnabled: exp.ZeroTrustEnabled,
-			ZeroTrustEmails:  exp.ZeroTrustEmails,
-			ZeroTrustAppID:   exp.ZeroTrustAppID,
+			Mode:              "public",
+			Hostname:          ing.Hostname,
+			Target:            ing.Service,
+			ZeroTrustEnabled:  exp.ZeroTrustEnabled,
+			ZeroTrustEmails:   exp.ZeroTrustEmails,
+			ZeroTrustAuthType: exp.ZeroTrustAuthType,
+			ZeroTrustSession:  exp.ZeroTrustSession,
+			ZeroTrustAppID:    exp.ZeroTrustAppID,
 		}
 	} else {
 		exp := s.getExposureFromDB(c.Name)
@@ -620,6 +628,8 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		c.Notes = exp.Notes
 		c.ZeroTrustEnabled = exp.ZeroTrustEnabled
 		c.ZeroTrustEmails = exp.ZeroTrustEmails
+		c.ZeroTrustAuthType = exp.ZeroTrustAuthType
+		c.ZeroTrustSession = exp.ZeroTrustSession
 		c.Exposure = exp
 	}
 
@@ -1152,15 +1162,20 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 
 	// 4. Synchronize Zero Trust Access Application & Policy if enabled
 	if cleanSettings.Mode == "public" && cleanSettings.ZeroTrustEnabled && cleanSettings.Hostname != "" && s.cfAPI != nil {
-		go func(cName, host, emails string) {
-			appID, err := s.cfAPI.SyncZeroTrustAccess(host, emails)
+		go func(cName string, set ExposureSettings) {
+			appID, err := s.cfAPI.SyncZeroTrustAccess(ZeroTrustPolicyOptions{
+				Hostname:        set.Hostname,
+				AuthType:        set.ZeroTrustAuthType,
+				Emails:          set.ZeroTrustEmails,
+				SessionDuration: set.ZeroTrustSession,
+			})
 			if err != nil {
-				log.Printf("[docktun] Cloudflare Zero Trust sync error for %s: %v", host, err)
+				log.Printf("[docktun] Cloudflare Zero Trust sync error for %s: %v", set.Hostname, err)
 			} else if appID != "" {
 				_ = s.updateZeroTrustAppID(cName, appID)
-				log.Printf("[docktun] Cloudflare Zero Trust Access active for %s (app_id: %s)", host, appID)
+				log.Printf("[docktun] Cloudflare Zero Trust Access active for %s (app_id: %s)", set.Hostname, appID)
 			}
-		}(name, cleanSettings.Hostname, cleanSettings.ZeroTrustEmails)
+		}(name, cleanSettings)
 	} else if (!cleanSettings.ZeroTrustEnabled || cleanSettings.Mode != "public") && s.cfAPI != nil && prevExp.ZeroTrustAppID != "" {
 		go func(appID string) {
 			if err := s.cfAPI.DeleteZeroTrustAccess(appID); err != nil {
@@ -1288,7 +1303,7 @@ func (s *DockerContainers) loadAllExposuresFromDB() map[string]ExposureSettings 
 		return res
 	}
 
-	rows, err := s.db.Query(`SELECT container_name, mode, hostname, target, private_type, private_host, private_port, notes, COALESCE(zero_trust_enabled, 0), COALESCE(zero_trust_emails, ''), COALESCE(zero_trust_app_id, '') FROM container_exposures`)
+	rows, err := s.db.Query(`SELECT container_name, mode, hostname, target, private_type, private_host, private_port, notes, COALESCE(zero_trust_enabled, 0), COALESCE(zero_trust_emails, ''), COALESCE(zero_trust_app_id, ''), COALESCE(zero_trust_auth_type, 'email'), COALESCE(zero_trust_session, '24h') FROM container_exposures`)
 	if err != nil {
 		return res
 	}
@@ -1299,7 +1314,7 @@ func (s *DockerContainers) loadAllExposuresFromDB() map[string]ExposureSettings 
 		var exp ExposureSettings
 		var pPort sql.NullInt64
 		var ztInt int
-		if err := rows.Scan(&name, &exp.Mode, &exp.Hostname, &exp.Target, &exp.PrivateType, &exp.PrivateHost, &pPort, &exp.Notes, &ztInt, &exp.ZeroTrustEmails, &exp.ZeroTrustAppID); err == nil {
+		if err := rows.Scan(&name, &exp.Mode, &exp.Hostname, &exp.Target, &exp.PrivateType, &exp.PrivateHost, &pPort, &exp.Notes, &ztInt, &exp.ZeroTrustEmails, &exp.ZeroTrustAppID, &exp.ZeroTrustAuthType, &exp.ZeroTrustSession); err == nil {
 			if pPort.Valid {
 				exp.PrivatePort = int(pPort.Int64)
 			}
@@ -1319,9 +1334,9 @@ func (s *DockerContainers) getExposureFromDB(name string) ExposureSettings {
 	var pPort sql.NullInt64
 	var ztInt int
 	err := s.db.QueryRow(
-		`SELECT mode, hostname, target, private_type, private_host, private_port, notes, COALESCE(zero_trust_enabled, 0), COALESCE(zero_trust_emails, ''), COALESCE(zero_trust_app_id, '') FROM container_exposures WHERE container_name = ?`,
+		`SELECT mode, hostname, target, private_type, private_host, private_port, notes, COALESCE(zero_trust_enabled, 0), COALESCE(zero_trust_emails, ''), COALESCE(zero_trust_app_id, ''), COALESCE(zero_trust_auth_type, 'email'), COALESCE(zero_trust_session, '24h') FROM container_exposures WHERE container_name = ?`,
 		name,
-	).Scan(&exp.Mode, &exp.Hostname, &exp.Target, &exp.PrivateType, &exp.PrivateHost, &pPort, &exp.Notes, &ztInt, &exp.ZeroTrustEmails, &exp.ZeroTrustAppID)
+	).Scan(&exp.Mode, &exp.Hostname, &exp.Target, &exp.PrivateType, &exp.PrivateHost, &pPort, &exp.Notes, &ztInt, &exp.ZeroTrustEmails, &exp.ZeroTrustAppID, &exp.ZeroTrustAuthType, &exp.ZeroTrustSession)
 	if err != nil {
 		return ExposureSettings{Mode: "internal"}
 	}
@@ -1342,9 +1357,16 @@ func (s *DockerContainers) saveExposureToDB(name string, exp ExposureSettings) e
 		ztInt = 1
 	}
 
+	if exp.ZeroTrustAuthType == "" {
+		exp.ZeroTrustAuthType = "email"
+	}
+	if exp.ZeroTrustSession == "" {
+		exp.ZeroTrustSession = "24h"
+	}
+
 	_, err := s.db.Exec(`
-		INSERT INTO container_exposures (container_name, mode, hostname, target, private_type, private_host, private_port, notes, zero_trust_enabled, zero_trust_emails, zero_trust_app_id, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO container_exposures (container_name, mode, hostname, target, private_type, private_host, private_port, notes, zero_trust_enabled, zero_trust_emails, zero_trust_app_id, zero_trust_auth_type, zero_trust_session, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(container_name) DO UPDATE SET
 			mode = excluded.mode,
 			hostname = excluded.hostname,
@@ -1356,8 +1378,10 @@ func (s *DockerContainers) saveExposureToDB(name string, exp ExposureSettings) e
 			zero_trust_enabled = excluded.zero_trust_enabled,
 			zero_trust_emails = excluded.zero_trust_emails,
 			zero_trust_app_id = CASE WHEN excluded.zero_trust_app_id != '' THEN excluded.zero_trust_app_id ELSE container_exposures.zero_trust_app_id END,
+			zero_trust_auth_type = excluded.zero_trust_auth_type,
+			zero_trust_session = excluded.zero_trust_session,
 			updated_at = CURRENT_TIMESTAMP
-	`, name, exp.Mode, exp.Hostname, exp.Target, exp.PrivateType, exp.PrivateHost, exp.PrivatePort, exp.Notes, ztInt, exp.ZeroTrustEmails, exp.ZeroTrustAppID)
+	`, name, exp.Mode, exp.Hostname, exp.Target, exp.PrivateType, exp.PrivateHost, exp.PrivatePort, exp.Notes, ztInt, exp.ZeroTrustEmails, exp.ZeroTrustAppID, exp.ZeroTrustAuthType, exp.ZeroTrustSession)
 	return err
 }
 

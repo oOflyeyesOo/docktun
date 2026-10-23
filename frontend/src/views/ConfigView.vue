@@ -399,6 +399,10 @@ async function loadBackendCfSettings() {
     const s = await apiFetch<any>('/api/cloudflare/settings')
     if (s.account_id && !cfAccountId.value) cfAccountId.value = s.account_id
     if (s.zone_id && !cfZoneId.value) cfZoneId.value = s.zone_id
+    if (s.api_token) {
+      cfApiToken.value = s.api_token
+      localStorage.setItem('docktun_cf_api_token', s.api_token)
+    }
     if (s.has_token) {
       cfApiHasToken.value = true
       cfApiMaskedToken.value = s.masked_token || '••••••••'
@@ -512,6 +516,8 @@ const accessApps = ref<AccessApp[]>([])
 const loadingAccessApps = ref(false)
 const newAccessAppHost = ref('')
 const newAccessAppEmails = ref('')
+const newAccessAppAuthType = ref<'email' | 'domain' | 'everyone' | 'ip' | 'bypass_ip'>('email')
+const newAccessAppSession = ref('24h')
 const creatingAccessApp = ref(false)
 
 async function fetchAccessApps() {
@@ -541,7 +547,9 @@ async function createAccessApp() {
       method: 'POST',
       body: JSON.stringify({
         hostname: host,
+        auth_type: newAccessAppAuthType.value,
         emails: newAccessAppEmails.value.trim(),
+        session_duration: newAccessAppSession.value,
       }),
     })
     newAccessAppHost.value = ''
@@ -1501,24 +1509,70 @@ onUnmounted(() => {
           </div>
 
           <!-- Add / Protect New Hostname Form -->
-          <div class="pt-3 border-t border-indigo-900/30 space-y-2">
-            <div class="text-[11px] font-semibold text-slate-300">
-              Protect Route with Zero Trust Wall:
+          <div class="pt-3 border-t border-indigo-900/30 space-y-3">
+            <div class="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
+              <span>Protect Route with Zero Trust Wall:</span>
+              <span class="text-[10px] text-indigo-400 font-mono">Edge Authentication Policy</span>
             </div>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs font-mono">
-              <input
-                v-model="newAccessAppHost"
-                type="text"
-                placeholder="app.yourdomain.com"
-                class="cyber-input text-xs font-mono"
-              />
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+              <div>
+                <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Target Hostname</label>
+                <input
+                  v-model="newAccessAppHost"
+                  type="text"
+                  placeholder="app.yourdomain.com"
+                  class="cyber-input text-xs font-mono w-full"
+                />
+              </div>
+
+              <div>
+                <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Authentication Method</label>
+                <select v-model="newAccessAppAuthType" class="cyber-input text-xs w-full">
+                  <option value="email">Email OTP PIN (Specific Users)</option>
+                  <option value="domain">Corporate / Domain Whitelist</option>
+                  <option value="everyone">Any Authenticated User / Everyone</option>
+                  <option value="ip">IP / CIDR Network Whitelist</option>
+                  <option value="bypass_ip">IP / CIDR Bypass (No Prompt)</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Session Timeout</label>
+                <select v-model="newAccessAppSession" class="cyber-input text-xs w-full">
+                  <option value="15m">15 Minutes</option>
+                  <option value="1h">1 Hour</option>
+                  <option value="24h">24 Hours (Default)</option>
+                  <option value="7d">7 Days</option>
+                  <option value="30d">30 Days</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Dynamic Input based on Auth Type -->
+            <div v-if="newAccessAppAuthType !== 'everyone'">
+              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                <span v-if="newAccessAppAuthType === 'email'">Allowed Email Addresses (Comma-separated)</span>
+                <span v-else-if="newAccessAppAuthType === 'domain'">Allowed Email Domains (e.g. mycompany.com)</span>
+                <span v-else-if="newAccessAppAuthType === 'ip'">Allowed Client IP / CIDRs</span>
+                <span v-else-if="newAccessAppAuthType === 'bypass_ip'">Bypass Client IP / CIDRs (Unauthenticated)</span>
+              </label>
               <input
                 v-model="newAccessAppEmails"
                 type="text"
-                placeholder="admin@example.com (or blank for any authenticated user)"
-                class="cyber-input text-xs font-mono"
+                :placeholder="
+                  newAccessAppAuthType === 'email' ? 'admin@example.com, developer@company.com' :
+                  newAccessAppAuthType === 'domain' ? 'company.com, myfamily.org' :
+                  newAccessAppAuthType === 'ip' ? '192.168.1.0/24, 73.120.45.6/32' :
+                  '73.120.45.6/32, 10.0.0.0/8'
+                "
+                class="cyber-input text-xs font-mono w-full"
               />
             </div>
+            <div v-else class="text-[11px] text-indigo-300/80 bg-indigo-950/30 border border-indigo-900/40 rounded p-2">
+              All users who successfully log in using any Identity Provider (IdP) configured in your Cloudflare Zero Trust dashboard will be granted access.
+            </div>
+
             <button
               @click="createAccessApp"
               :disabled="creatingAccessApp || !newAccessAppHost || (!cfApiToken && !cfApiHasToken)"

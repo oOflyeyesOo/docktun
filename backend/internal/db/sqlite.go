@@ -116,6 +116,9 @@ func (d *DB) migrate() error {
 	_, _ = d.Exec(`ALTER TABLE container_exposures ADD COLUMN zero_trust_enabled INTEGER DEFAULT 0`)
 	_, _ = d.Exec(`ALTER TABLE container_exposures ADD COLUMN zero_trust_emails TEXT DEFAULT ''`)
 	_, _ = d.Exec(`ALTER TABLE container_exposures ADD COLUMN zero_trust_app_id TEXT DEFAULT ''`)
+	_, _ = d.Exec(`ALTER TABLE container_exposures ADD COLUMN zero_trust_auth_type TEXT DEFAULT 'email'`)
+	_, _ = d.Exec(`ALTER TABLE container_exposures ADD COLUMN zero_trust_session TEXT DEFAULT '24h'`)
 
 	return nil
 }
+

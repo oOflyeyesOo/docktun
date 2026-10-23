@@ -23,10 +23,11 @@ func NewCloudflareHandler(cfAPI *service.CloudflareAPI, configMgr *service.Confi
 }
 
 type cfSettingsResponse struct {
-	AccountID string `json:"account_id"`
-	ZoneID    string `json:"zone_id"`
-	HasToken  bool   `json:"has_token"`
+	AccountID   string `json:"account_id"`
+	ZoneID      string `json:"zone_id"`
+	HasToken    bool   `json:"has_token"`
 	MaskedToken string `json:"masked_token"`
+	APIToken    string `json:"api_token"`
 }
 
 func (h *CloudflareHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +45,7 @@ func (h *CloudflareHandler) GetSettings(w http.ResponseWriter, r *http.Request) 
 		ZoneID:      creds.ZoneID,
 		HasToken:    creds.HasToken,
 		MaskedToken: masked,
+		APIToken:    creds.APIToken,
 	})
 }
 
@@ -216,15 +218,26 @@ func (h *CloudflareHandler) ListAccessApps(w http.ResponseWriter, r *http.Reques
 
 func (h *CloudflareHandler) CreateAccessApp(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Hostname string `json:"hostname"`
-		Emails   string `json:"emails"`
+		Hostname        string `json:"hostname"`
+		AuthType        string `json:"auth_type"`
+		Emails          string `json:"emails"`
+		Domains         string `json:"domains"`
+		IPRanges        string `json:"ip_ranges"`
+		SessionDuration string `json:"session_duration"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Hostname == "" {
 		http.Error(w, `{"error":"hostname is required"}`, http.StatusBadRequest)
 		return
 	}
 
-	appID, err := h.cfAPI.SyncZeroTrustAccess(req.Hostname, req.Emails)
+	appID, err := h.cfAPI.SyncZeroTrustAccess(service.ZeroTrustPolicyOptions{
+		Hostname:        req.Hostname,
+		AuthType:        req.AuthType,
+		Emails:          req.Emails,
+		Domains:         req.Domains,
+		IPRanges:        req.IPRanges,
+		SessionDuration: req.SessionDuration,
+	})
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)

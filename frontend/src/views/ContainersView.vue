@@ -52,7 +52,12 @@ import {
   Package,
   ChevronDown,
   ChevronRight,
-  CheckSquare
+  CheckSquare,
+  Database,
+  Box,
+  Film,
+  Key,
+  Tv
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
@@ -68,6 +73,8 @@ interface ExposureSettings {
   notes?: string
   zero_trust_enabled?: boolean
   zero_trust_emails?: string
+  zero_trust_auth_type?: string
+  zero_trust_session?: string
 }
 
 interface ContainerItem {
@@ -88,6 +95,8 @@ interface ContainerItem {
   notes?: string
   zero_trust_enabled?: boolean
   zero_trust_emails?: string
+  zero_trust_auth_type?: string
+  zero_trust_session?: string
   cpu?: string
   memory?: string
   network?: string
@@ -255,7 +264,447 @@ function copyToClipboard(key: string, text: string) {
 // Launch Modal & Unified Stack State
 // ==========================================
 const showLaunchModal = ref(false)
-const launchTab = ref<'dockerrun' | 'gitstack'>('dockerrun')
+const launchTab = ref<'compose' | 'templates' | 'dockerrun' | 'gitstack'>('compose')
+
+// Direct Compose Stack State
+const composeDeployForm = ref({
+  name: '',
+  path: '',
+  compose_content: `services:
+  my-app:
+    image: nginx:alpine
+    container_name: my-app
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    networks:
+      - cloudflared
+
+networks:
+  cloudflared:
+    external: true
+`,
+  env_content: '',
+  show_env: false,
+})
+const composeDeploying = ref(false)
+const composeTemplateCategory = ref<'all' | 'web' | 'database' | 'monitoring' | 'media' | 'utility'>('all')
+const composeTemplateSearch = ref('')
+
+// Cloudflare Settings Cache for Zero Trust
+const cfSettings = ref<{ has_token: boolean; masked_token?: string; api_token?: string } | null>(null)
+async function fetchCfSettings() {
+  try {
+    const s = await apiFetch<any>('/api/cloudflare/settings')
+    cfSettings.value = s
+    if (s.api_token) {
+      localStorage.setItem('docktun_cf_api_token', s.api_token)
+    }
+  } catch {}
+}
+
+interface ComposeTemplate {
+  id: string
+  name: string
+  category: 'web' | 'database' | 'monitoring' | 'media' | 'utility'
+  iconComponent: any
+  description: string
+  ports: string[]
+  compose: string
+  env?: string
+}
+
+const COMPOSE_TEMPLATES: ComposeTemplate[] = [
+  {
+    id: 'nginx-server',
+    name: 'Nginx Web Server',
+    category: 'web',
+    iconComponent: Globe,
+    description: 'High-performance HTTP server & reverse proxy with volume persistence and cloudflared network integration.',
+    ports: ['8080:80'],
+    compose: `services:
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-server
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+    networks:
+      - cloudflared
+
+networks:
+  cloudflared:
+    external: true
+`,
+  },
+  {
+    id: 'postgres-db',
+    name: 'PostgreSQL 16 & pgAdmin 4',
+    category: 'database',
+    iconComponent: Database,
+    description: 'Robust SQL database engine bundled with pgAdmin 4 web GUI administration dashboard.',
+    ports: ['5432:5432', '5050:80'],
+    compose: `services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: \${POSTGRES_USER:-docktun}
+      POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:-ChangeMeSecurePassword123!}
+      POSTGRES_DB: \${POSTGRES_DB:-appdb}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - cloudflared
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: \${PGADMIN_EMAIL:-admin@docktun.local}
+      PGADMIN_DEFAULT_PASSWORD: \${PGADMIN_PASSWORD:-AdminPassword123!}
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - cloudflared
+
+volumes:
+  postgres_data:
+
+networks:
+  cloudflared:
+    external: true
+`,
+    env: `POSTGRES_USER=docktun
+POSTGRES_PASSWORD=ChangeMeSecurePassword123!
+POSTGRES_DB=appdb
+PGADMIN_EMAIL=admin@docktun.local
+PGADMIN_PASSWORD=AdminPassword123!
+`,
+  },
+  {
+    id: 'redis-cache',
+    name: 'Redis 7 & Commander GUI',
+    category: 'database',
+    iconComponent: Cpu,
+    description: 'In-memory key-value data structure store & cache with Redis Commander browser explorer.',
+    ports: ['6379:6379', '8081:8081'],
+    compose: `services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis-cache
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - cloudflared
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: redis-commander
+    restart: unless-stopped
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - cloudflared
+
+volumes:
+  redis_data:
+
+networks:
+  cloudflared:
+    external: true
+`,
+  },
+  {
+    id: 'uptime-kuma',
+    name: 'Uptime Kuma',
+    category: 'monitoring',
+    iconComponent: Activity,
+    description: 'Self-hosted monitoring tool with real-time incident reports, latency graphs, and alerts.',
+    ports: ['3001:3001'],
+    compose: `services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    volumes:
+      - kuma_data:/app/data
+    ports:
+      - "3001:3001"
+    networks:
+      - cloudflared
+
+volumes:
+  kuma_data:
+
+networks:
+  cloudflared:
+    external: true
+`,
+  },
+  {
+    id: 'portainer',
+    name: 'Portainer CE',
+    category: 'utility',
+    iconComponent: Box,
+    description: 'Centralized container management GUI for Docker containers, images, volumes, and networks.',
+    ports: ['9443:9443', '9000:9000'],
+    compose: `services:
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - portainer_data:/data
+    ports:
+      - "9443:9443"
+      - "9000:9000"
+    networks:
+      - cloudflared
+
+volumes:
+  portainer_data:
+
+networks:
+  cloudflared:
+    external: true
+`,
+  },
+  {
+    id: 'jellyfin',
+    name: 'Jellyfin Media Server',
+    category: 'media',
+    iconComponent: Film,
+    description: 'Free Software Media System that lets you collect, manage, and stream your media anywhere.',
+    ports: ['8096:8096'],
+    compose: `services:
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+    environment:
+      - TZ=America/Chicago
+    volumes:
+      - jellyfin_config:/config
+      - jellyfin_cache:/cache
+      - ./media:/media:ro
+    ports:
+      - "8096:8096"
+    networks:
+      - cloudflared
+
+volumes:
+  jellyfin_config:
+  jellyfin_cache:
+
+networks:
+  cloudflared:
+    external: true
+`,
+  },
+  {
+    id: 'nextcloud',
+    name: 'Nextcloud Hub',
+    category: 'utility',
+    iconComponent: HardDrive,
+    description: 'Self-hosted productivity suite with file storage, sharing, office documents, and calendar syncing.',
+    ports: ['8088:80'],
+    compose: `services:
+  nextcloud:
+    image: nextcloud:latest
+    container_name: nextcloud
+    restart: unless-stopped
+    ports:
+      - "8088:80"
+    volumes:
+      - nextcloud_data:/var/www/html
+    environment:
+      - NEXTCLOUD_ADMIN_USER=admin
+      - NEXTCLOUD_ADMIN_PASSWORD=AdminPasswordChangeMe!
+    networks:
+      - cloudflared
+
+volumes:
+  nextcloud_data:
+
+networks:
+  cloudflared:
+    external: true
+`,
+  },
+  {
+    id: 'vaultwarden',
+    name: 'Vaultwarden (Bitwarden)',
+    category: 'utility',
+    iconComponent: Key,
+    description: 'Lightweight Bitwarden-compatible password manager backend written in Rust.',
+    ports: ['8080:80'],
+    compose: `services:
+  vaultwarden:
+    image: vaultwarden/server:latest
+    container_name: vaultwarden
+    restart: unless-stopped
+    environment:
+      - WEBSOCKET_ENABLED=true
+      - SIGNUPS_ALLOWED=true
+    volumes:
+      - vaultwarden_data:/data
+    ports:
+      - "8080:80"
+    networks:
+      - cloudflared
+
+volumes:
+  vaultwarden_data:
+
+networks:
+  cloudflared:
+    external: true
+`,
+  },
+  {
+    id: 'mediastack',
+    name: 'Media Automation Stack',
+    category: 'media',
+    iconComponent: Tv,
+    description: 'Automated TV, Movie, and Indexer stack combining Sonarr, Radarr, and Prowlarr.',
+    ports: ['8989:8989', '7878:7878', '9696:9696'],
+    compose: `services:
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Chicago
+    volumes:
+      - sonarr_config:/config
+      - ./tv:/tv
+      - ./downloads:/downloads
+    ports:
+      - "8989:8989"
+    networks:
+      - cloudflared
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Chicago
+    volumes:
+      - radarr_config:/config
+      - ./movies:/movies
+      - ./downloads:/downloads
+    ports:
+      - "7878:7878"
+    networks:
+      - cloudflared
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Chicago
+    volumes:
+      - prowlarr_config:/config
+    ports:
+      - "9696:9696"
+    networks:
+      - cloudflared
+
+volumes:
+  sonarr_config:
+  radarr_config:
+  prowlarr_config:
+
+networks:
+  cloudflared:
+    external: true
+`,
+  },
+]
+
+const filteredTemplates = computed(() => {
+  return COMPOSE_TEMPLATES.filter((t) => {
+    const matchesCat = composeTemplateCategory.value === 'all' || t.category === composeTemplateCategory.value
+    const matchesSearch = !composeTemplateSearch.value.trim() ||
+      t.name.toLowerCase().includes(composeTemplateSearch.value.toLowerCase()) ||
+      t.description.toLowerCase().includes(composeTemplateSearch.value.toLowerCase())
+    return matchesCat && matchesSearch
+  })
+})
+
+function selectTemplate(tmpl: ComposeTemplate) {
+  composeDeployForm.value.name = tmpl.id
+  composeDeployForm.value.path = `./projects/${tmpl.id}`
+  composeDeployForm.value.compose_content = tmpl.compose
+  composeDeployForm.value.env_content = tmpl.env || ''
+  if (tmpl.env) {
+    composeDeployForm.value.show_env = true
+  }
+  launchTab.value = 'compose'
+}
+
+function insertComposeSnippet(snip: string) {
+  composeDeployForm.value.compose_content += '\n' + snip
+}
+
+async function deployComposeStack() {
+  const name = composeDeployForm.value.name.trim()
+  if (!name) {
+    alert('Stack name is required.')
+    return
+  }
+  if (!composeDeployForm.value.compose_content.trim()) {
+    alert('docker-compose.yml content cannot be empty.')
+    return
+  }
+  composeDeploying.value = true
+  try {
+    const res: any = await apiFetch('/api/projects', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: name,
+        path: composeDeployForm.value.path.trim() || `./projects/${name}`,
+        compose_content: composeDeployForm.value.compose_content,
+        env_content: composeDeployForm.value.env_content,
+        auto_start: true,
+      }),
+    })
+    showLaunchModal.value = false
+    await fetchContainers()
+    if (res.id) {
+      startStackOutputPolling(res.id, `Deploying Compose Stack: ${name}`)
+    }
+  } catch (err: any) {
+    alert('Failed to deploy Compose stack: ' + (err.message || err))
+  } finally {
+    composeDeploying.value = false
+  }
+}
 
 // Docker Run State
 const dockerRunCmd = ref('docker run -d --name my-app -p 8080:80 nginx:alpine')
@@ -727,6 +1176,8 @@ function toggleExposeDrawer(container: ContainerItem) {
         notes: container.notes || '',
         zero_trust_enabled: container.zero_trust_enabled || false,
         zero_trust_emails: container.zero_trust_emails || '',
+        zero_trust_auth_type: container.zero_trust_auth_type || 'email',
+        zero_trust_session: container.zero_trust_session || '24h',
       }
     }
   }
@@ -1387,6 +1838,7 @@ watch(() => route.query, () => {
 
 onMounted(async () => {
   checkRouteParams()
+  fetchCfSettings()
   loading.value = true
   try {
     await fetchContainers()
@@ -1957,10 +2409,10 @@ onUnmounted(() => {
               <span
                 v-if="container.exposure_mode === 'public' && container.zero_trust_enabled"
                 class="inline-flex items-center gap-1 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-indigo-300"
-                title="Protected with Cloudflare Zero Trust Access Wall"
+                :title="`Protected with Cloudflare Zero Trust Access (${container.zero_trust_auth_type || 'email'})`"
               >
                 <ShieldCheck class="h-3 w-3" />
-                <span>Zero Trust</span>
+                <span>Zero Trust ({{ container.zero_trust_auth_type === 'bypass_ip' ? 'Bypass' : container.zero_trust_auth_type === 'everyone' ? 'Everyone' : container.zero_trust_auth_type === 'domain' ? 'Domain' : container.zero_trust_auth_type === 'ip' ? 'IP' : 'OTP' }})</span>
               </span>
               <span
                 v-else-if="container.exposure_mode === 'private'"
@@ -2248,18 +2700,26 @@ onUnmounted(() => {
               </div>
 
               <!-- Optional Zero Trust Protection -->
-              <div class="col-span-full pt-3 border-t border-slate-900 space-y-2">
+              <div class="col-span-full pt-3 border-t border-slate-900 space-y-3">
                 <label class="flex items-start gap-2.5 cursor-pointer p-2.5 rounded-lg border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition">
                   <input
                     type="checkbox"
                     v-model="getExpose(container.id).zero_trust_enabled"
                     class="h-4 w-4 mt-0.5 rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-indigo-500"
                   />
-                  <div class="space-y-0.5">
-                    <div class="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-                      <ShieldCheck class="h-3.5 w-3.5 text-indigo-400" />
-                      <span>Protect with Cloudflare Zero Trust (Email OTP / SSO)</span>
-                      <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Optional</span>
+                  <div class="space-y-0.5 flex-1">
+                    <div class="text-xs font-semibold text-slate-200 flex items-center justify-between">
+                      <div class="flex items-center gap-1.5">
+                        <ShieldCheck class="h-3.5 w-3.5 text-indigo-400" />
+                        <span>Protect with Cloudflare Zero Trust Access</span>
+                        <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Optional</span>
+                      </div>
+                      <span v-if="cfSettings?.has_token" class="text-[10px] text-emerald-400 font-mono">
+                        ✓ CF Token Connected
+                      </span>
+                      <span v-else class="text-[10px] text-amber-400 font-mono">
+                        ⚠️ No API Token (Check Settings)
+                      </span>
                     </div>
                     <div class="text-[10px] text-slate-400">
                       Intercept requests at Cloudflare edge with an authentication wall before forwarding to this container.
@@ -2267,16 +2727,57 @@ onUnmounted(() => {
                   </div>
                 </label>
 
-                <div v-if="getExpose(container.id).zero_trust_enabled" class="pl-6 space-y-1">
-                  <label class="block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                    Allowed Emails / Domains (Optional)
-                  </label>
-                  <input
-                    v-model="getExpose(container.id).zero_trust_emails"
-                    type="text"
-                    placeholder="admin@example.com, @yourdomain.com (or blank for any authenticated user)"
-                    class="cyber-input text-xs font-mono"
-                  />
+                <!-- Multi-auth & Session Duration controls -->
+                <div v-if="getExpose(container.id).zero_trust_enabled" class="pl-6 space-y-2.5">
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                        Authentication Method
+                      </label>
+                      <select v-model="getExpose(container.id).zero_trust_auth_type" class="cyber-input text-xs w-full">
+                        <option value="email">Email OTP PIN (Specific Users)</option>
+                        <option value="domain">Corporate / Domain Whitelist</option>
+                        <option value="everyone">Any Authenticated User / Everyone</option>
+                        <option value="ip">IP / CIDR Network Whitelist</option>
+                        <option value="bypass_ip">IP / CIDR Bypass (No Prompt)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                        Session Timeout
+                      </label>
+                      <select v-model="getExpose(container.id).zero_trust_session" class="cyber-input text-xs w-full">
+                        <option value="15m">15 Minutes</option>
+                        <option value="1h">1 Hour</option>
+                        <option value="24h">24 Hours (Default)</option>
+                        <option value="7d">7 Days</option>
+                        <option value="30d">30 Days</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div v-if="getExpose(container.id).zero_trust_auth_type !== 'everyone'">
+                    <label class="block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      <span v-if="getExpose(container.id).zero_trust_auth_type === 'email'">Allowed Email Addresses (Comma-separated)</span>
+                      <span v-else-if="getExpose(container.id).zero_trust_auth_type === 'domain'">Allowed Email Domains (e.g. company.com)</span>
+                      <span v-else-if="getExpose(container.id).zero_trust_auth_type === 'ip'">Allowed Client IP / CIDRs</span>
+                      <span v-else-if="getExpose(container.id).zero_trust_auth_type === 'bypass_ip'">Bypass Client IP / CIDRs</span>
+                    </label>
+                    <input
+                      v-model="getExpose(container.id).zero_trust_emails"
+                      type="text"
+                      :placeholder="
+                        getExpose(container.id).zero_trust_auth_type === 'email' ? 'admin@example.com, developer@company.com' :
+                        getExpose(container.id).zero_trust_auth_type === 'domain' ? 'company.com, myfamily.org' :
+                        '192.168.1.0/24, 73.120.45.6/32'
+                      "
+                      class="cyber-input text-xs font-mono"
+                    />
+                  </div>
+                  <div v-else class="text-[10px] text-indigo-300/80 bg-indigo-950/30 border border-indigo-900/40 rounded p-2">
+                    All users who successfully authenticate with your Cloudflare Zero Trust Identity Provider will be allowed.
+                  </div>
                 </div>
               </div>
             </template>
@@ -3693,14 +4194,14 @@ onUnmounted(() => {
       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-md"
       @click.self="showLaunchModal = false"
     >
-      <div class="w-full max-w-2xl rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl space-y-4">
-        <div class="flex items-start justify-between border-b border-slate-800 pb-3">
+      <div class="w-full max-w-4xl rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl space-y-4 max-h-[92vh] flex flex-col">
+        <div class="flex items-start justify-between border-b border-slate-800 pb-3 shrink-0">
           <div>
             <h3 class="text-lg font-bold text-slate-100 flex items-center gap-2">
               <Rocket class="h-5 w-5 text-cyan-400" />
               <span>Deploy New Container or Stack</span>
             </h3>
-            <p class="text-xs text-slate-400">Launch a container via Docker command or register a Compose/Git stack.</p>
+            <p class="text-xs text-slate-400">Launch a Docker Compose stack, use 1-click templates, execute Docker run commands, or connect a Git repository.</p>
           </div>
           <button @click="showLaunchModal = false" class="text-slate-400 hover:text-slate-200">
             <X class="h-5 w-5" />
@@ -3708,10 +4209,26 @@ onUnmounted(() => {
         </div>
 
         <!-- Mode Tabs -->
-        <div class="flex gap-2 border-b border-slate-800 pb-2">
+        <div class="flex gap-2 border-b border-slate-800 pb-2 shrink-0 overflow-x-auto">
+          <button
+            @click="launchTab = 'compose'"
+            class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition shrink-0"
+            :class="launchTab === 'compose' ? 'bg-cyan-950/80 text-cyan-300 border border-cyan-800/60' : 'text-slate-400 hover:text-slate-200'"
+          >
+            <FileCode class="h-3.5 w-3.5" />
+            <span>Docker Compose (YAML)</span>
+          </button>
+          <button
+            @click="launchTab = 'templates'"
+            class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition shrink-0"
+            :class="launchTab === 'templates' ? 'bg-cyan-950/80 text-cyan-300 border border-cyan-800/60' : 'text-slate-400 hover:text-slate-200'"
+          >
+            <Sparkles class="h-3.5 w-3.5 text-amber-400" />
+            <span>App Templates</span>
+          </button>
           <button
             @click="launchTab = 'dockerrun'"
-            class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition"
+            class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition shrink-0"
             :class="launchTab === 'dockerrun' ? 'bg-cyan-950/80 text-cyan-300 border border-cyan-800/60' : 'text-slate-400 hover:text-slate-200'"
           >
             <Terminal class="h-3.5 w-3.5" />
@@ -3719,16 +4236,208 @@ onUnmounted(() => {
           </button>
           <button
             @click="launchTab = 'gitstack'"
-            class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition"
+            class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition shrink-0"
             :class="launchTab === 'gitstack' ? 'bg-cyan-950/80 text-cyan-300 border border-cyan-800/60' : 'text-slate-400 hover:text-slate-200'"
           >
             <GitBranch class="h-3.5 w-3.5" />
-            <span>Git / Compose Stack</span>
+            <span>Git / Remote Stack</span>
           </button>
         </div>
 
-        <!-- TAB 1: Docker Run -->
-        <div v-if="launchTab === 'dockerrun'" class="space-y-4">
+        <!-- TAB 1: Docker Compose YAML Editor -->
+        <div v-if="launchTab === 'compose'" class="space-y-4 overflow-y-auto pr-1 flex-1">
+          <div class="grid gap-3 sm:grid-cols-2 text-xs">
+            <div>
+              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                Stack / Project Name <span class="text-rose-400">*</span>
+              </label>
+              <input
+                v-model="composeDeployForm.name"
+                class="cyber-input text-xs font-mono"
+                placeholder="e.g. my-stack"
+              />
+            </div>
+            <div>
+              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                Host Working Directory Path (Optional)
+              </label>
+              <input
+                v-model="composeDeployForm.path"
+                class="cyber-input text-xs font-mono"
+                :placeholder="composeDeployForm.name ? `./projects/${composeDeployForm.name}` : './projects/my-stack'"
+              />
+            </div>
+          </div>
+
+          <div>
+            <div class="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
+              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                docker-compose.yml Content <span class="text-rose-400">*</span>
+              </label>
+              <div class="flex flex-wrap items-center gap-1 text-xs">
+                <span class="text-[10px] uppercase font-semibold text-slate-500 mr-0.5">Quick Insert:</span>
+                <button
+                  type="button"
+                  @click="insertComposeSnippet('    networks:\n      - cloudflared\n\nnetworks:\n  cloudflared:\n    external: true')"
+                  class="rounded border border-slate-800 bg-slate-950 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300 hover:border-cyan-600 hover:bg-slate-900 transition"
+                >
+                  + Cloudflared Net
+                </button>
+                <button
+                  type="button"
+                  @click="insertComposeSnippet('    restart: unless-stopped')"
+                  class="rounded border border-slate-800 bg-slate-950 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300 hover:border-cyan-600 hover:bg-slate-900 transition"
+                >
+                  + Restart
+                </button>
+                <button
+                  type="button"
+                  @click="insertComposeSnippet('    ports:\n      - \"8080:80\"')"
+                  class="rounded border border-slate-800 bg-slate-950 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300 hover:border-cyan-600 hover:bg-slate-900 transition"
+                >
+                  + Port Map
+                </button>
+                <button
+                  type="button"
+                  @click="insertComposeSnippet('    volumes:\n      - ./data:/data')"
+                  class="rounded border border-slate-800 bg-slate-950 px-1.5 py-0.5 font-mono text-[9px] text-cyan-300 hover:border-cyan-600 hover:bg-slate-900 transition"
+                >
+                  + Volume
+                </button>
+              </div>
+            </div>
+            <textarea
+              v-model="composeDeployForm.compose_content"
+              rows="12"
+              class="cyber-input font-mono text-xs w-full leading-relaxed bg-slate-950 border-slate-800 text-cyan-100"
+              placeholder="services:&#10;  app:&#10;    image: nginx:alpine&#10;    restart: unless-stopped"
+              spellcheck="false"
+            ></textarea>
+          </div>
+
+          <!-- Collapsible .env Editor -->
+          <div class="border border-slate-800 rounded-lg bg-slate-950/60 p-3 space-y-2">
+            <button
+              type="button"
+              @click="composeDeployForm.show_env = !composeDeployForm.show_env"
+              class="w-full flex items-center justify-between text-xs font-semibold text-slate-300 hover:text-white"
+            >
+              <div class="flex items-center gap-2">
+                <FileText class="h-3.5 w-3.5 text-amber-400" />
+                <span>Environment Variables (.env file)</span>
+                <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">Optional</span>
+              </div>
+              <ChevronDown class="h-4 w-4 transition-transform" :class="composeDeployForm.show_env ? 'rotate-180' : ''" />
+            </button>
+            <div v-if="composeDeployForm.show_env" class="pt-2">
+              <textarea
+                v-model="composeDeployForm.env_content"
+                rows="4"
+                class="cyber-input font-mono text-xs w-full leading-relaxed bg-slate-950 border-slate-800 text-amber-200"
+                placeholder="KEY=value&#10;POSTGRES_PASSWORD=secret"
+                spellcheck="false"
+              ></textarea>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
+            <button @click="showLaunchModal = false" class="cyber-btn-secondary text-xs">Cancel</button>
+            <button
+              @click="deployComposeStack"
+              :disabled="composeDeploying || !composeDeployForm.name.trim() || !composeDeployForm.compose_content.trim()"
+              class="cyber-btn flex items-center gap-2 text-xs text-cyan-300 border-cyan-500/80 bg-cyan-950/40 hover:bg-cyan-900/60 font-bold"
+            >
+              <RotateCcw v-if="composeDeploying" class="h-3.5 w-3.5 animate-spin" />
+              <Rocket v-else class="h-3.5 w-3.5" />
+              <span>{{ composeDeploying ? 'Deploying Stack…' : 'Deploy Compose Stack (up -d)' }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- TAB 2: Compose App Templates -->
+        <div v-if="launchTab === 'templates'" class="space-y-4 overflow-y-auto pr-1 flex-1">
+          <div class="flex flex-col sm:flex-row items-center justify-between gap-3">
+            <!-- Category Pills -->
+            <div class="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
+              <button
+                v-for="cat in ['all', 'web', 'database', 'monitoring', 'media', 'utility']"
+                :key="cat"
+                @click="composeTemplateCategory = cat as any"
+                class="px-2.5 py-1 rounded text-[11px] font-semibold uppercase tracking-wider transition"
+                :class="composeTemplateCategory === cat ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'text-slate-400 hover:text-slate-200 border border-slate-800 bg-slate-900/60'"
+              >
+                {{ cat }}
+              </button>
+            </div>
+
+            <!-- Search Filter -->
+            <div class="relative w-full sm:w-64">
+              <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
+              <input
+                v-model="composeTemplateSearch"
+                type="text"
+                placeholder="Search templates…"
+                class="cyber-input text-xs pl-8 w-full"
+              />
+            </div>
+          </div>
+
+          <!-- Templates Grid -->
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div
+              v-for="tmpl in filteredTemplates"
+              :key="tmpl.id"
+              class="rounded-xl border border-slate-800 bg-slate-950/70 p-3.5 flex flex-col justify-between hover:border-cyan-500/50 hover:bg-slate-900/40 transition group"
+            >
+              <div class="space-y-2">
+                <div class="flex items-start justify-between">
+                  <div class="flex items-center gap-2">
+                    <div class="rounded-lg bg-cyan-950/80 border border-cyan-800/40 p-2 text-cyan-300">
+                      <component :is="tmpl.iconComponent" class="h-4 w-4" />
+                    </div>
+                    <div>
+                      <div class="text-xs font-bold text-slate-100 group-hover:text-cyan-300 transition">
+                        {{ tmpl.name }}
+                      </div>
+                      <span class="text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">
+                        {{ tmpl.category }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <p class="text-[11px] text-slate-400 leading-relaxed">
+                  {{ tmpl.description }}
+                </p>
+
+                <div v-if="tmpl.ports.length" class="flex flex-wrap gap-1 pt-1">
+                  <span
+                    v-for="port in tmpl.ports"
+                    :key="port"
+                    class="rounded bg-slate-900 border border-slate-800 px-1.5 py-0.2 text-[9px] font-mono text-cyan-400"
+                  >
+                    {{ port }}
+                  </span>
+                </div>
+              </div>
+
+              <div class="pt-3 mt-2 border-t border-slate-900/80 flex items-center justify-between">
+                <span class="text-[10px] text-slate-500 font-mono">1-click starter</span>
+                <button
+                  type="button"
+                  @click="selectTemplate(tmpl)"
+                  class="cyber-btn text-[11px] py-1 px-2.5 text-cyan-300 border-cyan-600 bg-cyan-950/30 hover:bg-cyan-900/60 flex items-center gap-1.5"
+                >
+                  <Rocket class="h-3 w-3" />
+                  <span>Use Template</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 3: Docker Run -->
+        <div v-if="launchTab === 'dockerrun'" class="space-y-4 overflow-y-auto pr-1 flex-1">
           <div>
             <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
               Docker Run Command
@@ -3782,7 +4491,7 @@ onUnmounted(() => {
             <div v-if="dockerRunLoading" class="text-cyan-400 animate-pulse mt-1">&rarr; Running command...</div>
           </div>
 
-          <div class="flex items-center justify-end gap-3 pt-2">
+          <div class="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
             <button @click="showLaunchModal = false" class="cyber-btn-secondary text-xs">Cancel</button>
             <button
               @click="runDockerCommand"
@@ -3796,8 +4505,8 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- TAB 2: Git / Compose Stack -->
-        <div v-else class="space-y-4">
+        <!-- TAB 4: Git / Compose Stack -->
+        <div v-if="launchTab === 'gitstack'" class="space-y-4 overflow-y-auto pr-1 flex-1">
           <div class="grid gap-3 sm:grid-cols-2 text-xs">
             <div>
               <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Stack Name</label>
@@ -3821,7 +4530,7 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div class="flex items-center justify-end gap-3 pt-2">
+          <div class="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
             <button @click="showLaunchModal = false" class="cyber-btn-secondary text-xs">Cancel</button>
             <button
               @click="submitNewProject"

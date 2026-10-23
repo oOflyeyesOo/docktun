@@ -120,14 +120,16 @@ type ContainerExposureItem struct {
 }
 
 type SetContainerExposureRequest struct {
-	ContainerName    string `json:"container_name"`
-	Mode             string `json:"mode"`         // "public", "private", "internal"
-	PrivateType      string `json:"private_type"` // "tailscale", "wireguard"
-	PrivatePort      int    `json:"private_port"`
-	Hostname         string `json:"hostname"`
-	Target           string `json:"target"`
-	ZeroTrustEnabled bool   `json:"zero_trust_enabled"`
-	ZeroTrustEmails  string `json:"zero_trust_emails"`
+	ContainerName     string `json:"container_name"`
+	Mode              string `json:"mode"`         // "public", "private", "internal"
+	PrivateType       string `json:"private_type"` // "tailscale", "wireguard"
+	PrivatePort       int    `json:"private_port"`
+	Hostname          string `json:"hostname"`
+	Target            string `json:"target"`
+	ZeroTrustEnabled  bool   `json:"zero_trust_enabled"`
+	ZeroTrustEmails   string `json:"zero_trust_emails"`
+	ZeroTrustAuthType string `json:"zero_trust_auth_type"`
+	ZeroTrustSession  string `json:"zero_trust_session"`
 }
 
 type RemoteAccessService struct {
@@ -809,13 +811,15 @@ func (s *RemoteAccessService) SetContainerExposure(req SetContainerExposureReque
 	}
 
 	settings := ExposureSettings{
-		Mode:             req.Mode,
-		Hostname:         req.Hostname,
-		Target:           req.Target,
-		PrivateType:      req.PrivateType,
-		PrivatePort:      req.PrivatePort,
-		ZeroTrustEnabled: req.ZeroTrustEnabled,
-		ZeroTrustEmails:  req.ZeroTrustEmails,
+		Mode:              req.Mode,
+		Hostname:          req.Hostname,
+		Target:            req.Target,
+		PrivateType:       req.PrivateType,
+		PrivatePort:       req.PrivatePort,
+		ZeroTrustEnabled:  req.ZeroTrustEnabled,
+		ZeroTrustEmails:   req.ZeroTrustEmails,
+		ZeroTrustAuthType: req.ZeroTrustAuthType,
+		ZeroTrustSession:  req.ZeroTrustSession,
 	}
 
 	if req.Mode == "public" {

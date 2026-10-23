@@ -704,12 +704,31 @@ func (s *CloudflareAPI) ListAccessApplications() ([]AccessApplication, error) {
 	return apps, nil
 }
 
+type ZeroTrustPolicyOptions struct {
+	Hostname        string `json:"hostname"`
+	AuthType        string `json:"auth_type"`        // "email", "domain", "everyone", "ip", "bypass_ip"
+	Emails          string `json:"emails"`           // comma/space/newline separated emails
+	Domains         string `json:"domains"`          // comma/space/newline separated domains
+	IPRanges        string `json:"ip_ranges"`        // comma/space/newline separated IP CIDRs
+	SessionDuration string `json:"session_duration"` // "15m", "30m", "1h", "6h", "12h", "24h", "7d", "30d"
+}
+
+// SyncZeroTrustAccessSimple provides backwards-compatible access for simple email strings
+func (s *CloudflareAPI) SyncZeroTrustAccessSimple(hostname, emails string) (string, error) {
+	return s.SyncZeroTrustAccess(ZeroTrustPolicyOptions{
+		Hostname:        hostname,
+		Emails:          emails,
+		AuthType:        "email",
+		SessionDuration: "24h",
+	})
+}
+
 // SyncZeroTrustAccess creates or updates a Cloudflare Zero Trust Access Application
-// and applies an Allow Policy for the specified emails or domains.
-func (s *CloudflareAPI) SyncZeroTrustAccess(hostname, emails string) (string, error) {
-	cleanHost := cleanHostname(hostname)
+// and applies an Allow/Bypass Policy for the specified auth method (Email OTP, Domain, Everyone, IP Whitelist, IP Bypass).
+func (s *CloudflareAPI) SyncZeroTrustAccess(opts ZeroTrustPolicyOptions) (string, error) {
+	cleanHost := cleanHostname(opts.Hostname)
 	if cleanHost == "" {
-		return "", fmt.Errorf("invalid hostname for zero trust: %s", hostname)
+		return "", fmt.Errorf("invalid hostname for zero trust: %s", opts.Hostname)
 	}
 
 	creds := s.GetCredentials()
@@ -720,6 +739,16 @@ func (s *CloudflareAPI) SyncZeroTrustAccess(hostname, emails string) (string, er
 	baseURL, err := s.getAccessBaseURL(creds, cleanHost)
 	if err != nil {
 		return "", err
+	}
+
+	sessionDur := strings.TrimSpace(opts.SessionDuration)
+	if sessionDur == "" {
+		sessionDur = "24h"
+	}
+
+	authType := strings.ToLower(strings.TrimSpace(opts.AuthType))
+	if authType == "" {
+		authType = "email"
 	}
 
 	// 1. Check if application for domain already exists
@@ -734,13 +763,13 @@ func (s *CloudflareAPI) SyncZeroTrustAccess(hostname, emails string) (string, er
 		}
 	}
 
-	// 2. If app doesn't exist, create it
+	// 2. If app doesn't exist, create it; if it does, update session duration
 	if appID == "" {
 		createBody := map[string]interface{}{
 			"name":                      cleanHost + " (DockTun)",
 			"domain":                    cleanHost,
 			"type":                      "self_hosted",
-			"session_duration":          "24h",
+			"session_duration":          sessionDur,
 			"auto_redirect_to_identity": false,
 		}
 		jsonBytes, _ := json.Marshal(createBody)
@@ -773,6 +802,21 @@ func (s *CloudflareAPI) SyncZeroTrustAccess(hostname, emails string) (string, er
 		if err := json.Unmarshal(cfResp.Result, &created); err == nil && created.ID != "" {
 			appID = created.ID
 		}
+	} else {
+		// Update existing application settings (session duration)
+		updateBody := map[string]interface{}{
+			"name":             cleanHost + " (DockTun)",
+			"session_duration": sessionDur,
+		}
+		jsonBytes, _ := json.Marshal(updateBody)
+		updateURL := fmt.Sprintf("%s/%s", baseURL, appID)
+		if putReq, err := http.NewRequest("PUT", updateURL, bytes.NewBuffer(jsonBytes)); err == nil {
+			putReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
+			putReq.Header.Set("Content-Type", "application/json")
+			if pResp, err := s.client.Do(putReq); err == nil {
+				pResp.Body.Close()
+			}
+		}
 	}
 
 	if appID == "" {
@@ -781,32 +825,91 @@ func (s *CloudflareAPI) SyncZeroTrustAccess(hostname, emails string) (string, er
 
 	// 3. Configure Access Policy on application
 	policyURL := fmt.Sprintf("%s/%s/policies", baseURL, appID)
+	decision := "allow"
+	if authType == "bypass_ip" {
+		decision = "bypass"
+	}
 
 	var include []map[string]interface{}
-	rawEmails := strings.FieldsFunc(emails, func(r rune) bool {
-		return r == ',' || r == ';' || r == ' ' || r == '\n'
-	})
-	for _, em := range rawEmails {
-		em = strings.TrimSpace(em)
-		if em == "" {
-			continue
+
+	splitTokens := func(s string) []string {
+		return strings.FieldsFunc(s, func(r rune) bool {
+			return r == ',' || r == ';' || r == ' ' || r == '\n' || r == '\t'
+		})
+	}
+
+	switch authType {
+	case "everyone":
+		// Any authenticated user who completes IdP login
+		include = append(include, map[string]interface{}{
+			"everyone": map[string]interface{}{},
+		})
+
+	case "domain":
+		// Allowed email domain(s)
+		domains := splitTokens(opts.Domains)
+		if len(domains) == 0 {
+			domains = splitTokens(opts.Emails)
 		}
-		if strings.HasPrefix(em, "@") {
+		for _, d := range domains {
+			d = strings.TrimSpace(strings.TrimPrefix(d, "@"))
+			if d != "" {
+				include = append(include, map[string]interface{}{
+					"email_domain": map[string]string{"domain": d},
+				})
+			}
+		}
+
+	case "ip", "bypass_ip":
+		// IP or CIDR network range
+		ips := splitTokens(opts.IPRanges)
+		if len(ips) == 0 {
+			ips = splitTokens(opts.Emails)
+		}
+		for _, ip := range ips {
+			ip = strings.TrimSpace(ip)
+			if ip == "" {
+				continue
+			}
+			if !strings.Contains(ip, "/") {
+				if strings.Contains(ip, ":") {
+					ip = ip + "/128"
+				} else {
+					ip = ip + "/32"
+				}
+			}
 			include = append(include, map[string]interface{}{
-				"email_domain": map[string]string{"domain": strings.TrimPrefix(em, "@")},
+				"ip": map[string]string{"ip": ip},
 			})
-		} else if strings.Contains(em, "@") {
-			include = append(include, map[string]interface{}{
-				"email": map[string]string{"email": em},
-			})
-		} else if strings.Contains(em, ".") {
-			include = append(include, map[string]interface{}{
-				"email_domain": map[string]string{"domain": em},
-			})
+		}
+
+	case "email":
+		fallthrough
+	default:
+		// Email OTP or domain
+		rawEmails := splitTokens(opts.Emails)
+		for _, em := range rawEmails {
+			em = strings.TrimSpace(em)
+			if em == "" {
+				continue
+			}
+			if strings.HasPrefix(em, "@") {
+				include = append(include, map[string]interface{}{
+					"email_domain": map[string]string{"domain": strings.TrimPrefix(em, "@")},
+				})
+			} else if strings.Contains(em, "@") {
+				include = append(include, map[string]interface{}{
+					"email": map[string]string{"email": em},
+				})
+			} else if strings.Contains(em, ".") {
+				include = append(include, map[string]interface{}{
+					"email_domain": map[string]string{"domain": em},
+				})
+			}
 		}
 	}
 
-	// If no specific email restrictions given, allow anyone who completes Zero Trust OTP
+	// Fallback to everyone if no specific rules were extracted
 	if len(include) == 0 {
 		include = append(include, map[string]interface{}{
 			"everyone": map[string]interface{}{},
@@ -814,8 +917,8 @@ func (s *CloudflareAPI) SyncZeroTrustAccess(hostname, emails string) (string, er
 	}
 
 	policyBody := map[string]interface{}{
-		"name":     "DockTun Zero Trust Access",
-		"decision": "allow",
+		"name":     "DockTun Zero Trust Policy",
+		"decision": decision,
 		"include":  include,
 	}
 	pBytes, _ := json.Marshal(policyBody)

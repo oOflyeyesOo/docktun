@@ -1,9 +1,11 @@
-﻿package handler
+package handler
 
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"docktun/internal/service"
@@ -33,15 +35,23 @@ func (h *Projects) List(w http.ResponseWriter, r *http.Request) {
 
 func (h *Projects) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name        string `json:"name"`
-		Path        string `json:"path"`
-		RepoURL     string `json:"repo_url"`
-		GitUsername string `json:"git_username"`
-		GitToken    string `json:"git_token"`
+		Name           string `json:"name"`
+		Path           string `json:"path"`
+		RepoURL        string `json:"repo_url"`
+		GitUsername    string `json:"git_username"`
+		GitToken       string `json:"git_token"`
+		ComposeContent string `json:"compose_content"`
+		EnvContent     string `json:"env_content"`
+		AutoStart      bool   `json:"auto_start"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" || body.Path == "" {
-		jsonError(w, "name and path required", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
+		jsonError(w, "project name required", http.StatusBadRequest)
 		return
+	}
+
+	body.Name = strings.TrimSpace(body.Name)
+	if strings.TrimSpace(body.Path) == "" {
+		body.Path = filepath.Join("./projects", body.Name)
 	}
 
 	p, err := h.svc.Create(body.Name, body.Path, body.RepoURL, body.GitUsername, body.GitToken)
@@ -50,8 +60,26 @@ func (h *Projects) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If direct compose content provided, save docker-compose.yml
+	if strings.TrimSpace(body.ComposeContent) != "" {
+		_ = h.svc.SaveComposeFile(p.ID, "docker-compose.yml", body.ComposeContent)
+	}
+
+	// If direct env content provided, save .env
+	if strings.TrimSpace(body.EnvContent) != "" {
+		_ = h.svc.SaveEnvFile(p.ID, body.EnvContent)
+	}
+
 	userID, _ := r.Context().Value("user_id").(int)
 	h.audit.Log(userID, "project_create", body.Name, r.RemoteAddr)
+
+	// If auto_start is true and compose file exists, start compose up -d asynchronously
+	if body.AutoStart && strings.TrimSpace(body.ComposeContent) != "" {
+		onDone := func(output string) {
+			h.audit.Log(userID, "project_up", p.Name+"\n"+output, r.RemoteAddr)
+		}
+		h.svc.ComposeAction(p.ID, p.Path, onDone, "up", "-d")
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
