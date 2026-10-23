@@ -24,13 +24,16 @@ import (
 )
 
 type ExposureSettings struct {
-	Mode        string `json:"mode"`
-	Hostname    string `json:"hostname,omitempty"`
-	Target      string `json:"target,omitempty"`
-	PrivateType string `json:"private_type,omitempty"`
-	PrivateHost string `json:"private_host,omitempty"`
-	PrivatePort int    `json:"private_port,omitempty"`
-	Notes       string `json:"notes,omitempty"`
+	Mode             string `json:"mode"`
+	Hostname         string `json:"hostname,omitempty"`
+	Target           string `json:"target,omitempty"`
+	PrivateType      string `json:"private_type,omitempty"`
+	PrivateHost      string `json:"private_host,omitempty"`
+	PrivatePort      int    `json:"private_port,omitempty"`
+	Notes            string `json:"notes,omitempty"`
+	ZeroTrustEnabled bool   `json:"zero_trust_enabled,omitempty"`
+	ZeroTrustEmails  string `json:"zero_trust_emails,omitempty"`
+	ZeroTrustAppID   string `json:"zero_trust_app_id,omitempty"`
 }
 
 type ContainerMount struct {
@@ -57,6 +60,8 @@ type Container struct {
 	PrivateHost            string           `json:"private_host,omitempty"`
 	PrivatePort            int              `json:"private_port,omitempty"`
 	Notes                  string           `json:"notes,omitempty"`
+	ZeroTrustEnabled       bool             `json:"zero_trust_enabled,omitempty"`
+	ZeroTrustEmails        string           `json:"zero_trust_emails,omitempty"`
 	CPU                    string           `json:"cpu,omitempty"`
 	Memory                 string           `json:"memory,omitempty"`
 	Network                string           `json:"network,omitempty"`
@@ -587,10 +592,20 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 	// Exposure check
 	ingressMap := s.loadCloudflareIngressMap()
 	if ing, ok := ingressMap[c.Name]; ok {
+		exp := s.getExposureFromDB(c.Name)
 		c.ExposureMode = "public"
 		c.Hostname = ing.Hostname
 		c.Target = ing.Service
-		c.Exposure = ExposureSettings{Mode: "public", Hostname: ing.Hostname, Target: ing.Service}
+		c.ZeroTrustEnabled = exp.ZeroTrustEnabled
+		c.ZeroTrustEmails = exp.ZeroTrustEmails
+		c.Exposure = ExposureSettings{
+			Mode:             "public",
+			Hostname:         ing.Hostname,
+			Target:           ing.Service,
+			ZeroTrustEnabled: exp.ZeroTrustEnabled,
+			ZeroTrustEmails:  exp.ZeroTrustEmails,
+			ZeroTrustAppID:   exp.ZeroTrustAppID,
+		}
 	} else {
 		exp := s.getExposureFromDB(c.Name)
 		c.ExposureMode = exp.Mode
@@ -600,6 +615,8 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		c.PrivateHost = exp.PrivateHost
 		c.PrivatePort = exp.PrivatePort
 		c.Notes = exp.Notes
+		c.ZeroTrustEnabled = exp.ZeroTrustEnabled
+		c.ZeroTrustEmails = exp.ZeroTrustEmails
 		c.Exposure = exp
 	}
 
@@ -1090,7 +1107,31 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 	if cleanSettings.Mode == "public" {
 		cleanSettings.Target = s.normalizeTarget(name, settings.Target)
 	}
-	return s.saveExposureToDB(name, cleanSettings)
+	prevExp := s.getExposureFromDB(name)
+	if err := s.saveExposureToDB(name, cleanSettings); err != nil {
+		return err
+	}
+
+	// 4. Synchronize Zero Trust Access Application & Policy if enabled
+	if cleanSettings.Mode == "public" && cleanSettings.ZeroTrustEnabled && cleanSettings.Hostname != "" && s.cfAPI != nil {
+		go func(cName, host, emails string) {
+			appID, err := s.cfAPI.SyncZeroTrustAccess(host, emails)
+			if err != nil {
+				log.Printf("[docktun] Cloudflare Zero Trust sync error for %s: %v", host, err)
+			} else if appID != "" {
+				_ = s.updateZeroTrustAppID(cName, appID)
+				log.Printf("[docktun] Cloudflare Zero Trust Access active for %s (app_id: %s)", host, appID)
+			}
+		}(name, cleanSettings.Hostname, cleanSettings.ZeroTrustEmails)
+	} else if (!cleanSettings.ZeroTrustEnabled || cleanSettings.Mode != "public") && s.cfAPI != nil && prevExp.ZeroTrustAppID != "" {
+		go func(appID string) {
+			if err := s.cfAPI.DeleteZeroTrustAccess(appID); err != nil {
+				log.Printf("[docktun] Cloudflare Zero Trust delete notice: %v", err)
+			}
+		}(prevExp.ZeroTrustAppID)
+	}
+
+	return nil
 }
 
 func (s *DockerContainers) syncCloudflareIngress(containerName string, settings ExposureSettings) error {
@@ -1209,7 +1250,7 @@ func (s *DockerContainers) loadAllExposuresFromDB() map[string]ExposureSettings 
 		return res
 	}
 
-	rows, err := s.db.Query(`SELECT container_name, mode, hostname, target, private_type, private_host, private_port, notes FROM container_exposures`)
+	rows, err := s.db.Query(`SELECT container_name, mode, hostname, target, private_type, private_host, private_port, notes, COALESCE(zero_trust_enabled, 0), COALESCE(zero_trust_emails, ''), COALESCE(zero_trust_app_id, '') FROM container_exposures`)
 	if err != nil {
 		return res
 	}
@@ -1219,10 +1260,12 @@ func (s *DockerContainers) loadAllExposuresFromDB() map[string]ExposureSettings 
 		var name string
 		var exp ExposureSettings
 		var pPort sql.NullInt64
-		if err := rows.Scan(&name, &exp.Mode, &exp.Hostname, &exp.Target, &exp.PrivateType, &exp.PrivateHost, &pPort, &exp.Notes); err == nil {
+		var ztInt int
+		if err := rows.Scan(&name, &exp.Mode, &exp.Hostname, &exp.Target, &exp.PrivateType, &exp.PrivateHost, &pPort, &exp.Notes, &ztInt, &exp.ZeroTrustEmails, &exp.ZeroTrustAppID); err == nil {
 			if pPort.Valid {
 				exp.PrivatePort = int(pPort.Int64)
 			}
+			exp.ZeroTrustEnabled = ztInt == 1
 			res[name] = exp
 		}
 	}
@@ -1236,16 +1279,18 @@ func (s *DockerContainers) getExposureFromDB(name string) ExposureSettings {
 
 	var exp ExposureSettings
 	var pPort sql.NullInt64
+	var ztInt int
 	err := s.db.QueryRow(
-		`SELECT mode, hostname, target, private_type, private_host, private_port, notes FROM container_exposures WHERE container_name = ?`,
+		`SELECT mode, hostname, target, private_type, private_host, private_port, notes, COALESCE(zero_trust_enabled, 0), COALESCE(zero_trust_emails, ''), COALESCE(zero_trust_app_id, '') FROM container_exposures WHERE container_name = ?`,
 		name,
-	).Scan(&exp.Mode, &exp.Hostname, &exp.Target, &exp.PrivateType, &exp.PrivateHost, &pPort, &exp.Notes)
+	).Scan(&exp.Mode, &exp.Hostname, &exp.Target, &exp.PrivateType, &exp.PrivateHost, &pPort, &exp.Notes, &ztInt, &exp.ZeroTrustEmails, &exp.ZeroTrustAppID)
 	if err != nil {
 		return ExposureSettings{Mode: "internal"}
 	}
 	if pPort.Valid {
 		exp.PrivatePort = int(pPort.Int64)
 	}
+	exp.ZeroTrustEnabled = ztInt == 1
 	return exp
 }
 
@@ -1254,9 +1299,14 @@ func (s *DockerContainers) saveExposureToDB(name string, exp ExposureSettings) e
 		return nil
 	}
 
+	ztInt := 0
+	if exp.ZeroTrustEnabled {
+		ztInt = 1
+	}
+
 	_, err := s.db.Exec(`
-		INSERT INTO container_exposures (container_name, mode, hostname, target, private_type, private_host, private_port, notes, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO container_exposures (container_name, mode, hostname, target, private_type, private_host, private_port, notes, zero_trust_enabled, zero_trust_emails, zero_trust_app_id, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(container_name) DO UPDATE SET
 			mode = excluded.mode,
 			hostname = excluded.hostname,
@@ -1265,8 +1315,19 @@ func (s *DockerContainers) saveExposureToDB(name string, exp ExposureSettings) e
 			private_host = excluded.private_host,
 			private_port = excluded.private_port,
 			notes = excluded.notes,
+			zero_trust_enabled = excluded.zero_trust_enabled,
+			zero_trust_emails = excluded.zero_trust_emails,
+			zero_trust_app_id = CASE WHEN excluded.zero_trust_app_id != '' THEN excluded.zero_trust_app_id ELSE container_exposures.zero_trust_app_id END,
 			updated_at = CURRENT_TIMESTAMP
-	`, name, exp.Mode, exp.Hostname, exp.Target, exp.PrivateType, exp.PrivateHost, exp.PrivatePort, exp.Notes)
+	`, name, exp.Mode, exp.Hostname, exp.Target, exp.PrivateType, exp.PrivateHost, exp.PrivatePort, exp.Notes, ztInt, exp.ZeroTrustEmails, exp.ZeroTrustAppID)
+	return err
+}
+
+func (s *DockerContainers) updateZeroTrustAppID(name, appID string) error {
+	if s.db == nil {
+		return nil
+	}
+	_, err := s.db.Exec(`UPDATE container_exposures SET zero_trust_app_id = ? WHERE container_name = ?`, appID, name)
 	return err
 }
 

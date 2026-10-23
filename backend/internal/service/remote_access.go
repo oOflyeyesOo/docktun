@@ -102,28 +102,32 @@ type WireguardStatus struct {
 }
 
 type ContainerExposureItem struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Image         string `json:"image"`
-	Running       bool   `json:"running"`
-	Ports         []int  `json:"ports"`
-	ExposureMode  string `json:"exposure_mode"`
-	PrivateType   string `json:"private_type"`
-	PrivatePort   int    `json:"private_port"`
-	Hostname      string `json:"hostname"`
-	Target        string `json:"target"`
-	TailscaleURL  string `json:"tailscale_url,omitempty"`
-	WireguardURL  string `json:"wireguard_url,omitempty"`
-	CloudflareURL string `json:"cloudflare_url,omitempty"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Image            string `json:"image"`
+	Running          bool   `json:"running"`
+	Ports            []int  `json:"ports"`
+	ExposureMode     string `json:"exposure_mode"`
+	PrivateType      string `json:"private_type"`
+	PrivatePort      int    `json:"private_port"`
+	Hostname         string `json:"hostname"`
+	Target           string `json:"target"`
+	TailscaleURL     string `json:"tailscale_url,omitempty"`
+	WireguardURL     string `json:"wireguard_url,omitempty"`
+	CloudflareURL    string `json:"cloudflare_url,omitempty"`
+	ZeroTrustEnabled bool   `json:"zero_trust_enabled,omitempty"`
+	ZeroTrustEmails  string `json:"zero_trust_emails,omitempty"`
 }
 
 type SetContainerExposureRequest struct {
-	ContainerName string `json:"container_name"`
-	Mode          string `json:"mode"`         // "public", "private", "internal"
-	PrivateType   string `json:"private_type"` // "tailscale", "wireguard"
-	PrivatePort   int    `json:"private_port"`
-	Hostname      string `json:"hostname"`
-	Target        string `json:"target"`
+	ContainerName    string `json:"container_name"`
+	Mode             string `json:"mode"`         // "public", "private", "internal"
+	PrivateType      string `json:"private_type"` // "tailscale", "wireguard"
+	PrivatePort      int    `json:"private_port"`
+	Hostname         string `json:"hostname"`
+	Target           string `json:"target"`
+	ZeroTrustEnabled bool   `json:"zero_trust_enabled"`
+	ZeroTrustEmails  string `json:"zero_trust_emails"`
 }
 
 type RemoteAccessService struct {
@@ -761,8 +765,10 @@ func (s *RemoteAccessService) GetContainerExposures() ([]ContainerExposureItem, 
 			ExposureMode: c.ExposureMode,
 			PrivateType:  c.PrivateType,
 			PrivatePort:  c.PrivatePort,
-			Hostname:     c.Hostname,
-			Target:       c.Target,
+			Hostname:         c.Hostname,
+			Target:           c.Target,
+			ZeroTrustEnabled: c.ZeroTrustEnabled,
+			ZeroTrustEmails:  c.ZeroTrustEmails,
 		}
 
 		if c.ExposureMode == "public" && c.Hostname != "" {
@@ -803,11 +809,13 @@ func (s *RemoteAccessService) SetContainerExposure(req SetContainerExposureReque
 	}
 
 	settings := ExposureSettings{
-		Mode:        req.Mode,
-		Hostname:    req.Hostname,
-		Target:      req.Target,
-		PrivateType: req.PrivateType,
-		PrivatePort: req.PrivatePort,
+		Mode:             req.Mode,
+		Hostname:         req.Hostname,
+		Target:           req.Target,
+		PrivateType:      req.PrivateType,
+		PrivatePort:      req.PrivatePort,
+		ZeroTrustEnabled: req.ZeroTrustEnabled,
+		ZeroTrustEmails:  req.ZeroTrustEmails,
 	}
 
 	if req.Mode == "public" {

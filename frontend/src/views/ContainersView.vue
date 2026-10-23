@@ -63,6 +63,8 @@ interface ExposureSettings {
   private_host?: string
   private_port?: number
   notes?: string
+  zero_trust_enabled?: boolean
+  zero_trust_emails?: string
 }
 
 interface ContainerItem {
@@ -81,6 +83,8 @@ interface ContainerItem {
   private_host?: string
   private_port?: number
   notes?: string
+  zero_trust_enabled?: boolean
+  zero_trust_emails?: string
   cpu?: string
   memory?: string
   network?: string
@@ -524,6 +528,8 @@ function toggleExposeDrawer(container: ContainerItem) {
         private_host: container.private_host || '',
         private_port: container.private_port || parseInt(pPort, 10) || 80,
         notes: container.notes || '',
+        zero_trust_enabled: container.zero_trust_enabled || false,
+        zero_trust_emails: container.zero_trust_emails || '',
       }
     }
   }
@@ -1457,6 +1463,14 @@ onUnmounted(() => {
                 <span>Public Ingress</span>
               </span>
               <span
+                v-if="container.exposure_mode === 'public' && container.zero_trust_enabled"
+                class="inline-flex items-center gap-1 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-indigo-300"
+                title="Protected with Cloudflare Zero Trust Access Wall"
+              >
+                <ShieldCheck class="h-3 w-3" />
+                <span>Zero Trust</span>
+              </span>
+              <span
                 v-else-if="container.exposure_mode === 'private'"
                 class="inline-flex items-center gap-1.5 rounded-full border border-violet-500/40 bg-violet-500/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet-300"
               >
@@ -1727,6 +1741,39 @@ onUnmounted(() => {
                   :placeholder="`http://${container.name}:80`"
                   class="cyber-input"
                 />
+              </div>
+
+              <!-- Optional Zero Trust Protection -->
+              <div class="col-span-full pt-3 border-t border-slate-900 space-y-2">
+                <label class="flex items-start gap-2.5 cursor-pointer p-2.5 rounded-lg border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition">
+                  <input
+                    type="checkbox"
+                    v-model="getExpose(container.id).zero_trust_enabled"
+                    class="h-4 w-4 mt-0.5 rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-indigo-500"
+                  />
+                  <div class="space-y-0.5">
+                    <div class="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                      <ShieldCheck class="h-3.5 w-3.5 text-indigo-400" />
+                      <span>Protect with Cloudflare Zero Trust (Email OTP / SSO)</span>
+                      <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Optional</span>
+                    </div>
+                    <div class="text-[10px] text-slate-400">
+                      Intercept requests at Cloudflare edge with an authentication wall before forwarding to this container.
+                    </div>
+                  </div>
+                </label>
+
+                <div v-if="getExpose(container.id).zero_trust_enabled" class="pl-6 space-y-1">
+                  <label class="block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                    Allowed Emails / Domains (Optional)
+                  </label>
+                  <input
+                    v-model="getExpose(container.id).zero_trust_emails"
+                    type="text"
+                    placeholder="admin@example.com, @yourdomain.com (or blank for any authenticated user)"
+                    class="cyber-input text-xs font-mono"
+                  />
+                </div>
               </div>
             </template>
 

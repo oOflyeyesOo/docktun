@@ -499,6 +499,71 @@ async function fetchRemoteTunnelInfo() {
   }
 }
 
+interface AccessApp {
+  id: string
+  name: string
+  domain: string
+  type: string
+  session_duration: string
+  created_at?: string
+}
+
+const accessApps = ref<AccessApp[]>([])
+const loadingAccessApps = ref(false)
+const newAccessAppHost = ref('')
+const newAccessAppEmails = ref('')
+const creatingAccessApp = ref(false)
+
+async function fetchAccessApps() {
+  if (!cfApiHasToken.value && !cfApiToken.value) return
+  loadingAccessApps.value = true
+  try {
+    const data = await apiFetch<AccessApp[]>('/api/cloudflare/access-apps')
+    if (Array.isArray(data)) {
+      accessApps.value = data
+    }
+  } catch (err: any) {
+    console.error('Failed to query Zero Trust Access applications:', err)
+  } finally {
+    loadingAccessApps.value = false
+  }
+}
+
+async function createAccessApp() {
+  const host = newAccessAppHost.value.trim()
+  if (!host) {
+    alert('Please enter a hostname (e.g. sonarr.yourdomain.com)')
+    return
+  }
+  creatingAccessApp.value = true
+  try {
+    await apiFetch('/api/cloudflare/access-apps', {
+      method: 'POST',
+      body: JSON.stringify({
+        hostname: host,
+        emails: newAccessAppEmails.value.trim(),
+      }),
+    })
+    newAccessAppHost.value = ''
+    newAccessAppEmails.value = ''
+    await fetchAccessApps()
+  } catch (err: any) {
+    alert(err.message || 'Failed to create Zero Trust Access application')
+  } finally {
+    creatingAccessApp.value = false
+  }
+}
+
+async function deleteAccessApp(id: string, name: string) {
+  if (!confirm(`Remove Zero Trust Access protection for ${name}?`)) return
+  try {
+    await apiFetch(`/api/cloudflare/access-apps/${id}`, { method: 'DELETE' })
+    await fetchAccessApps()
+  } catch (err: any) {
+    alert(err.message || 'Failed to delete Zero Trust application')
+  }
+}
+
 let metricsTimer: any = null
 
 onMounted(async () => {
@@ -516,6 +581,7 @@ onMounted(async () => {
   loadBackups()
   if (cfApiHasToken.value || cfApiToken.value) {
     fetchRemoteTunnelInfo()
+    fetchAccessApps()
   }
 
   // Poll telemetry every 10s
@@ -1376,6 +1442,91 @@ onUnmounted(() => {
               </div>
               <span class="text-slate-400 text-[10px]">{{ conn.client_version || 'cloudflared' }}</span>
             </div>
+          </div>
+        </div>
+
+        <!-- Zero Trust Access Applications Card -->
+        <div class="rounded-xl border border-indigo-900/40 bg-indigo-950/20 p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <ShieldCheck class="h-4 w-4 text-indigo-400" />
+              <h3 class="text-xs font-bold uppercase tracking-wider text-indigo-300">
+                Cloudflare Zero Trust Access (Optional Protection Wall)
+              </h3>
+            </div>
+            <button
+              @click="fetchAccessApps"
+              :disabled="loadingAccessApps || (!cfApiToken && !cfApiHasToken)"
+              class="cyber-btn-secondary text-[11px] py-1 px-2 text-slate-300 flex items-center gap-1"
+            >
+              <RefreshCw class="h-3 w-3" :class="loadingAccessApps ? 'animate-spin' : ''" />
+              <span>Refresh Apps</span>
+            </button>
+          </div>
+          <p class="text-xs text-slate-400">
+            Zero Trust Access intercepts requests at Cloudflare edge with an authentication wall (Email PIN / SSO) before allowing traffic to your containers. It is entirely <strong class="text-slate-300">optional per route</strong> and disabled by default.
+          </p>
+
+          <!-- Active Zero Trust Applications List -->
+          <div v-if="accessApps.length" class="space-y-2 pt-1">
+            <div class="text-[10px] uppercase font-bold text-slate-400">Protected Hostnames:</div>
+            <div
+              v-for="app in accessApps"
+              :key="app.id"
+              class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900/60 p-2.5 text-xs font-mono"
+            >
+              <div class="flex items-center gap-2">
+                <ShieldCheck class="h-4 w-4 text-emerald-400 shrink-0" />
+                <div>
+                  <div class="text-slate-200 font-semibold">{{ app.domain }}</div>
+                  <div class="text-[10px] text-slate-500">{{ app.name }} &bull; Session: {{ app.session_duration }}</div>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="rounded bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 px-2 py-0.5 text-[10px]">
+                  ACTIVE
+                </span>
+                <button
+                  @click="deleteAccessApp(app.id, app.domain)"
+                  class="cyber-btn-danger !py-1 !px-2 text-xs"
+                  title="Remove Zero Trust protection"
+                >
+                  <Trash2 class="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+          <div v-else-if="!loadingAccessApps" class="text-[11px] text-slate-500 italic py-1">
+            No routes currently protected by Zero Trust Access. Enable protection on individual container routes or add one below.
+          </div>
+
+          <!-- Add / Protect New Hostname Form -->
+          <div class="pt-3 border-t border-indigo-900/30 space-y-2">
+            <div class="text-[11px] font-semibold text-slate-300">
+              Protect Route with Zero Trust Wall:
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs font-mono">
+              <input
+                v-model="newAccessAppHost"
+                type="text"
+                placeholder="app.yourdomain.com"
+                class="cyber-input text-xs font-mono"
+              />
+              <input
+                v-model="newAccessAppEmails"
+                type="text"
+                placeholder="admin@example.com (or blank for any authenticated user)"
+                class="cyber-input text-xs font-mono"
+              />
+            </div>
+            <button
+              @click="createAccessApp"
+              :disabled="creatingAccessApp || !newAccessAppHost || (!cfApiToken && !cfApiHasToken)"
+              class="cyber-btn text-xs flex items-center gap-1.5 text-indigo-300 border-indigo-600 bg-indigo-950/40 hover:bg-indigo-900/60 disabled:opacity-50"
+            >
+              <ShieldCheck class="h-3.5 w-3.5" :class="creatingAccessApp ? 'animate-spin' : ''" />
+              <span>{{ creatingAccessApp ? 'Applying Zero Trust…' : 'Apply Zero Trust Wall' }}</span>
+            </button>
           </div>
         </div>
       </div>

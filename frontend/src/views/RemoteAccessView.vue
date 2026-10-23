@@ -160,6 +160,8 @@ interface ContainerExposure {
   tailscale_url?: string
   wireguard_url?: string
   cloudflare_url?: string
+  zero_trust_enabled?: boolean
+  zero_trust_emails?: string
 }
 
 const containerExposures = ref<ContainerExposure[]>([])
@@ -186,6 +188,8 @@ const exposeForm = ref({
   private_port: 80,
   subdomain: '',
   domain: 'mightysprite.dev',
+  zero_trust_enabled: false,
+  zero_trust_emails: '',
 })
 const exposingSaving = ref(false)
 
@@ -403,6 +407,8 @@ function openExposeModal(
     private_port: container?.private_port || defaultPort,
     subdomain: container ? container.name.toLowerCase().replace(/[^a-z0-9-]/g, '-') : '',
     domain: 'mightysprite.dev',
+    zero_trust_enabled: container?.zero_trust_enabled || false,
+    zero_trust_emails: container?.zero_trust_emails || '',
   }
   showExposeModal.value = true
 }
@@ -415,6 +421,8 @@ function onExposeTargetChanged(event: Event) {
     const defaultPort = found.ports && found.ports.length > 0 ? found.ports[0] : 80
     exposeForm.value.private_port = found.private_port || defaultPort
     exposeForm.value.subdomain = found.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+    exposeForm.value.zero_trust_enabled = found.zero_trust_enabled || false
+    exposeForm.value.zero_trust_emails = found.zero_trust_emails || ''
   }
 }
 
@@ -436,6 +444,8 @@ async function saveContainerExposure() {
         private_port: exposeForm.value.private_port,
         hostname: hostname,
         target: `http://${exposeTargetContainer.value.name}:${exposeForm.value.private_port}`,
+        zero_trust_enabled: exposeForm.value.mode === 'public' && exposeForm.value.zero_trust_enabled,
+        zero_trust_emails: exposeForm.value.zero_trust_emails?.trim() || '',
       }),
     })
 
@@ -1480,25 +1490,64 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           </div>
 
           <!-- Public Domain Settings (if public) -->
-          <div v-if="exposeForm.mode === 'public'" class="space-y-2">
-            <label class="block text-[11px] font-medium text-slate-300">Public Domain Hostname</label>
-            <div class="flex items-center gap-1 font-mono text-xs">
-              <input
-                v-model="exposeForm.subdomain"
-                type="text"
-                placeholder="subdomain"
-                class="cyber-input font-mono text-xs flex-1"
-              />
-              <span class="text-slate-400">.</span>
-              <input
-                v-model="exposeForm.domain"
-                type="text"
-                placeholder="mightysprite.dev"
-                class="cyber-input font-mono text-xs flex-1"
-              />
+          <div v-if="exposeForm.mode === 'public'" class="space-y-3">
+            <div>
+              <label class="block text-[11px] font-medium text-slate-300 mb-1">Public Domain Hostname</label>
+              <div class="flex items-center gap-1 font-mono text-xs">
+                <input
+                  v-model="exposeForm.subdomain"
+                  type="text"
+                  placeholder="subdomain"
+                  class="cyber-input font-mono text-xs flex-1"
+                />
+                <span class="text-slate-400">.</span>
+                <input
+                  v-model="exposeForm.domain"
+                  type="text"
+                  placeholder="mightysprite.dev"
+                  class="cyber-input font-mono text-xs flex-1"
+                />
+              </div>
+              <div class="text-[10px] text-slate-400 mt-1">
+                Will route: <code class="text-orange-400 font-mono">https://{{ exposeForm.subdomain }}.{{ exposeForm.domain }}</code> &rarr; <code class="text-slate-300 font-mono">{{ exposeTargetContainer.name }}:{{ exposeForm.private_port }}</code>
+              </div>
             </div>
-            <div class="text-[10px] text-slate-400">
-              Will route: <code class="text-orange-400 font-mono">https://{{ exposeForm.subdomain }}.{{ exposeForm.domain }}</code> &rarr; <code class="text-slate-300 font-mono">{{ exposeTargetContainer.name }}:{{ exposeForm.private_port }}</code>
+
+            <!-- Optional Zero Trust Access Control -->
+            <div class="pt-2.5 border-t border-slate-800 space-y-2">
+              <label class="flex items-start gap-2.5 cursor-pointer p-2.5 rounded-lg border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition">
+                <input
+                  type="checkbox"
+                  v-model="exposeForm.zero_trust_enabled"
+                  class="h-4 w-4 mt-0.5 rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-indigo-500"
+                />
+                <div class="space-y-0.5">
+                  <div class="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                    <ShieldCheck class="h-3.5 w-3.5 text-indigo-400" />
+                    <span>Protect with Cloudflare Zero Trust</span>
+                    <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Optional</span>
+                  </div>
+                  <div class="text-[10px] text-slate-400">
+                    Require email OTP PIN or SSO login before users can view this container.
+                  </div>
+                </div>
+              </label>
+
+              <!-- Optional Email filter (if Zero Trust enabled) -->
+              <div v-if="exposeForm.zero_trust_enabled" class="pl-6 space-y-1">
+                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                  Allowed Emails / Domains (Optional)
+                </label>
+                <input
+                  v-model="exposeForm.zero_trust_emails"
+                  type="text"
+                  placeholder="admin@example.com, @yourdomain.com (or blank for any authenticated user)"
+                  class="cyber-input text-xs font-mono"
+                />
+                <p class="text-[10px] text-slate-500">
+                  Leave blank to allow any user with your Zero Trust authentication.
+                </p>
+              </div>
             </div>
           </div>
         </div>

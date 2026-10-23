@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"docktun/internal/service"
+	"github.com/go-chi/chi/v5"
 	"gopkg.in/yaml.v3"
 )
 
@@ -199,4 +200,65 @@ func (h *CloudflareHandler) GetTunnelStatus(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
 }
+
+func (h *CloudflareHandler) ListAccessApps(w http.ResponseWriter, r *http.Request) {
+	apps, err := h.cfAPI.ListAccessApplications()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(apps)
+}
+
+func (h *CloudflareHandler) CreateAccessApp(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Hostname string `json:"hostname"`
+		Emails   string `json:"emails"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Hostname == "" {
+		http.Error(w, `{"error":"hostname is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	appID, err := h.cfAPI.SyncZeroTrustAccess(req.Hostname, req.Emails)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"app_id":  appID,
+		"message": "Zero Trust Access Application created/updated for " + req.Hostname,
+	})
+}
+
+func (h *CloudflareHandler) DeleteAccessApp(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		http.Error(w, `{"error":"id is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := h.cfAPI.DeleteZeroTrustAccess(id); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Zero Trust Access Application removed",
+	})
+}
+
 

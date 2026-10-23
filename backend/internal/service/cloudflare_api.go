@@ -629,3 +629,265 @@ func (s *CloudflareAPI) AutoSyncIngressDNS(configMgr *ConfigManager) {
 	}
 }
 
+// ==============================================================================
+// Cloudflare Zero Trust Access Applications & Policies
+// ==============================================================================
+
+type AccessApplication struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Domain          string `json:"domain"`
+	Type            string `json:"type"`
+	SessionDuration string `json:"session_duration"`
+	CreatedAt       string `json:"created_at,omitempty"`
+}
+
+func (s *CloudflareAPI) getAccessBaseURL(creds CloudflareCredentials, hostname string) (string, error) {
+	if creds.AccountID != "" {
+		return fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/access/apps", creds.AccountID), nil
+	}
+	zoneID := creds.ZoneID
+	if zoneID == "" && hostname != "" {
+		var err error
+		zoneID, err = s.FindZoneID(creds.APIToken, hostname)
+		if err != nil {
+			return "", err
+		}
+	}
+	if zoneID != "" {
+		return fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/access/apps", zoneID), nil
+	}
+	return "", fmt.Errorf("Cloudflare Account ID or Zone ID required for Zero Trust Access")
+}
+
+// ListAccessApplications lists self-hosted Zero Trust Access applications
+func (s *CloudflareAPI) ListAccessApplications() ([]AccessApplication, error) {
+	creds := s.GetCredentials()
+	if creds.APIToken == "" {
+		return nil, fmt.Errorf("Cloudflare API token not configured")
+	}
+
+	baseURL, err := s.getAccessBaseURL(creds, "")
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", baseURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+creds.APIToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("query zero trust apps: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var cfResp cfApiResponse
+	if err := json.NewDecoder(resp.Body).Decode(&cfResp); err != nil {
+		return nil, fmt.Errorf("parse zero trust response: %w", err)
+	}
+	if !cfResp.Success {
+		errMsg := "failed to list access applications"
+		if len(cfResp.Errors) > 0 {
+			errMsg = cfResp.Errors[0].Message
+		}
+		return nil, fmt.Errorf("%s", errMsg)
+	}
+
+	var apps []AccessApplication
+	if err := json.Unmarshal(cfResp.Result, &apps); err != nil {
+		return nil, err
+	}
+	return apps, nil
+}
+
+// SyncZeroTrustAccess creates or updates a Cloudflare Zero Trust Access Application
+// and applies an Allow Policy for the specified emails or domains.
+func (s *CloudflareAPI) SyncZeroTrustAccess(hostname, emails string) (string, error) {
+	cleanHost := cleanHostname(hostname)
+	if cleanHost == "" {
+		return "", fmt.Errorf("invalid hostname for zero trust: %s", hostname)
+	}
+
+	creds := s.GetCredentials()
+	if creds.APIToken == "" {
+		return "", fmt.Errorf("Cloudflare API token required for Zero Trust Access")
+	}
+
+	baseURL, err := s.getAccessBaseURL(creds, cleanHost)
+	if err != nil {
+		return "", err
+	}
+
+	// 1. Check if application for domain already exists
+	var appID string
+	existingApps, err := s.ListAccessApplications()
+	if err == nil {
+		for _, a := range existingApps {
+			if strings.EqualFold(cleanHostname(a.Domain), cleanHost) {
+				appID = a.ID
+				break
+			}
+		}
+	}
+
+	// 2. If app doesn't exist, create it
+	if appID == "" {
+		createBody := map[string]interface{}{
+			"name":                      cleanHost + " (DockTun)",
+			"domain":                    cleanHost,
+			"type":                      "self_hosted",
+			"session_duration":          "24h",
+			"auto_redirect_to_identity": false,
+		}
+		jsonBytes, _ := json.Marshal(createBody)
+		req, err := http.NewRequest("POST", baseURL, bytes.NewBuffer(jsonBytes))
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Authorization", "Bearer "+creds.APIToken)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := s.client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("create access app: %w", err)
+		}
+		defer resp.Body.Close()
+
+		var cfResp cfApiResponse
+		if err := json.NewDecoder(resp.Body).Decode(&cfResp); err != nil {
+			return "", fmt.Errorf("parse create access app response: %w", err)
+		}
+		if !cfResp.Success {
+			errMsg := "failed to create access application"
+			if len(cfResp.Errors) > 0 {
+				errMsg = cfResp.Errors[0].Message
+			}
+			return "", fmt.Errorf("%s", errMsg)
+		}
+
+		var created AccessApplication
+		if err := json.Unmarshal(cfResp.Result, &created); err == nil && created.ID != "" {
+			appID = created.ID
+		}
+	}
+
+	if appID == "" {
+		return "", fmt.Errorf("unable to determine application ID for %s", cleanHost)
+	}
+
+	// 3. Configure Access Policy on application
+	policyURL := fmt.Sprintf("%s/%s/policies", baseURL, appID)
+
+	var include []map[string]interface{}
+	rawEmails := strings.FieldsFunc(emails, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\n'
+	})
+	for _, em := range rawEmails {
+		em = strings.TrimSpace(em)
+		if em == "" {
+			continue
+		}
+		if strings.HasPrefix(em, "@") {
+			include = append(include, map[string]interface{}{
+				"email_domain": map[string]string{"domain": strings.TrimPrefix(em, "@")},
+			})
+		} else if strings.Contains(em, "@") {
+			include = append(include, map[string]interface{}{
+				"email": map[string]string{"email": em},
+			})
+		} else if strings.Contains(em, ".") {
+			include = append(include, map[string]interface{}{
+				"email_domain": map[string]string{"domain": em},
+			})
+		}
+	}
+
+	// If no specific email restrictions given, allow anyone who completes Zero Trust OTP
+	if len(include) == 0 {
+		include = append(include, map[string]interface{}{
+			"everyone": map[string]interface{}{},
+		})
+	}
+
+	policyBody := map[string]interface{}{
+		"name":     "DockTun Zero Trust Access",
+		"decision": "allow",
+		"include":  include,
+	}
+	pBytes, _ := json.Marshal(policyBody)
+
+	// Check if a policy already exists
+	getPolReq, _ := http.NewRequest("GET", policyURL, nil)
+	getPolReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
+	getPolReq.Header.Set("Content-Type", "application/json")
+	if pResp, err := s.client.Do(getPolReq); err == nil {
+		defer pResp.Body.Close()
+		var polListResp cfApiResponse
+		if err := json.NewDecoder(pResp.Body).Decode(&polListResp); err == nil && polListResp.Success {
+			var pols []struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(polListResp.Result, &pols); err == nil && len(pols) > 0 {
+				// Update existing policy
+				updatePolURL := fmt.Sprintf("%s/%s", policyURL, pols[0].ID)
+				putReq, _ := http.NewRequest("PUT", updatePolURL, bytes.NewBuffer(pBytes))
+				putReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
+				putReq.Header.Set("Content-Type", "application/json")
+				if putResp, err := s.client.Do(putReq); err == nil {
+					defer putResp.Body.Close()
+					return appID, nil
+				}
+			}
+		}
+	}
+
+	// Otherwise, create new policy
+	createPolReq, err := http.NewRequest("POST", policyURL, bytes.NewBuffer(pBytes))
+	if err == nil {
+		createPolReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
+		createPolReq.Header.Set("Content-Type", "application/json")
+		if cResp, err := s.client.Do(createPolReq); err == nil {
+			defer cResp.Body.Close()
+		}
+	}
+
+	return appID, nil
+}
+
+// DeleteZeroTrustAccess removes a Cloudflare Zero Trust Access Application
+func (s *CloudflareAPI) DeleteZeroTrustAccess(appID string) error {
+	if strings.TrimSpace(appID) == "" {
+		return nil
+	}
+	creds := s.GetCredentials()
+	if creds.APIToken == "" {
+		return fmt.Errorf("Cloudflare API token not configured")
+	}
+
+	baseURL, err := s.getAccessBaseURL(creds, "")
+	if err != nil {
+		return err
+	}
+
+	deleteURL := fmt.Sprintf("%s/%s", baseURL, appID)
+	req, err := http.NewRequest("DELETE", deleteURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+creds.APIToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete access app: %w", err)
+	}
+	defer resp.Body.Close()
+
+	return nil
+}
+
+

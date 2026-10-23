@@ -108,5 +108,14 @@ func (d *DB) migrate() error {
 		CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
 		CREATE INDEX IF NOT EXISTS idx_projects_path ON projects(path);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Safe column additions for Zero Trust Access support on container_exposures
+	_, _ = d.Exec(`ALTER TABLE container_exposures ADD COLUMN zero_trust_enabled INTEGER DEFAULT 0`)
+	_, _ = d.Exec(`ALTER TABLE container_exposures ADD COLUMN zero_trust_emails TEXT DEFAULT ''`)
+	_, _ = d.Exec(`ALTER TABLE container_exposures ADD COLUMN zero_trust_app_id TEXT DEFAULT ''`)
+
+	return nil
 }
