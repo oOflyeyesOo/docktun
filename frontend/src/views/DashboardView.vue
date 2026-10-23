@@ -27,7 +27,8 @@ import {
   Shield,
   Filter,
   ArrowRight,
-  Box
+  Box,
+  HardDrive
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
@@ -98,7 +99,7 @@ async function fetchRemoteAccess() {
 
 async function fetchRecentAudits() {
   try {
-    const res = await apiFetch<{ entries: any[] }>('/api/audit?limit=5')
+    const res = await apiFetch<{ entries: any[] }>('/api/audit?limit=8')
     recentAudits.value = res.entries || []
   } catch {}
 }
@@ -196,6 +197,26 @@ function formatTimeAgo(dateStr: string): string {
   } catch {
     return dateStr
   }
+}
+
+function getAuditBadge(action: string): { icon: any; color: string; label: string } {
+  const act = (action || '').toLowerCase()
+  if (act.includes('container') || act.includes('docker')) {
+    return { icon: Box, color: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20', label: 'Docker' }
+  }
+  if (act.includes('tunnel') || act.includes('cloudflare') || act.includes('dns')) {
+    return { icon: Globe, color: 'text-orange-400 bg-orange-500/10 border-orange-500/20', label: 'Tunnel' }
+  }
+  if (act.includes('tailscale') || act.includes('wireguard') || act.includes('mesh')) {
+    return { icon: Radio, color: 'text-purple-400 bg-purple-500/10 border-purple-500/20', label: 'Mesh' }
+  }
+  if (act.includes('config') || act.includes('backup')) {
+    return { icon: Layers, color: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20', label: 'Config' }
+  }
+  if (act.includes('project') || act.includes('deploy')) {
+    return { icon: FolderOpen, color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20', label: 'Project' }
+  }
+  return { icon: Shield, color: 'text-slate-400 bg-slate-800 border-slate-700', label: 'System' }
 }
 
 function parseContainerPorts(portsStr?: string): { hostPort: string; targetPort: string } {
@@ -311,6 +332,23 @@ const healthByHostname = computed(() => {
     }
   }
   return map
+})
+
+const originHealthSummary = computed(() => {
+  const total = healthList.value.length
+  if (total === 0) return { total: 0, up: 0, down: 0, allUp: true, avgLatency: '—' }
+  const up = healthList.value.filter((h) => h.status === 'up').length
+  const down = total - up
+  let totalMs = 0
+  let msCount = 0
+  for (const h of healthList.value) {
+    if (h.latency_ms && h.latency_ms > 0) {
+      totalMs += h.latency_ms
+      msCount++
+    }
+  }
+  const avg = msCount > 0 ? `${Math.round(totalMs / msCount)}ms` : '—'
+  return { total, up, down, allUp: down === 0, avgLatency: avg }
 })
 
 // Unified Public Routes Combining Cloudflare Configured Hostnames & Health Probe Latencies
@@ -495,6 +533,73 @@ onUnmounted(() => {
       </button>
     </div>
 
+    <!-- System Hardware & Engine Telemetry Strip -->
+    <div v-if="status?.docker_system" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+      <!-- Engine Version & Arch -->
+      <div class="px-3 py-2 rounded-xl border border-slate-800 bg-slate-900/40 flex items-center justify-between text-xs">
+        <div class="flex items-center gap-2 min-w-0">
+          <Server class="h-4 w-4 text-indigo-400 shrink-0" />
+          <div class="min-w-0">
+            <div class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Docker Engine</div>
+            <div class="font-mono text-white font-bold truncate" :title="status.docker_system.server_version">
+              v{{ status.docker_system.server_version || '—' }}
+            </div>
+          </div>
+        </div>
+        <span class="text-[10px] font-mono text-slate-400 px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 shrink-0 ml-1">
+          {{ status.docker_system.architecture || 'x86_64' }}
+        </span>
+      </div>
+
+      <!-- Host OS & CPUs -->
+      <div class="px-3 py-2 rounded-xl border border-slate-800 bg-slate-900/40 flex items-center justify-between text-xs">
+        <div class="flex items-center gap-2 min-w-0">
+          <Cpu class="h-4 w-4 text-purple-400 shrink-0" />
+          <div class="min-w-0">
+            <div class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Host System</div>
+            <div class="font-medium text-slate-200 truncate" :title="status.docker_system.operating_system">
+              {{ status.docker_system.operating_system || 'Linux Host' }}
+            </div>
+          </div>
+        </div>
+        <span class="text-[10px] font-mono text-purple-300 font-semibold shrink-0 ml-1">
+          {{ status.docker_system.cpus ? `${status.docker_system.cpus} vCPU` : 'Host' }}
+        </span>
+      </div>
+
+      <!-- Host Memory & Images -->
+      <div class="px-3 py-2 rounded-xl border border-slate-800 bg-slate-900/40 flex items-center justify-between text-xs">
+        <div class="flex items-center gap-2 min-w-0">
+          <HardDrive class="h-4 w-4 text-emerald-400 shrink-0" />
+          <div class="min-w-0">
+            <div class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Host Memory</div>
+            <div class="font-mono text-emerald-300 font-bold truncate">
+              {{ status.docker_system.mem_total_str || containerStats.totalLimitStr }}
+            </div>
+          </div>
+        </div>
+        <span class="text-[10px] font-mono text-slate-400 shrink-0 ml-1">
+          {{ status.docker_system.images_count || 0 }} images
+        </span>
+      </div>
+
+      <!-- Origin Health Probe Ratio -->
+      <div class="px-3 py-2 rounded-xl border border-slate-800 bg-slate-900/40 flex items-center justify-between text-xs">
+        <div class="flex items-center gap-2 min-w-0">
+          <Activity class="h-4 w-4 shrink-0" :class="originHealthSummary.allUp ? 'text-emerald-400' : 'text-amber-400'" />
+          <div class="min-w-0">
+            <div class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Origin Health</div>
+            <div class="font-mono font-bold truncate" :class="originHealthSummary.allUp ? 'text-emerald-400' : 'text-amber-300'">
+              {{ originHealthSummary.up }}/{{ originHealthSummary.total }} Healthy
+            </div>
+          </div>
+        </div>
+        <span class="text-[10px] font-mono text-cyan-300 px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 shrink-0 ml-1">
+          {{ originHealthSummary.avgLatency }}
+        </span>
+      </div>
+    </div>
+
     <!-- 4 High-Resolution Telemetry Metric Cards -->
     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <!-- 1. Cloudflare Tunnel Card -->
@@ -645,54 +750,75 @@ onUnmounted(() => {
 
     <!-- Remote Access Multi-Pillar Connectivity Summary Banner -->
     <div class="cyber-card p-4 bg-slate-900/40 border-slate-800/90">
-      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div class="flex items-center gap-3">
-          <div class="p-2 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+          <div class="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shrink-0">
             <Globe class="h-5 w-5" />
           </div>
           <div>
-            <h3 class="text-xs font-semibold text-white">Remote Access & Mesh Connectivity</h3>
-            <p class="text-[11px] text-slate-400">Unified secure ingress across Cloudflare edge tunnels, Tailscale zero-trust, and WireGuard VPN</p>
+            <div class="flex items-center gap-2">
+              <h3 class="text-xs font-semibold text-white">Remote Access & Mesh Connectivity</h3>
+              <span class="text-[10px] font-mono text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.2 rounded">
+                Ingress Hub
+              </span>
+            </div>
+            <p class="text-[11px] text-slate-400 mt-0.5">Unified secure ingress across Cloudflare edge tunnels, Tailscale zero-trust, and WireGuard VPN</p>
           </div>
         </div>
 
-        <div class="flex items-center gap-3 flex-wrap">
-          <!-- Cloudflare Badge -->
-          <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono">
+        <div class="flex items-center gap-2.5 flex-wrap">
+          <!-- Cloudflare Badge Link -->
+          <router-link
+            to="/access?tab=cloudflare"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono hover:border-orange-500/50 hover:bg-slate-900 transition group"
+            title="Configure Cloudflare Tunnel Ingress Routes"
+          >
             <span class="h-2 w-2 rounded-full" :class="isTunnelRunning ? 'bg-emerald-400' : 'bg-rose-400'"></span>
-            <span class="text-slate-400">Cloudflare:</span>
-            <span class="text-slate-200 font-semibold">{{ status?.hostnames?.length || 0 }} routes</span>
-          </div>
+            <span class="text-slate-400 group-hover:text-slate-200">Cloudflare:</span>
+            <span class="text-orange-300 font-semibold">{{ status?.hostnames?.length || 0 }} routes</span>
+          </router-link>
 
-          <!-- Tailscale Badge -->
-          <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono">
+          <!-- Tailscale Badge Link -->
+          <router-link
+            to="/access?tab=tailscale"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono hover:border-purple-500/50 hover:bg-slate-900 transition group"
+            title="Configure Tailscale Zero-Trust Mesh"
+          >
             <span
               class="h-2 w-2 rounded-full"
               :class="remoteAccessOverview?.tailscale?.backend_state === 'Running' ? 'bg-emerald-400' : 'bg-slate-500'"
             ></span>
-            <span class="text-slate-400">Tailscale:</span>
+            <span class="text-slate-400 group-hover:text-slate-200">Tailscale:</span>
             <span class="text-purple-300 font-semibold">
               {{ remoteAccessOverview?.tailscale?.backend_state === 'Running' ? 'Connected' : 'Stopped' }}
             </span>
-          </div>
+          </router-link>
 
-          <!-- WireGuard Badge -->
-          <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono">
+          <!-- WireGuard Badge Link -->
+          <router-link
+            to="/access?tab=wireguard"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono hover:border-emerald-500/50 hover:bg-slate-900 transition group"
+            title="Configure WireGuard Peer VPN"
+          >
             <span
               class="h-2 w-2 rounded-full"
               :class="remoteAccessOverview?.wireguard?.running ? 'bg-emerald-400' : 'bg-slate-500'"
             ></span>
-            <span class="text-slate-400">WireGuard:</span>
+            <span class="text-slate-400 group-hover:text-slate-200">WireGuard:</span>
             <span class="text-emerald-300 font-semibold">
               {{ remoteAccessOverview?.wireguard?.running ? `${remoteAccessOverview.wireguard.peers_count} peers` : 'Inactive' }}
             </span>
-          </div>
+          </router-link>
 
+          <!-- Reworked Control Button -->
           <router-link
             to="/access"
-            class="text-xs font-medium text-indigo-400 hover:text-indigo-300 hover:underline flex items-center gap-1"
+            class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-3 text-indigo-300 border-indigo-500/30 hover:bg-indigo-600/10 hover:border-indigo-400 transition"
+            title="Open Ingress & Mesh Control Center"
           >
-            <span>Control &rarr;</span>
+            <ShieldCheck class="h-3.5 w-3.5 text-indigo-400" />
+            <span class="font-medium">Configure Ingress & Mesh</span>
+            <ArrowRight class="h-3.5 w-3.5 ml-0.5" />
           </router-link>
         </div>
       </div>
@@ -1127,37 +1253,59 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Recent System Events & Audit Trail Feed -->
+    <!-- Recent System Events (Simplified List View) -->
     <div class="cyber-card space-y-3">
       <div class="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
         <div class="flex items-center gap-2">
           <Shield class="h-4 w-4 text-indigo-400" />
-          <h2 class="text-xs font-semibold text-white">Recent System Events & Audit Trail</h2>
+          <h2 class="text-xs font-semibold text-white">Recent System Events</h2>
+          <span v-if="recentAudits.length > 0" class="text-[10px] text-slate-500 font-mono">({{ recentAudits.length }})</span>
         </div>
-        <router-link to="/audit" class="text-xs text-indigo-400 hover:underline">
-          View Full Audit Log &rarr;
+        <router-link to="/audit" class="text-xs text-indigo-400 hover:text-indigo-300 hover:underline flex items-center gap-1 font-medium">
+          <span>View Full Audit Log</span>
+          <ArrowRight class="h-3 w-3" />
         </router-link>
       </div>
 
-      <div v-if="recentAudits.length === 0" class="py-4 text-center text-xs text-slate-500 font-mono">
-        No audit records logged yet.
+      <div v-if="recentAudits.length === 0" class="py-6 text-center text-xs text-slate-500 font-mono">
+        No recent system events logged yet.
       </div>
 
-      <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2.5">
+      <!-- Scannable Vertical List -->
+      <div v-else class="divide-y divide-slate-800/60">
         <div
-          v-for="item in recentAudits.slice(0, 4)"
+          v-for="item in recentAudits"
           :key="item.id"
-          class="p-3 rounded-xl border border-slate-800 bg-slate-950/70 text-xs space-y-1 hover:border-slate-700 transition"
+          class="py-2.5 px-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs hover:bg-slate-900/40 rounded-lg transition group"
         >
-          <div class="flex items-center justify-between">
-            <span class="font-semibold text-slate-200 capitalize truncate">
-              {{ item.action.replace(/_/g, ' ') }}
+          <div class="flex items-start sm:items-center gap-2.5 min-w-0 flex-1">
+            <!-- Event Type Badge -->
+            <span
+              class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md border shrink-0"
+              :class="getAuditBadge(item.action).color"
+            >
+              <component :is="getAuditBadge(item.action).icon" class="h-3 w-3" />
+              <span>{{ getAuditBadge(item.action).label }}</span>
             </span>
-            <span class="text-[10px] text-slate-500 font-mono">{{ formatTimeAgo(item.created_at) }}</span>
+
+            <!-- Action & Detail Description -->
+            <div class="min-w-0 flex-1">
+              <span class="font-semibold text-slate-200 capitalize">
+                {{ (item.action || '').replace(/_/g, ' ') }}
+              </span>
+              <span v-if="item.detail" class="text-slate-400 ml-1.5 truncate inline-block align-bottom max-w-[280px] sm:max-w-[420px] lg:max-w-[620px]" :title="item.detail">
+                — {{ item.detail }}
+              </span>
+            </div>
           </div>
-          <p class="text-[11px] text-slate-400 truncate" :title="item.detail || item.action">
-            {{ item.detail || 'Executed action' }}
-          </p>
+
+          <!-- Meta (IP & Time) -->
+          <div class="flex items-center gap-2 shrink-0 self-end sm:self-auto text-[11px] text-slate-500 font-mono">
+            <span v-if="item.ip_address" class="px-1.5 py-0.2 rounded bg-slate-950 border border-slate-800/80 text-slate-400">
+              {{ item.ip_address }}
+            </span>
+            <span class="text-slate-400 font-medium">{{ formatTimeAgo(item.created_at) }}</span>
+          </div>
         </div>
       </div>
     </div>

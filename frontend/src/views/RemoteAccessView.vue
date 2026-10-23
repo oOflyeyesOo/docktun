@@ -534,7 +534,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             <span class="text-xs font-semibold text-slate-200">Cloudflare Tunnel</span>
           </div>
           <span
-            v-if="overview?.cloudflare.running"
+            v-if="overview?.cloudflare?.running"
             class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
           >
             <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -549,10 +549,10 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
         </div>
         <div>
           <div class="text-xl font-bold text-white font-mono">
-            {{ overview?.cloudflare.ingress_count ?? 0 }} <span class="text-xs text-slate-400 font-normal">public routes</span>
+            {{ overview?.cloudflare?.ingress_count ?? 0 }} <span class="text-xs text-slate-400 font-normal">public routes</span>
           </div>
-          <div class="text-[11px] text-slate-500 truncate mt-0.5" :title="overview?.cloudflare.tunnel_id">
-            Tunnel: {{ overview?.cloudflare.tunnel_id ? overview.cloudflare.tunnel_id.substring(0, 8) + '…' : 'Configured' }}
+          <div class="text-[11px] text-slate-500 truncate mt-0.5" :title="overview?.cloudflare?.tunnel_id">
+            Tunnel: {{ overview?.cloudflare?.tunnel_id ? overview.cloudflare.tunnel_id.substring(0, 8) + '…' : 'Configured' }}
           </div>
         </div>
         <div v-if="activeTab === 'cloudflare'" class="mt-3 h-0.5 w-full bg-orange-500 rounded-full"></div>
@@ -572,14 +572,14 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             <span class="text-xs font-semibold text-slate-200">Tailscale Mesh</span>
           </div>
           <span
-            v-if="overview?.tailscale.backend_state === 'Running'"
+            v-if="overview?.tailscale?.backend_state === 'Running'"
             class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
           >
             <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             CONNECTED
           </span>
           <span
-            v-else-if="overview?.tailscale.backend_state === 'NeedsLogin'"
+            v-else-if="overview?.tailscale?.backend_state === 'NeedsLogin'"
             class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 animate-pulse"
           >
             AUTH REQUIRED
@@ -588,15 +588,15 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             v-else
             class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700"
           >
-            {{ overview?.tailscale.installed ? 'STOPPED' : 'NOT INSTALLED' }}
+            {{ overview?.tailscale?.installed ? 'STOPPED' : 'NOT INSTALLED' }}
           </span>
         </div>
         <div>
           <div class="text-base font-bold text-purple-300 font-mono truncate">
-            {{ overview?.tailscale.tailscale_ips?.[0] || '100.x.y.z' }}
+            {{ overview?.tailscale?.tailscale_ips?.[0] || '100.x.y.z' }}
           </div>
           <div class="text-[11px] text-slate-500 truncate mt-0.5">
-            {{ overview?.tailscale.peers_count ?? 0 }} tailnet peers connected
+            {{ overview?.tailscale?.peers_count ?? 0 }} tailnet peers connected
           </div>
         </div>
         <div v-if="activeTab === 'tailscale'" class="mt-3 h-0.5 w-full bg-purple-500 rounded-full"></div>
@@ -616,7 +616,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             <span class="text-xs font-semibold text-slate-200">WireGuard Peer VPN</span>
           </div>
           <span
-            v-if="overview?.wireguard.running"
+            v-if="overview?.wireguard?.running"
             class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
           >
             <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -626,15 +626,15 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             v-else
             class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700"
           >
-            {{ overview?.wireguard.installed ? 'STOPPED' : 'NOT INSTALLED' }}
+            {{ overview?.wireguard?.installed ? 'STOPPED' : 'NOT INSTALLED' }}
           </span>
         </div>
         <div>
           <div class="text-base font-bold text-white font-mono">
-            Port {{ overview?.wireguard.port || 51820 }}/UDP
+            Port {{ overview?.wireguard?.port || 51820 }}/UDP
           </div>
           <div class="text-[11px] text-slate-500 truncate mt-0.5">
-            {{ overview?.wireguard.peers_count ?? 0 }} client peers configured
+            {{ overview?.wireguard?.peers_count ?? 0 }} client peers configured
           </div>
         </div>
         <div v-if="activeTab === 'wireguard'" class="mt-3 h-0.5 w-full bg-emerald-500 rounded-full"></div>
