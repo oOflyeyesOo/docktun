@@ -78,19 +78,26 @@ type Container struct {
 
 type ContainerDetail struct {
 	Container
-	ProjectID              int              `json:"project_id,omitempty"`
-	ProjectName            string           `json:"project_name,omitempty"`
-	ProjectPath            string           `json:"project_path,omitempty"`
-	ComposeFile            string           `json:"compose_file,omitempty"`
-	Env                    []string         `json:"env,omitempty"`
-	RawEnv                 []string         `json:"-"`
-	Mounts                 []ContainerMount `json:"mounts,omitempty"`
-	IPAddress              string           `json:"ip_address,omitempty"`
-	Gateway                string           `json:"gateway,omitempty"`
-	MacAddress             string           `json:"mac_address,omitempty"`
-	Networks               []string         `json:"networks,omitempty"`
-	ExitCode               int              `json:"exit_code,omitempty"`
-	ConnectedToCloudflared bool             `json:"connected_to_cloudflared"`
+	ProjectID              int                 `json:"project_id,omitempty"`
+	ProjectName            string              `json:"project_name,omitempty"`
+	ProjectPath            string              `json:"project_path,omitempty"`
+	ComposeFile            string              `json:"compose_file,omitempty"`
+	Env                    []string            `json:"env,omitempty"`
+	RawEnv                 []string            `json:"-"`
+	Mounts                 []ContainerMount    `json:"mounts,omitempty"`
+	IPAddress              string              `json:"ip_address,omitempty"`
+	Gateway                string              `json:"gateway,omitempty"`
+	MacAddress             string              `json:"mac_address,omitempty"`
+	Networks               []string            `json:"networks,omitempty"`
+	ExitCode               int                 `json:"exit_code,omitempty"`
+	ConnectedToCloudflared bool                `json:"connected_to_cloudflared"`
+	User                   string              `json:"user,omitempty"`
+	WorkingDir             string              `json:"working_dir,omitempty"`
+	RestartPolicy          string              `json:"restart_policy,omitempty"`
+	Privileged             bool                `json:"privileged,omitempty"`
+	CapAdd                 []string            `json:"cap_add,omitempty"`
+	Labels                 map[string]string   `json:"labels,omitempty"`
+	NetworkAliases         map[string][]string `json:"network_aliases,omitempty"`
 }
 
 type cfOriginRequest struct {
@@ -121,6 +128,9 @@ type DockerContainers struct {
 	cfAPI       *CloudflareAPI
 	audit       *AuditLogger
 	updateMu    sync.RWMutex
+	statsMu     sync.RWMutex
+	statsCache  map[string]liveStats
+	statsTime   time.Time
 }
 
 func NewDockerContainers(cfg *config.Config, db *db.DB, configMgr *ConfigManager, cloudflared *Cloudflared, cfAPI *CloudflareAPI, audit *AuditLogger) *DockerContainers {
@@ -188,7 +198,7 @@ func (s *DockerContainers) List() ([]Container, error) {
 		return []Container{}, nil
 	}
 
-	statsMap := s.collectAllStats()
+	statsMap := s.getCachedStats()
 	ingressMap := s.loadCloudflareIngressMap()
 	dbExposures := s.loadAllExposuresFromDB()
 	projectsByPath, projectsByName := s.loadAllProjectsMap()
@@ -348,6 +358,34 @@ func (s *DockerContainers) List() ([]Container, error) {
 	return containers, nil
 }
 
+func (s *DockerContainers) getCachedStats() map[string]liveStats {
+	s.statsMu.RLock()
+	if time.Since(s.statsTime) < 3500*time.Millisecond && len(s.statsCache) > 0 {
+		cached := make(map[string]liveStats, len(s.statsCache))
+		for k, v := range s.statsCache {
+			cached[k] = v
+		}
+		s.statsMu.RUnlock()
+		return cached
+	}
+	s.statsMu.RUnlock()
+
+	s.statsMu.Lock()
+	defer s.statsMu.Unlock()
+	if time.Since(s.statsTime) < 3500*time.Millisecond && len(s.statsCache) > 0 {
+		cached := make(map[string]liveStats, len(s.statsCache))
+		for k, v := range s.statsCache {
+			cached[k] = v
+		}
+		return cached
+	}
+
+	fresh := s.collectAllStats()
+	s.statsCache = fresh
+	s.statsTime = time.Now()
+	return fresh
+}
+
 func (s *DockerContainers) collectAllStats() map[string]liveStats {
 	statsMap := make(map[string]liveStats)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
@@ -417,11 +455,21 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 			ExitCode     int    `json:"ExitCode"`
 		} `json:"State"`
 		Config struct {
-			Image   string            `json:"Image"`
-			Cmd     []string          `json:"Cmd"`
-			Env     []string          `json:"Env"`
-			Labels  map[string]string `json:"Labels"`
+			Image      string            `json:"Image"`
+			Cmd        []string          `json:"Cmd"`
+			Env        []string          `json:"Env"`
+			User       string            `json:"User"`
+			WorkingDir string            `json:"WorkingDir"`
+			Labels     map[string]string `json:"Labels"`
 		} `json:"Config"`
+		HostConfig struct {
+			RestartPolicy struct {
+				Name              string `json:"Name"`
+				MaximumRetryCount int    `json:"MaximumRetryCount"`
+			} `json:"RestartPolicy"`
+			Privileged bool     `json:"Privileged"`
+			CapAdd     []string `json:"CapAdd"`
+		} `json:"HostConfig"`
 		Mounts []struct {
 			Source      string `json:"Source"`
 			Destination string `json:"Destination"`
@@ -433,7 +481,8 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 			Gateway    string `json:"Gateway"`
 			MacAddress string `json:"MacAddress"`
 			Networks   map[string]struct {
-				IPAddress string `json:"IPAddress"`
+				IPAddress string   `json:"IPAddress"`
+				Aliases   []string `json:"Aliases"`
 			} `json:"Networks"`
 			Ports map[string][]struct {
 				HostIP   string `json:"HostIp"`
@@ -466,19 +515,48 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		c.Uptime = uptimeFromStartedAt(inspect.State.StartedAt)
 	}
 
-	// Fetch live stats for single container
-	sCtx, sCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer sCancel()
-	statsCmd := exec.CommandContext(sCtx, "docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}", id)
-	if statsOut, statsErr := statsCmd.Output(); statsErr == nil {
-		parts := strings.Split(strings.TrimSpace(string(statsOut)), "\t")
-		if len(parts) >= 5 {
-			c.CPU = strings.TrimSpace(parts[0])
-			c.Memory = strings.TrimSpace(parts[1])
-			c.Network = strings.TrimSpace(parts[2])
-			c.BlockIO = strings.TrimSpace(parts[3])
-			if p, err := strconv.Atoi(strings.TrimSpace(parts[4])); err == nil {
-				c.PIDs = p
+	// Fetch live stats from cache or single container fallback
+	statsMap := s.getCachedStats()
+	foundStats := false
+	if st, ok := statsMap[c.Name]; ok {
+		c.CPU = st.cpu
+		c.Memory = st.mem
+		c.Network = st.net
+		c.BlockIO = st.block
+		c.PIDs = st.pids
+		foundStats = true
+	} else if st, ok := statsMap[c.ID]; ok {
+		c.CPU = st.cpu
+		c.Memory = st.mem
+		c.Network = st.net
+		c.BlockIO = st.block
+		c.PIDs = st.pids
+		foundStats = true
+	} else if len(c.ID) >= 12 {
+		if st, ok := statsMap[c.ID[:12]]; ok {
+			c.CPU = st.cpu
+			c.Memory = st.mem
+			c.Network = st.net
+			c.BlockIO = st.block
+			c.PIDs = st.pids
+			foundStats = true
+		}
+	}
+
+	if !foundStats && c.Running {
+		sCtx, sCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer sCancel()
+		statsCmd := exec.CommandContext(sCtx, "docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}", id)
+		if statsOut, statsErr := statsCmd.Output(); statsErr == nil {
+			parts := strings.Split(strings.TrimSpace(string(statsOut)), "\t")
+			if len(parts) >= 5 {
+				c.CPU = strings.TrimSpace(parts[0])
+				c.Memory = strings.TrimSpace(parts[1])
+				c.Network = strings.TrimSpace(parts[2])
+				c.BlockIO = strings.TrimSpace(parts[3])
+				if p, err := strconv.Atoi(strings.TrimSpace(parts[4])); err == nil {
+					c.PIDs = p
+				}
 			}
 		}
 	}
@@ -565,6 +643,21 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 	detail.MacAddress = inspect.NetworkSettings.MacAddress
 	detail.Networks = nets
 	detail.ExitCode = inspect.State.ExitCode
+	detail.User = inspect.Config.User
+	detail.WorkingDir = inspect.Config.WorkingDir
+	detail.Labels = inspect.Config.Labels
+	detail.Privileged = inspect.HostConfig.Privileged
+	detail.CapAdd = inspect.HostConfig.CapAdd
+	detail.RestartPolicy = inspect.HostConfig.RestartPolicy.Name
+	if detail.RestartPolicy == "on-failure" && inspect.HostConfig.RestartPolicy.MaximumRetryCount > 0 {
+		detail.RestartPolicy = fmt.Sprintf("on-failure:%d", inspect.HostConfig.RestartPolicy.MaximumRetryCount)
+	}
+	detail.NetworkAliases = make(map[string][]string)
+	for netName, netInfo := range inspect.NetworkSettings.Networks {
+		if len(netInfo.Aliases) > 0 {
+			detail.NetworkAliases[netName] = netInfo.Aliases
+		}
+	}
 
 	_, hasCloudflared := inspect.NetworkSettings.Networks["cloudflared"]
 	detail.ConnectedToCloudflared = hasCloudflared
@@ -705,7 +798,26 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 		b.WriteString(fmt.Sprintf("  %s:\n", cname))
 		b.WriteString(fmt.Sprintf("    image: %s\n", img))
 		b.WriteString(fmt.Sprintf("    container_name: %s\n", cname))
-		b.WriteString("    restart: unless-stopped\n")
+		restartPol := detail.RestartPolicy
+		if restartPol == "" {
+			restartPol = "unless-stopped"
+		}
+		b.WriteString(fmt.Sprintf("    restart: %s\n", restartPol))
+		if detail.User != "" {
+			b.WriteString(fmt.Sprintf("    user: %q\n", detail.User))
+		}
+		if detail.WorkingDir != "" {
+			b.WriteString(fmt.Sprintf("    working_dir: %q\n", detail.WorkingDir))
+		}
+		if detail.Privileged {
+			b.WriteString("    privileged: true\n")
+		}
+		if len(detail.CapAdd) > 0 {
+			b.WriteString("    cap_add:\n")
+			for _, cap := range detail.CapAdd {
+				b.WriteString(fmt.Sprintf("      - %s\n", cap))
+			}
+		}
 		if detail.Command != "" {
 			b.WriteString(fmt.Sprintf("    command: %s\n", detail.Command))
 		}
@@ -755,13 +867,37 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 			}
 		}
 
+		var svcNetworks []string
+		var externalNetworks []string
+		for _, net := range detail.Networks {
+			if net != "" && net != "bridge" && net != "host" && net != "none" {
+				svcNetworks = append(svcNetworks, net)
+				externalNetworks = append(externalNetworks, net)
+			}
+		}
 		if detail.ExposureMode == "public" {
+			foundCf := false
+			for _, n := range svcNetworks {
+				if n == "cloudflared" {
+					foundCf = true
+					break
+				}
+			}
+			if !foundCf {
+				svcNetworks = append(svcNetworks, "cloudflared")
+				externalNetworks = append(externalNetworks, "cloudflared")
+			}
+		}
+
+		if len(svcNetworks) > 0 {
 			b.WriteString("    networks:\n")
-			b.WriteString("      - default\n")
-			b.WriteString("      - cloudflared\n\n")
-			b.WriteString("networks:\n")
-			b.WriteString("  cloudflared:\n")
-			b.WriteString("    external: true\n")
+			for _, sn := range svcNetworks {
+				b.WriteString(fmt.Sprintf("      - %s\n", sn))
+			}
+			b.WriteString("\nnetworks:\n")
+			for _, en := range externalNetworks {
+				b.WriteString(fmt.Sprintf("  %s:\n    external: true\n", en))
+			}
 		}
 
 		if err := os.WriteFile(composePath, []byte(b.String()), 0644); err != nil {
@@ -1497,6 +1633,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 	}
 
 	// Step 2: Determine recreation strategy
+	compProj := ""
 	compDir := ""
 	compFile := ""
 	compService := ""
@@ -1507,6 +1644,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 	if out, err := inspectCmd.Output(); err == nil {
 		var labels map[string]string
 		if err := json.Unmarshal(out, &labels); err == nil {
+			compProj = labels["com.docker.compose.project"]
 			compDir = labels["com.docker.compose.project.working_dir"]
 			compFile = labels["com.docker.compose.project.config_files"]
 			compService = labels["com.docker.compose.service"]
@@ -1596,7 +1734,12 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 	}
 
 	// Strategy B: Scaffold compose and recreate
-	if !recreated {
+	// If the container has an external compose project (compProj != "") but its compose directory
+	// is not under DockTun's /opt/projects, DO NOT scaffold a disjoint 1-service project, because that would
+	// sever the container from its stack and network. Instead, proceed directly to native recreate.
+	if !recreated && compProj != "" && validComposeDir == "" {
+		appendLog(fmt.Sprintf("[NOTE] Container belongs to external Compose stack '%s'. Using native recreation with preserved stack networks & aliases...", compProj))
+	} else if !recreated {
 		appendLog(fmt.Sprintf("[STEP 2/4] Ensuring compose configuration for %s...", cname))
 		_, _ = s.EnsureProjectForContainer(id)
 
@@ -1622,7 +1765,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		}
 	}
 
-	// Strategy C: Direct native Docker Engine recreate fallback
+	// Strategy C: Direct native Docker Engine recreate fallback with safe rollback
 	if !recreated {
 		appendLog(fmt.Sprintf("[STEP 3/4] Performing native Docker recreate for container %s...", cname))
 		fallbackErr := s.recreateContainerDirect(detail, image, appendLog)
@@ -1664,10 +1807,42 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 		}
 	}
 
+	restartPol := detail.RestartPolicy
+	if restartPol == "" || restartPol == "no" {
+		restartPol = "unless-stopped"
+	}
+
 	var runArgs []string
-	runArgs = append(runArgs, "run", "-d", "--name", cname, "--restart", "unless-stopped")
+	runArgs = append(runArgs, "run", "-d", "--name", cname, "--restart", restartPol)
 	if primaryNet != "" {
 		runArgs = append(runArgs, "--network", primaryNet)
+		if aliases, ok := detail.NetworkAliases[primaryNet]; ok {
+			for _, a := range aliases {
+				if a != "" && a != cname && !strings.HasPrefix(detail.ID, a) {
+					runArgs = append(runArgs, "--network-alias", a)
+				}
+			}
+		}
+	}
+
+	if detail.User != "" {
+		runArgs = append(runArgs, "--user", detail.User)
+	}
+	if detail.WorkingDir != "" {
+		runArgs = append(runArgs, "-w", detail.WorkingDir)
+	}
+	if detail.Privileged {
+		runArgs = append(runArgs, "--privileged")
+	}
+	for _, cap := range detail.CapAdd {
+		if cap != "" {
+			runArgs = append(runArgs, "--cap-add", cap)
+		}
+	}
+	for k, v := range detail.Labels {
+		if k != "" && !strings.HasPrefix(k, "com.docker.compose.version") {
+			runArgs = append(runArgs, "--label", fmt.Sprintf("%s=%s", k, v))
+		}
 	}
 
 	if detail.Ports != "" {
@@ -1713,19 +1888,55 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 		runArgs = append(runArgs, strings.Fields(detail.Command)...)
 	}
 
+	backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
+	appendLog(fmt.Sprintf("[SAFEGUARD] Creating rollback backup of %s as %s...", cname, backupName))
+
+	// Stop original and rename to backup
 	_ = exec.Command("docker", "stop", detail.ID).Run()
-	_ = exec.Command("docker", "rm", detail.ID).Run()
+	if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr != nil {
+		appendLog(fmt.Sprintf("[WARN] Failed to rename container to backup: %v. Proceeding carefully...", renameErr))
+		_ = exec.Command("docker", "rm", detail.ID).Run()
+	}
 
 	cmd := exec.Command("docker", runArgs...)
 	out, err := cmd.CombinedOutput()
 	appendLog(strings.TrimSpace(string(out)))
 	if err != nil {
-		return fmt.Errorf("docker run failed: %s (%w)", strings.TrimSpace(string(out)), err)
+		appendLog(fmt.Sprintf("[ERROR] Recreating container failed: %s (%v)", strings.TrimSpace(string(out)), err))
+		appendLog(fmt.Sprintf("[ROLLBACK] Initiating automatic rollback to backup %s...", backupName))
+
+		_ = exec.Command("docker", "rm", "-f", cname).Run()
+
+		if rbRenameErr := exec.Command("docker", "rename", backupName, cname).Run(); rbRenameErr != nil {
+			appendLog(fmt.Sprintf("[FATAL] Rollback rename failed: %v. Old container is still available as %s", rbRenameErr, backupName))
+			_ = exec.Command("docker", "start", backupName).Run()
+			return fmt.Errorf("recreation failed: %s; rollback rename failed: %v", strings.TrimSpace(string(out)), rbRenameErr)
+		}
+
+		_ = exec.Command("docker", "start", cname).Run()
+		appendLog(fmt.Sprintf("[ROLLBACK] Original container %s safely restored and restarted!", cname))
+		return fmt.Errorf("container recreation failed: %s (original container was rolled back and restarted)", strings.TrimSpace(string(out)))
 	}
 
 	for _, net := range extraNets {
-		_ = exec.Command("docker", "network", "connect", net, cname).Run()
+		netCmd := []string{"network", "connect"}
+		if aliases, ok := detail.NetworkAliases[net]; ok {
+			for _, a := range aliases {
+				if a != "" && a != cname && !strings.HasPrefix(detail.ID, a) {
+					netCmd = append(netCmd, "--alias", a)
+				}
+			}
+		}
+		netCmd = append(netCmd, net, cname)
+		_ = exec.Command("docker", netCmd...).Run()
 	}
+
+	_ = exec.Command("docker", "rm", "-f", backupName).Run()
+	appendLog(fmt.Sprintf("[SAFEGUARD] Backup %s pruned after successful start.", backupName))
+
+	go func() {
+		_ = exec.Command("docker", "image", "prune", "-f").Run()
+	}()
 
 	return nil
 }

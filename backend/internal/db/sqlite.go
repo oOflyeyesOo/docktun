@@ -24,6 +24,10 @@ func New(path string) (*DB, error) {
 
 	conn.Exec("PRAGMA journal_mode=WAL")
 	conn.Exec("PRAGMA foreign_keys=ON")
+	conn.Exec("PRAGMA synchronous=NORMAL")
+	conn.Exec("PRAGMA cache_size=-20000")
+	conn.Exec("PRAGMA temp_store=MEMORY")
+	conn.Exec("PRAGMA busy_timeout=5000")
 
 	d := &DB{conn}
 	if err := d.migrate(); err != nil {
@@ -99,6 +103,10 @@ func (d *DB) migrate() error {
 			checked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			error TEXT DEFAULT ''
 		);
+
+		CREATE INDEX IF NOT EXISTS idx_container_updates_name ON container_updates(container_name);
+		CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
+		CREATE INDEX IF NOT EXISTS idx_projects_path ON projects(path);
 	`)
 	return err
 }

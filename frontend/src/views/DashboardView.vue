@@ -379,22 +379,31 @@ const isTunnelRunning = computed(() => {
   return status.value?.status === 'running' || status.value?.status === 'healthy'
 })
 
-let timer: any = null
+let fastTimer: any = null
+let slowTimer: any = null
 
 onMounted(async () => {
   await refreshAll()
-  timer = setInterval(() => {
+  // Fast telemetry polling (status & containers with cached stats) every 5s
+  fastTimer = setInterval(() => {
     if (document.visibilityState === 'visible') {
       fetchStatus()
       fetchContainers()
+    }
+  }, 5000)
+
+  // Heavy TCP health dials and remote access every 15s
+  slowTimer = setInterval(() => {
+    if (document.visibilityState === 'visible') {
       fetchHealth()
       fetchRemoteAccess()
     }
-  }, 5000)
+  }, 15000)
 })
 
 onUnmounted(() => {
-  if (timer) clearInterval(timer)
+  if (fastTimer) clearInterval(fastTimer)
+  if (slowTimer) clearInterval(slowTimer)
 })
 </script>
 

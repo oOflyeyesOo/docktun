@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"docktun/internal/config"
 	"docktun/internal/service"
@@ -50,7 +51,8 @@ func (h *Status) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if state.Running {
-		if metricsResp, err := http.Get(h.cfg.MetricsAddr); err == nil {
+		metricsClient := &http.Client{Timeout: 1500 * time.Millisecond}
+		if metricsResp, err := metricsClient.Get(h.cfg.MetricsAddr); err == nil {
 			defer metricsResp.Body.Close()
 			body, _ := io.ReadAll(metricsResp.Body)
 			raw := string(body)
