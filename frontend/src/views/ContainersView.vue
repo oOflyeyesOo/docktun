@@ -2048,8 +2048,9 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+        </div>
 
-          <!-- Right: Control Actions -->
+        <!-- Right: Control Actions -->
           <div class="flex flex-wrap items-center gap-2">
             <!-- Full Control Center Trigger Button -->
             <button
