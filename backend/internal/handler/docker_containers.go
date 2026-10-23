@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -94,6 +95,21 @@ func (h *DockerContainers) Restart(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "action": "restart"})
+}
+
+func (h *DockerContainers) Batch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IDs    []string `json:"ids"`
+		Action string   `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.IDs) == 0 || req.Action == "" {
+		jsonError(w, "ids and action are required", http.StatusBadRequest)
+		return
+	}
+
+	results := h.svc.BatchAction(req.IDs, req.Action)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
 }
 
 func (h *DockerContainers) Remove(w http.ResponseWriter, r *http.Request) {

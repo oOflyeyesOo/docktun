@@ -158,6 +158,7 @@ func main() {
     r.Get("/api/docker/containers/{id}", dockerContainersHandler.Details)
     r.Get("/api/docker/containers/{id}/exposure", dockerContainersHandler.Exposure)
     r.Post("/api/docker/containers/{id}/exposure", dockerContainersHandler.UpdateExposure)
+    r.Post("/api/docker/containers/batch", dockerContainersHandler.Batch)
     r.Post("/api/docker/containers/{id}/network/connect", dockerContainersHandler.ConnectNetwork)
     r.Post("/api/docker/containers/{id}/network/disconnect", dockerContainersHandler.DisconnectNetwork)
     r.Post("/api/docker/containers/{id}/project", dockerContainersHandler.EnsureProject)

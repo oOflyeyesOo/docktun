@@ -273,6 +273,9 @@ func (s *DockerContainers) List() ([]Container, error) {
 				c.ProjectID = p.ID
 				c.ProjectName = p.Name
 				c.ProjectPath = p.Path
+			} else if compProj != "" {
+				c.ProjectName = compProj
+				c.ProjectPath = compDir
 			}
 		}
 		if c.ProjectID == 0 {
@@ -945,6 +948,41 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 func (s *DockerContainers) Start(id string) error { return dockerCommand("start", id) }
 func (s *DockerContainers) Stop(id string) error { return dockerCommand("stop", id) }
 func (s *DockerContainers) Restart(id string) error { return dockerCommand("restart", id) }
+
+type BatchActionResult struct {
+	ID      string `json:"id"`
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+}
+
+func (s *DockerContainers) BatchAction(ids []string, action string) []BatchActionResult {
+	results := make([]BatchActionResult, len(ids))
+	var wg sync.WaitGroup
+	for i, id := range ids {
+		wg.Add(1)
+		go func(idx int, cID string) {
+			defer wg.Done()
+			var err error
+			switch action {
+			case "start":
+				err = s.Start(cID)
+			case "stop":
+				err = s.Stop(cID)
+			case "restart":
+				err = s.Restart(cID)
+			default:
+				err = fmt.Errorf("unsupported batch action: %s", action)
+			}
+			if err != nil {
+				results[idx] = BatchActionResult{ID: cID, Success: false, Error: err.Error()}
+			} else {
+				results[idx] = BatchActionResult{ID: cID, Success: true}
+			}
+		}(i, id)
+	}
+	wg.Wait()
+	return results
+}
 
 func (s *DockerContainers) Remove(id string, force bool) error {
 	args := []string{"rm"}

@@ -49,7 +49,10 @@ import {
   History,
   GitBranch,
   KeyRound,
-  Package
+  Package,
+  ChevronDown,
+  ChevronRight,
+  CheckSquare
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
@@ -339,6 +342,7 @@ const summary = computed(() => {
     localCount,
     publicCount,
     privateCount,
+    stackCount: new Set(containers.value.filter((c) => c.project_name).map((c) => c.project_name)).size,
     cpuUsage: totalCpu.toFixed(1) + '%',
   }
 })
@@ -359,6 +363,199 @@ function parseMemoryUsage(memStr?: string): { used: string; total: string; perce
   }
   return { used: memStr, total: '', percent: 0 }
 }
+
+interface ContainerGroup {
+  key: string
+  name: string
+  isStack: boolean
+  projectId?: number
+  projectPath?: string
+  containers: ContainerItem[]
+  runningCount: number
+  totalCount: number
+  totalCpu: string
+  hasUpdates: boolean
+  hasPublic: boolean
+  hasZeroTrust: boolean
+}
+
+// Group By Stack & Collapsible States
+const groupByStack = ref(localStorage.getItem('docktun_group_by_stack') !== 'false')
+const collapsedStacks = ref<Record<string, boolean>>(
+  JSON.parse(localStorage.getItem('docktun_collapsed_stacks') || '{}')
+)
+
+function toggleGroupByStack() {
+  groupByStack.value = !groupByStack.value
+  localStorage.setItem('docktun_group_by_stack', String(groupByStack.value))
+}
+
+function toggleStackCollapse(key: string) {
+  collapsedStacks.value[key] = !collapsedStacks.value[key]
+  localStorage.setItem('docktun_collapsed_stacks', JSON.stringify(collapsedStacks.value))
+}
+
+function collapseAllStacks() {
+  containerGroups.value.forEach((g) => {
+    collapsedStacks.value[g.key] = true
+  })
+  localStorage.setItem('docktun_collapsed_stacks', JSON.stringify(collapsedStacks.value))
+}
+
+function expandAllStacks() {
+  collapsedStacks.value = {}
+  localStorage.setItem('docktun_collapsed_stacks', '{}')
+}
+
+// Batch Multi-Select State
+const selectedContainerIds = ref<Record<string, boolean>>({})
+const batchLoading = ref(false)
+
+const selectedCount = computed(() => {
+  return Object.values(selectedContainerIds.value).filter(Boolean).length
+})
+
+const allSelected = computed(() => {
+  if (filteredContainers.value.length === 0) return false
+  return filteredContainers.value.every((c) => selectedContainerIds.value[c.id])
+})
+
+function toggleSelectAll() {
+  if (allSelected.value) {
+    selectedContainerIds.value = {}
+  } else {
+    const next: Record<string, boolean> = {}
+    filteredContainers.value.forEach((c) => {
+      next[c.id] = true
+    })
+    selectedContainerIds.value = next
+  }
+}
+
+function toggleSelectStack(group: ContainerGroup) {
+  const allInGroup = group.containers.every((c) => selectedContainerIds.value[c.id])
+  group.containers.forEach((c) => {
+    if (allInGroup) {
+      delete selectedContainerIds.value[c.id]
+    } else {
+      selectedContainerIds.value[c.id] = true
+    }
+  })
+}
+
+async function runBatchAction(action: 'start' | 'stop' | 'restart') {
+  const ids = Object.keys(selectedContainerIds.value).filter((id) => selectedContainerIds.value[id])
+  if (ids.length === 0) return
+
+  if (!confirm(`Are you sure you want to ${action.toUpperCase()} ${ids.length} selected container(s)?`)) return
+
+  batchLoading.value = true
+  try {
+    await apiFetch('/api/docker/containers/batch', {
+      method: 'POST',
+      body: JSON.stringify({ ids, action }),
+    })
+    await fetchContainers()
+    selectedContainerIds.value = {}
+  } catch (err: any) {
+    alert(`Batch ${action} failed: ` + (err.message || err))
+  } finally {
+    batchLoading.value = false
+  }
+}
+
+async function runBatchCheckUpdates() {
+  const ids = Object.keys(selectedContainerIds.value).filter((id) => selectedContainerIds.value[id])
+  if (ids.length === 0) return
+  batchLoading.value = true
+  try {
+    for (const id of ids) {
+      try {
+        await apiFetch(`/api/docker/containers/${id}/check-update`, { method: 'POST' })
+      } catch {}
+    }
+    await fetchContainers()
+  } finally {
+    batchLoading.value = false
+  }
+}
+
+// Compute Container Groups
+const containerGroups = computed<ContainerGroup[]>(() => {
+  const list = filteredContainers.value
+  if (!groupByStack.value) {
+    let cpuSum = 0
+    list.forEach((c) => {
+      if (c.running && c.cpu) {
+        const p = parseFloat(c.cpu.replace('%', ''))
+        if (!isNaN(p)) cpuSum += p
+      }
+    })
+    return [
+      {
+        key: 'all',
+        name: 'All Containers',
+        isStack: false,
+        containers: list,
+        runningCount: list.filter((c) => c.running).length,
+        totalCount: list.length,
+        totalCpu: cpuSum.toFixed(1) + '%',
+        hasUpdates: list.some((c) => c.update_available),
+        hasPublic: list.some((c) => c.exposure_mode === 'public'),
+        hasZeroTrust: list.some((c) => c.zero_trust_enabled),
+      },
+    ]
+  }
+
+  const map = new Map<string, ContainerItem[]>()
+  list.forEach((c) => {
+    const key = c.project_name ? c.project_name.trim() : '__standalone__'
+    if (!map.has(key)) {
+      map.set(key, [])
+    }
+    map.get(key)!.push(c)
+  })
+
+  const groups: ContainerGroup[] = []
+  map.forEach((items, key) => {
+    let cpuSum = 0
+    items.forEach((c) => {
+      if (c.running && c.cpu) {
+        const p = parseFloat(c.cpu.replace('%', ''))
+        if (!isNaN(p)) cpuSum += p
+      }
+    })
+
+    const isStack = key !== '__standalone__'
+    const firstWithProj = items.find((c) => c.project_id)
+    const projectId = firstWithProj?.project_id
+    const projectPath = firstWithProj?.project_path
+
+    groups.push({
+      key,
+      name: isStack ? key : 'Standalone Containers',
+      isStack,
+      projectId,
+      projectPath,
+      containers: items,
+      runningCount: items.filter((c) => c.running).length,
+      totalCount: items.length,
+      totalCpu: cpuSum.toFixed(1) + '%',
+      hasUpdates: items.some((c) => c.update_available),
+      hasPublic: items.some((c) => c.exposure_mode === 'public'),
+      hasZeroTrust: items.some((c) => c.zero_trust_enabled),
+    })
+  })
+
+  // Sort: Stacks first (alphabetically), Standalone at the bottom
+  groups.sort((a, b) => {
+    if (a.isStack && !b.isStack) return -1
+    if (!a.isStack && b.isStack) return 1
+    return a.name.localeCompare(b.name)
+  })
+
+  return groups
+})
 
 async function fetchContainers() {
   try {
@@ -571,7 +768,7 @@ async function saveExposure(container: ContainerItem) {
 // ==========================================
 // Control Center Modal Logic
 // ==========================================
-async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs' = 'overview') {
+async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs' | 'exec' = 'overview') {
   selectedContainer.value = { ...c } as ContainerDetail
   selectedTab.value = tab
   detailLoading.value = true
@@ -617,7 +814,7 @@ function closeContainerModal() {
   }
 }
 
-function handleTabChange(tab: 'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs') {
+function handleTabChange(tab: 'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs' | 'exec') {
   selectedTab.value = tab
   if (!selectedContainer.value) return
 
@@ -1267,7 +1464,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Quick Stats Cards -->
-    <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+    <div class="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
       <div class="cyber-card flex flex-col justify-between p-3.5">
         <div class="flex items-center justify-between text-xs text-slate-400">
           <span>Total Containers</span>
@@ -1290,6 +1487,14 @@ onUnmounted(() => {
           <Square class="h-4 w-4 text-slate-500 fill-slate-500" />
         </div>
         <div class="mt-2 text-2xl font-bold text-slate-400 font-mono">{{ summary.stopped }}</div>
+      </div>
+
+      <div class="cyber-card flex flex-col justify-between p-3.5">
+        <div class="flex items-center justify-between text-xs text-indigo-400">
+          <span>Compose Stacks</span>
+          <Layers class="h-4 w-4 text-indigo-400" />
+        </div>
+        <div class="mt-2 text-2xl font-bold text-indigo-300 font-mono">{{ summary.stackCount }}</div>
       </div>
 
       <div class="cyber-card flex flex-col justify-between p-3.5">
@@ -1318,7 +1523,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Filter & Search Bar -->
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <!-- Filter tabs -->
       <div class="flex flex-wrap gap-1 rounded-lg border border-slate-800 bg-slate-900/60 p-1">
         <button
@@ -1372,17 +1577,124 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <!-- Search box -->
-      <div class="relative w-full sm:w-64">
-        <Search class="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-        <input
-          v-model="searchQuery"
-          type="text"
-          placeholder="Search name, image, port, stack..."
-          class="cyber-input pl-9 text-xs"
-        />
+      <!-- Controls: Grouping, Selection & Search -->
+      <div class="flex flex-wrap items-center gap-2">
+        <!-- Group by Stack Toggle -->
+        <button
+          @click="toggleGroupByStack"
+          class="cyber-btn-secondary flex items-center gap-1.5 text-xs py-1.5 px-3"
+          :class="groupByStack ? 'border-indigo-500/60 bg-indigo-950/40 text-indigo-300' : 'text-slate-400 hover:text-slate-200'"
+          title="Toggle grouping containers by Compose Stacks"
+        >
+          <Layers class="h-3.5 w-3.5" :class="groupByStack ? 'text-indigo-400' : 'text-slate-500'" />
+          <span>{{ groupByStack ? 'Grouped by Stack' : 'Flat List' }}</span>
+        </button>
+
+        <!-- Expand / Collapse All (active when groupByStack is true) -->
+        <template v-if="groupByStack">
+          <button
+            @click="expandAllStacks"
+            class="cyber-btn-secondary text-xs px-2.5 py-1.5 text-slate-400 hover:text-slate-200"
+            title="Expand all stack groups"
+          >
+            Expand All
+          </button>
+          <button
+            @click="collapseAllStacks"
+            class="cyber-btn-secondary text-xs px-2.5 py-1.5 text-slate-400 hover:text-slate-200"
+            title="Collapse all stack groups"
+          >
+            Collapse All
+          </button>
+        </template>
+
+        <!-- Search box -->
+        <div class="relative w-full sm:w-60">
+          <Search class="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+          <input
+            v-model="searchQuery"
+            type="text"
+            placeholder="Search name, image, stack..."
+            class="cyber-input pl-9 text-xs"
+          />
+        </div>
       </div>
     </div>
+
+    <!-- Sticky Batch Action Toolbar (When 1 or more containers selected) -->
+    <transition
+      enter-active-class="transition duration-150 ease-out"
+      enter-from-class="transform -translate-y-2 opacity-0"
+      enter-to-class="transform translate-y-0 opacity-100"
+      leave-active-class="transition duration-100 ease-in"
+      leave-from-class="transform translate-y-0 opacity-100"
+      leave-to-class="transform -translate-y-2 opacity-0"
+    >
+      <div
+        v-if="selectedCount > 0"
+        class="sticky top-4 z-40 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan-500/50 bg-slate-900/95 p-3 shadow-2xl backdrop-blur-md"
+      >
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2">
+            <CheckSquare class="h-4 w-4 text-cyan-400" />
+            <span class="text-xs font-bold text-slate-100 font-mono tracking-wider">
+              {{ selectedCount }} SELECTED
+            </span>
+          </div>
+          <button
+            @click="toggleSelectAll"
+            class="text-[11px] font-medium text-cyan-400 hover:text-cyan-300 underline underline-offset-2 cursor-pointer"
+          >
+            {{ allSelected ? 'Deselect all' : 'Select all' }}
+          </button>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            @click="runBatchAction('start')"
+            :disabled="batchLoading"
+            class="cyber-btn flex items-center gap-1.5 text-xs text-emerald-300 border-emerald-500/40 hover:bg-emerald-950/40"
+            title="Start selected containers"
+          >
+            <Play class="h-3 w-3 fill-current" />
+            <span>Start</span>
+          </button>
+          <button
+            @click="runBatchAction('stop')"
+            :disabled="batchLoading"
+            class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-300 hover:border-amber-500/40 hover:bg-amber-950/40"
+            title="Stop selected containers"
+          >
+            <Square class="h-3 w-3 fill-current" />
+            <span>Stop</span>
+          </button>
+          <button
+            @click="runBatchAction('restart')"
+            :disabled="batchLoading"
+            class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-cyan-300"
+            title="Restart selected containers"
+          >
+            <RotateCcw class="h-3 w-3" :class="batchLoading ? 'animate-spin' : ''" />
+            <span>Restart</span>
+          </button>
+          <button
+            @click="runBatchCheckUpdates"
+            :disabled="batchLoading"
+            class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-violet-300 hover:border-violet-500/40 hover:bg-violet-950/40"
+            title="Check remote registries for updates on selected containers"
+          >
+            <Sparkles class="h-3 w-3 text-violet-400" />
+            <span>Check Updates</span>
+          </button>
+          <button
+            @click="selectedContainerIds = {}"
+            class="cyber-btn-secondary text-xs text-slate-400 hover:text-slate-200"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+    </transition>
 
     <!-- Empty state -->
     <div v-if="filteredContainers.length === 0 && !loading" class="cyber-card py-12 text-center text-slate-400">
@@ -1391,20 +1703,200 @@ onUnmounted(() => {
       <p class="mt-1 text-xs text-slate-500">Try adjusting your search terms or status filters.</p>
     </div>
 
-    <!-- Containers List -->
-    <div class="space-y-4">
+    <!-- Containers List (Grouped by Compose Stack or Flat List) -->
+    <div class="space-y-6">
       <div
-        v-for="container in filteredContainers"
-        :key="container.id"
-        class="cyber-card transition-all duration-200 hover:border-slate-700"
+        v-for="group in containerGroups"
+        :key="group.key"
+        class="space-y-3"
       >
-        <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <!-- Left: Identity & Status (Clickable to open Control Center) -->
+        <!-- Stack Header (Rendered when groupByStack is true) -->
+        <div
+          v-if="groupByStack"
+          class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-3 shadow-md transition-colors hover:border-slate-700/80"
+        >
+          <!-- Left: Checkbox, Toggle Chevron, Stack Title & Metrics -->
+          <div class="flex items-center gap-3 flex-wrap">
+            <!-- Select all in stack checkbox -->
+            <input
+              type="checkbox"
+              :checked="group.containers.length > 0 && group.containers.every((c) => selectedContainerIds[c.id])"
+              @change="toggleSelectStack(group)"
+              class="h-4 w-4 rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-cyan-500 cursor-pointer"
+              title="Select all containers in this stack"
+            />
+
+            <!-- Toggle collapse button -->
+            <button
+              @click="toggleStackCollapse(group.key)"
+              class="flex items-center gap-2 group cursor-pointer text-left focus:outline-none"
+            >
+              <component
+                :is="collapsedStacks[group.key] ? ChevronRight : ChevronDown"
+                class="h-4 w-4 text-slate-400 group-hover:text-cyan-400 transition-colors"
+              />
+              <div class="flex items-center gap-2">
+                <component
+                  :is="group.isStack ? Layers : Server"
+                  class="h-4 w-4"
+                  :class="group.isStack ? 'text-indigo-400' : 'text-slate-400'"
+                />
+                <span class="text-sm font-bold text-slate-100 font-mono group-hover:text-cyan-300 transition-colors">
+                  {{ group.name }}
+                </span>
+              </div>
+            </button>
+
+            <!-- Stack Metrics & Badges -->
+            <div class="flex flex-wrap items-center gap-1.5 text-xs">
+              <!-- Running Count Badge -->
+              <span
+                class="rounded-full px-2 py-0.5 text-[10px] font-mono font-semibold"
+                :class="group.runningCount === group.totalCount && group.totalCount > 0
+                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                  : group.runningCount > 0
+                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
+                    : 'bg-slate-800 text-slate-400 border border-slate-700'"
+              >
+                {{ group.runningCount }}/{{ group.totalCount }} running
+              </span>
+
+              <!-- Total CPU -->
+              <span
+                v-if="group.runningCount > 0"
+                class="rounded-full bg-slate-800/80 border border-slate-700/60 px-2 py-0.5 text-[10px] font-mono text-cyan-300"
+                title="Total CPU used by this stack"
+              >
+                CPU: {{ group.totalCpu }}
+              </span>
+
+              <!-- Updates Badge -->
+              <span
+                v-if="group.hasUpdates"
+                class="rounded-full bg-amber-500/15 border border-amber-500/40 px-2 py-0.5 text-[10px] font-bold text-amber-300 flex items-center gap-1 animate-pulse"
+              >
+                <ArrowUpCircle class="h-2.5 w-2.5 text-amber-400" /> Update
+              </span>
+
+              <!-- Public / Zero Trust Badges -->
+              <span
+                v-if="group.hasZeroTrust"
+                class="rounded-full bg-indigo-500/15 border border-indigo-500/40 px-2 py-0.5 text-[10px] font-semibold text-indigo-300 flex items-center gap-1"
+                title="Zero Trust Protected Ingress"
+              >
+                <ShieldCheck class="h-2.5 w-2.5" /> Zero Trust
+              </span>
+              <span
+                v-else-if="group.hasPublic"
+                class="rounded-full bg-cyan-500/15 border border-cyan-500/40 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 flex items-center gap-1"
+                title="Public Cloudflare Tunnel Ingress"
+              >
+                <Globe class="h-2.5 w-2.5" /> Public
+              </span>
+            </div>
+          </div>
+
+          <!-- Right: Stack Compose Actions (if projectId exists) -->
+          <div class="flex flex-wrap items-center gap-1.5 sm:self-center">
+            <template v-if="group.projectId">
+              <button
+                @click="openContainerModal(group.containers[0], 'compose')"
+                class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2.5 text-cyan-300 hover:border-cyan-500/50"
+                title="Edit Compose YAML & environment variables"
+              >
+                <Code2 class="h-3 w-3" />
+                <span>Compose</span>
+              </button>
+
+              <button
+                @click="runStackAction(group.projectId, 'up')"
+                :disabled="stackActionLoading[group.projectId]"
+                class="cyber-btn flex items-center gap-1 text-[11px] py-1 px-2.5 text-emerald-300 border-emerald-500/40 hover:bg-emerald-950/40"
+                title="docker compose up -d"
+              >
+                <Play class="h-3 w-3 fill-current" />
+                <span>Up</span>
+              </button>
+
+              <button
+                @click="runStackAction(group.projectId, 'restart')"
+                :disabled="stackActionLoading[group.projectId]"
+                class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2.5 text-cyan-300"
+                title="docker compose restart"
+              >
+                <RotateCcw class="h-3 w-3" :class="stackActionLoading[group.projectId] ? 'animate-spin' : ''" />
+                <span>Restart</span>
+              </button>
+
+              <button
+                @click="openDeployPrompt(group.projectId, group.name)"
+                :disabled="stackActionLoading[group.projectId]"
+                class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2.5 text-indigo-300 hover:border-indigo-500/50 hover:bg-indigo-950/30"
+                title="Git pull & docker compose up --build"
+              >
+                <Rocket class="h-3 w-3" />
+                <span>Deploy</span>
+              </button>
+
+              <button
+                @click="runStackAction(group.projectId, 'down')"
+                :disabled="stackActionLoading[group.projectId]"
+                class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2 text-rose-400 hover:border-rose-500/50 hover:bg-rose-950/30"
+                title="docker compose down"
+              >
+                <Square class="h-3 w-3 fill-current" />
+                <span>Down</span>
+              </button>
+
+              <button
+                @click="openStackHistory(group.projectId, group.name)"
+                class="cyber-btn-secondary text-[11px] py-1 px-2 text-slate-400 hover:text-slate-200"
+                title="View stack deploy history"
+              >
+                <History class="h-3 w-3" />
+              </button>
+            </template>
+
+            <!-- Quick collapse button -->
+            <button
+              @click="toggleStackCollapse(group.key)"
+              class="text-xs text-slate-400 hover:text-slate-200 px-1 py-0.5 ml-1"
+              :title="collapsedStacks[group.key] ? 'Expand stack' : 'Collapse stack'"
+            >
+              <span class="text-[11px] font-mono">{{ collapsedStacks[group.key] ? 'Show' : 'Hide' }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Containers in this Stack / Group (Collapsible) -->
+        <div
+          v-show="!collapsedStacks[group.key]"
+          class="space-y-3"
+          :class="groupByStack ? 'pl-2 sm:pl-4 border-l-2 border-slate-800/60' : ''"
+        >
           <div
-            class="space-y-2 cursor-pointer group"
-            @click="openContainerModal(container, 'overview')"
-            title="Click to open Container Control Center"
+            v-for="container in group.containers"
+            :key="container.id"
+            class="cyber-card transition-all duration-200 hover:border-slate-700"
+            :class="selectedContainerIds[container.id] ? 'border-cyan-500/60 bg-cyan-950/15' : ''"
           >
+            <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <!-- Left: Checkbox + Identity & Status (Clickable to open Control Center) -->
+              <div class="flex items-start gap-3 flex-1 min-w-0">
+                <!-- Multi-select checkbox -->
+                <input
+                  type="checkbox"
+                  v-model="selectedContainerIds[container.id]"
+                  class="h-4 w-4 mt-1 rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-cyan-500 cursor-pointer flex-shrink-0"
+                  :title="`Select ${container.name}`"
+                  @click.stop
+                />
+
+                <div
+                  class="space-y-2 cursor-pointer group flex-1 min-w-0"
+                  @click="openContainerModal(container, 'overview')"
+                  title="Click to open Container Control Center"
+                >
             <div class="flex flex-wrap items-center gap-2.5">
               <!-- Pulsing status dot -->
               <span
@@ -1567,6 +2059,17 @@ onUnmounted(() => {
             >
               <Sliders class="h-3.5 w-3.5" />
               <span>Control Center</span>
+            </button>
+
+            <!-- Quick Exec / Terminal Button -->
+            <button
+              v-if="container.running"
+              @click="openContainerModal(container, 'exec')"
+              class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-emerald-300/90 hover:text-emerald-200 hover:border-emerald-500/50"
+              title="Open quick command console / terminal inside container"
+            >
+              <Terminal class="h-3.5 w-3.5 text-emerald-400" />
+              <span>Exec</span>
             </button>
 
             <!-- 1-Click Update Button (Shown when update available) -->
@@ -1840,6 +2343,8 @@ onUnmounted(() => {
               </button>
             </div>
           </div>
+        </div>
+      </div>
         </div>
       </div>
     </div>
