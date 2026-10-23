@@ -282,6 +282,24 @@ func (s *CloudflareAPI) SaveCredentials(token, accountID, zoneID string) error {
 	return tx.Commit()
 }
 
+// SaveSettings persists Cloudflare account, API token, and tunnel metadata into SQLite
+func (s *CloudflareAPI) SaveSettings(accountID, token, tunnelID, tunnelName string) error {
+	if err := s.SaveCredentials(token, accountID, ""); err != nil {
+		return err
+	}
+	if s.db != nil {
+		upsert := `INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`
+		if tunnelID != "" {
+			_, _ = s.db.Exec(upsert, "cf_tunnel_id", strings.TrimSpace(tunnelID))
+		}
+		if tunnelName != "" {
+			_, _ = s.db.Exec(upsert, "cf_tunnel_name", strings.TrimSpace(tunnelName))
+		}
+	}
+	return nil
+}
+
 // FindZoneID resolves the Cloudflare Zone ID for a given domain/hostname
 func (s *CloudflareAPI) FindZoneID(token, hostname string) (string, error) {
 	clean := strings.ToLower(strings.TrimSpace(hostname))
