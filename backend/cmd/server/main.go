@@ -74,7 +74,7 @@ func main() {
   healthHandler := handler.NewHealthCheck(cfg.CloudflaredConfig)
   metricsHandler := handler.NewMetrics(cfg)
   settingsHandler := handler.NewSettings(database, auditSvc)
-  notifHandler := handler.NewNotifications("./data")
+  notifHandler := handler.NewNotifications(dataDir)
   projectsHandler := handler.NewProjects(projectsSvc, auditSvc)
   dockerRunHandler := handler.NewDockerRun(dockerRunSvc, auditSvc)
   dockerContainersHandler := handler.NewDockerContainers(dockerContainersSvc)

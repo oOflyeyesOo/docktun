@@ -1,10 +1,14 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 type Notifications struct {
@@ -16,9 +20,19 @@ func NewNotifications(dataPath string) *Notifications {
 }
 
 type notifConfig struct {
-	Enabled    bool   `json:"enabled"`
-	WebhookURL string `json:"webhook_url"`
-	Type       string `json:"type"`
+	Enabled                bool   `json:"enabled"`
+	Type                   string `json:"type"` // "discord", "telegram", "slack", "ntfy", "webhook"
+	WebhookURL             string `json:"webhook_url"`
+	TelegramBotToken       string `json:"telegram_bot_token,omitempty"`
+	TelegramChatID         string `json:"telegram_chat_id,omitempty"`
+	NotifyTunnelDown       bool   `json:"notify_tunnel_down"`
+	NotifyContainerStop    bool   `json:"notify_container_stop"`
+	NotifyDeployFinish     bool   `json:"notify_deploy_finish"`
+	NotifyHighUsage        bool   `json:"notify_high_usage"`
+	CpuThresholdPercent    int    `json:"cpu_threshold_percent"`
+	MemoryThresholdPercent int    `json:"memory_threshold_percent"`
+	LastTestedAt           string `json:"last_tested_at,omitempty"`
+	LastStatus             string `json:"last_status,omitempty"`
 }
 
 func (h *Notifications) configFile() string {
@@ -28,10 +42,34 @@ func (h *Notifications) configFile() string {
 func (h *Notifications) Get(w http.ResponseWriter, r *http.Request) {
 	data, err := os.ReadFile(h.configFile())
 	if err != nil {
+		def := notifConfig{
+			Enabled:                false,
+			Type:                   "discord",
+			NotifyTunnelDown:       true,
+			NotifyContainerStop:    true,
+			NotifyDeployFinish:     true,
+			NotifyHighUsage:        true,
+			CpuThresholdPercent:    85,
+			MemoryThresholdPercent: 85,
+		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(notifConfig{})
+		json.NewEncoder(w).Encode(def)
 		return
 	}
+
+	var cfg notifConfig
+	if err := json.Unmarshal(data, &cfg); err == nil {
+		if cfg.CpuThresholdPercent == 0 {
+			cfg.CpuThresholdPercent = 85
+		}
+		if cfg.MemoryThresholdPercent == 0 {
+			cfg.MemoryThresholdPercent = 85
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(cfg)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(data)
 }
@@ -43,9 +81,19 @@ func (h *Notifications) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if cfg.CpuThresholdPercent <= 0 {
+		cfg.CpuThresholdPercent = 85
+	}
+	if cfg.MemoryThresholdPercent <= 0 {
+		cfg.MemoryThresholdPercent = 85
+	}
+	if cfg.Type == "" {
+		cfg.Type = "discord"
+	}
+
 	data, _ := json.MarshalIndent(cfg, "", "  ")
-	os.MkdirAll(h.dataPath, 0755)
-	os.WriteFile(h.configFile(), data, 0644)
+	_ = os.MkdirAll(h.dataPath, 0755)
+	_ = os.WriteFile(h.configFile(), data, 0644)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -54,50 +102,141 @@ func (h *Notifications) Update(w http.ResponseWriter, r *http.Request) {
 func (h *Notifications) Test(w http.ResponseWriter, r *http.Request) {
 	data, err := os.ReadFile(h.configFile())
 	if err != nil {
-		http.Error(w, `{"error":"no config"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"no notification configuration saved yet"}`, http.StatusBadRequest)
 		return
 	}
 
 	var cfg notifConfig
-	json.Unmarshal(data, &cfg)
-
-	if cfg.WebhookURL == "" {
-		http.Error(w, `{"error":"no webhook url"}`, http.StatusBadRequest)
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		http.Error(w, `{"error":"corrupted notification configuration"}`, http.StatusBadRequest)
 		return
 	}
 
+	targetURL := strings.TrimSpace(cfg.WebhookURL)
 	var payload []byte
-	switch cfg.Type {
-	case "discord":
-		payload, _ = json.Marshal(map[string]string{"content": "🟢 DockTun test notification"})
+	contentType := "application/json"
+	reqHeaders := make(map[string]string)
+
+	nowStr := time.Now().Format("2006-01-02 15:04:05 MST")
+
+	switch strings.ToLower(cfg.Type) {
 	case "telegram":
-		payload, _ = json.Marshal(map[string]interface{}{"text": "🟢 DockTun test notification", "parse_mode": "HTML"})
+		if cfg.TelegramBotToken != "" && cfg.TelegramChatID != "" {
+			targetURL = fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", strings.TrimSpace(cfg.TelegramBotToken))
+			payload, _ = json.Marshal(map[string]interface{}{
+				"chat_id":    strings.TrimSpace(cfg.TelegramChatID),
+				"text":       fmt.Sprintf("🟢 <b>DockTun Alert Test</b>\nYour DockTun notification channel is connected and operational.\n<i>Timestamp: %s</i>", nowStr),
+				"parse_mode": "HTML",
+			})
+		} else if targetURL != "" {
+			payload, _ = json.Marshal(map[string]interface{}{
+				"text":       fmt.Sprintf("🟢 <b>DockTun Alert Test</b>\nYour DockTun notification channel is connected.\n<i>Timestamp: %s</i>", nowStr),
+				"parse_mode": "HTML",
+			})
+		} else {
+			http.Error(w, `{"error":"Telegram Bot Token and Chat ID (or webhook URL) are required"}`, http.StatusBadRequest)
+			return
+		}
+
+	case "slack":
+		if targetURL == "" {
+			http.Error(w, `{"error":"Slack Incoming Webhook URL is required"}`, http.StatusBadRequest)
+			return
+		}
+		payload, _ = json.Marshal(map[string]interface{}{
+			"text": fmt.Sprintf("🟢 *DockTun Alert Test*\nYour DockTun notification channel is operational.\n*Time*: `%s`", nowStr),
+		})
+
+	case "ntfy":
+		if targetURL == "" {
+			http.Error(w, `{"error":"Ntfy topic URL is required (e.g. https://ntfy.sh/my_topic)"}`, http.StatusBadRequest)
+			return
+		}
+		contentType = "text/plain"
+		payload = []byte(fmt.Sprintf("🟢 DockTun alert test received successfully at %s", nowStr))
+		reqHeaders["Title"] = "DockTun Alert Test"
+		reqHeaders["Priority"] = "default"
+		reqHeaders["Tags"] = "white_check_mark,bell"
+
+	case "discord":
+		fallthrough
 	default:
-		payload, _ = json.Marshal(map[string]string{"text": "🟢 DockTun test notification"})
+		if targetURL == "" {
+			http.Error(w, `{"error":"Webhook URL is required"}`, http.StatusBadRequest)
+			return
+		}
+
+		if strings.ToLower(cfg.Type) == "discord" {
+			payload, _ = json.Marshal(map[string]interface{}{
+				"username": "DockTun Monitor",
+				"embeds": []map[string]interface{}{
+					{
+						"title":       "🟢 DockTun Alert Test",
+						"description": "Your DockTun notification channel is verified and active.",
+						"color":       3066993, // Green
+						"fields": []map[string]interface{}{
+							{"name": "Status", "value": "Operational", "inline": true},
+							{"name": "Trigger", "value": "Manual Test", "inline": true},
+							{"name": "Timestamp", "value": nowStr, "inline": false},
+						},
+						"footer": map[string]interface{}{
+							"text": "DockTun • Tunnels & Containers Dashboard",
+						},
+					},
+				},
+			})
+		} else {
+			// Generic Webhook
+			payload, _ = json.Marshal(map[string]interface{}{
+				"event":     "alert_test",
+				"title":     "DockTun Alert Test",
+				"message":   "🟢 DockTun test notification delivered successfully.",
+				"timestamp": time.Now().Format(time.RFC3339),
+				"source":    "DockTun",
+			})
+		}
 	}
 
-	resp, err := http.Post(cfg.WebhookURL, "application/json", jsonReader(payload))
-	if err != nil || resp.StatusCode >= 400 {
-		http.Error(w, `{"error":"webhook failed"}`, http.StatusBadGateway)
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(r.Context(), "POST", targetURL, bytes.NewReader(payload))
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"failed to build request: %s"}`, err.Error()), http.StatusBadRequest)
 		return
 	}
+	req.Header.Set("Content-Type", contentType)
+	for k, v := range reqHeaders {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode >= 400 {
+		errMsg := "Webhook request failed"
+		if err != nil {
+			errMsg = err.Error()
+		} else if resp != nil {
+			errMsg = fmt.Sprintf("HTTP %d from provider", resp.StatusCode)
+		}
+
+		cfg.LastTestedAt = time.Now().Format(time.RFC3339)
+		cfg.LastStatus = fmt.Sprintf("Error: %s", errMsg)
+		savedData, _ := json.MarshalIndent(cfg, "", "  ")
+		_ = os.WriteFile(h.configFile(), savedData, 0644)
+
+		http.Error(w, fmt.Sprintf(`{"error":"Webhook delivery failed: %s"}`, errMsg), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	cfg.LastTestedAt = time.Now().Format(time.RFC3339)
+	cfg.LastStatus = "Sent successfully (HTTP 200)"
+	savedData, _ := json.MarshalIndent(cfg, "", "  ")
+	_ = os.WriteFile(h.configFile(), savedData, 0644)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "sent"})
-}
-
-func jsonReader(data []byte) *jsonBody { return &jsonBody{data: data} }
-
-type jsonBody struct{ data []byte; i int }
-
-func (b *jsonBody) Read(p []byte) (int, error) {
-	if b.i >= len(b.data) {
-		return 0, nil
-	}
-	n := copy(p, b.data[b.i:])
-	b.i += n
-	if b.i >= len(b.data) {
-		return n, nil
-	}
-	return n, nil
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":     "sent",
+		"type":       cfg.Type,
+		"timestamp":  cfg.LastTestedAt,
+		"status_msg": cfg.LastStatus,
+	})
 }

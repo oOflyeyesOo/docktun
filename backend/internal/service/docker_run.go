@@ -1,4 +1,4 @@
-﻿package service
+package service
 
 import (
 	"fmt"
@@ -139,7 +139,11 @@ func (s *DockerRunService) StartRun(rawCmd string, mode string, connectCloudflar
 func (s *DockerRunService) executeAsCompose(jobID int, parsed *ParsedDockerRun, rawCmd string, onDone func(string)) {
 	s.appendLine(jobID, fmt.Sprintf("[STEP] Preparing Compose stack for '%s'...", parsed.ContainerName))
 
-	projDir := filepath.Join("/opt/projects", parsed.ContainerName)
+	baseDir := "./projects"
+	if fi, err := os.Stat("/opt/projects"); err == nil && fi.IsDir() {
+		baseDir = "/opt/projects"
+	}
+	projDir := filepath.Join(baseDir, parsed.ContainerName)
 	if err := os.MkdirAll(projDir, 0755); err != nil {
 		s.appendLine(jobID, "[ERROR] Failed to create project directory: "+err.Error())
 		s.markDone(jobID, 1, err.Error())
@@ -181,7 +185,7 @@ func (s *DockerRunService) executeAsCompose(jobID int, parsed *ParsedDockerRun, 
 	s.appendLine(jobID, fmt.Sprintf("[STEP] Registered project '%s' (ID: %d)", parsed.ContainerName, projectID))
 	s.appendLine(jobID, "[STEP] Executing: docker compose up -d --build")
 
-	cmd := exec.Command("docker", "compose", "--project-directory", projDir, "up", "-d", "--build")
+	cmd := exec.Command("docker", "compose", "-p", parsed.ContainerName, "--project-directory", projDir, "up", "-d", "--build")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		s.appendLine(jobID, "[ERROR] Pipe error: "+err.Error())

@@ -13,9 +13,8 @@ const nav = [
   { to: '/', label: 'Status', icon: LayoutDashboard },
   { to: '/containers', label: 'Containers', icon: Server },
   { to: '/access', label: 'Remote Access', icon: Globe },
-  { to: '/logs', label: 'Logs', icon: ScrollText },
+  { to: '/logs', label: 'Logs & Audit', icon: ScrollText },
   { to: '/notifications', label: 'Alerts', icon: Bell },
-  { to: '/audit', label: 'Audit Trail', icon: Shield },
   { to: '/settings', label: 'Settings', icon: Cog },
 ]
 

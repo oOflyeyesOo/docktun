@@ -287,7 +287,30 @@ func (s *DockerContainers) List() ([]Container, error) {
 				c.ProjectID = p.ID
 				c.ProjectName = p.Name
 				c.ProjectPath = p.Path
+			} else {
+				cLower := strings.ToLower(c.Name)
+				for pNameLower, p := range projectsByName {
+					if strings.HasPrefix(cLower, pNameLower+"-") || strings.HasPrefix(cLower, pNameLower+"_") {
+						c.ProjectID = p.ID
+						c.ProjectName = p.Name
+						c.ProjectPath = p.Path
+						break
+					}
+				}
 			}
+		}
+
+		cLower := strings.ToLower(c.Name)
+		isDocktunCore := strings.HasPrefix(cLower, "docktun") ||
+			cLower == "cloudflared" ||
+			cLower == "wireguard" ||
+			cLower == "wg-easy" ||
+			cLower == "tailscale" ||
+			strings.EqualFold(c.ProjectName, "docktun") ||
+			strings.EqualFold(c.ProjectName, "tun")
+
+		if isDocktunCore && c.ProjectID == 0 {
+			c.ProjectName = "docktun"
 		}
 
 		if c.Running {
@@ -720,6 +743,19 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		detail.Container.ProjectID = p.ID
 		detail.Container.ProjectName = p.Name
 		detail.Container.ProjectPath = p.Path
+	} else {
+		cLower := strings.ToLower(c.Name)
+		for pNameLower, p := range projectsByName {
+			if strings.HasPrefix(cLower, pNameLower+"-") || strings.HasPrefix(cLower, pNameLower+"_") {
+				detail.ProjectID = p.ID
+				detail.ProjectName = p.Name
+				detail.ProjectPath = p.Path
+				detail.Container.ProjectID = p.ID
+				detail.Container.ProjectName = p.Name
+				detail.Container.ProjectPath = p.Path
+				break
+			}
+		}
 	}
 
 	// Auto-register project if working_dir exists on host disk
@@ -739,6 +775,20 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 			detail.Container.ProjectName = pName
 			detail.Container.ProjectPath = compDir
 		}
+	}
+
+	cLower := strings.ToLower(c.Name)
+	isDocktunCore := strings.HasPrefix(cLower, "docktun") ||
+		cLower == "cloudflared" ||
+		cLower == "wireguard" ||
+		cLower == "wg-easy" ||
+		cLower == "tailscale" ||
+		strings.EqualFold(detail.ProjectName, "docktun") ||
+		strings.EqualFold(detail.ProjectName, "tun")
+
+	if isDocktunCore && detail.ProjectID == 0 {
+		detail.ProjectName = "docktun"
+		detail.Container.ProjectName = "docktun"
 	}
 
 	if u, ok := s.getUpdateFromDB(detail.ID); ok {

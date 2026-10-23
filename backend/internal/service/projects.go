@@ -1,4 +1,4 @@
-﻿package service
+package service
 
 import (
 	"fmt"
@@ -232,7 +232,11 @@ func (s *Projects) DeployStream(id int, p Project, ref string, onDone func(strin
 }
 
 func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
-	cmdArgs := []string{"compose", "--project-directory", path}
+	cmdArgs := []string{"compose"}
+	if p, err := s.GetByID(id); err == nil && p.Name != "" {
+		cmdArgs = append(cmdArgs, "-p", p.Name)
+	}
+	cmdArgs = append(cmdArgs, "--project-directory", path)
 	cmdArgs = append(cmdArgs, args...)
 	cmd := exec.Command("docker", cmdArgs...)
 

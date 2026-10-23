@@ -958,7 +958,22 @@ const containerGroups = computed<ContainerGroup[]>(() => {
 
   const map = new Map<string, ContainerItem[]>()
   list.forEach((c) => {
-    const key = c.project_name ? c.project_name.trim() : '__standalone__'
+    let key = c.project_name ? c.project_name.trim() : ''
+    if (!key) {
+      const lower = c.name.toLowerCase()
+      if (
+        lower.startsWith('docktun') ||
+        lower === 'wireguard' ||
+        lower === 'cloudflared' ||
+        lower === 'tailscale' ||
+        lower === 'wg-easy'
+      ) {
+        key = 'docktun'
+      }
+    }
+    if (!key) {
+      key = '__standalone__'
+    }
     if (!map.has(key)) {
       map.set(key, [])
     }
@@ -980,9 +995,14 @@ const containerGroups = computed<ContainerGroup[]>(() => {
     const projectId = firstWithProj?.project_id
     const projectPath = firstWithProj?.project_path
 
+    let groupName = isStack ? key : 'Standalone Containers'
+    if (key === 'docktun') {
+      groupName = 'DockTun Core'
+    }
+
     groups.push({
       key,
-      name: isStack ? key : 'Standalone Containers',
+      name: groupName,
       isStack,
       projectId,
       projectPath,
@@ -996,8 +1016,10 @@ const containerGroups = computed<ContainerGroup[]>(() => {
     })
   })
 
-  // Sort: Stacks first (alphabetically), Standalone at the bottom
+  // Sort: DockTun Core first, other Stacks alphabetically, Standalone at the bottom
   groups.sort((a, b) => {
+    if (a.key === 'docktun') return -1
+    if (b.key === 'docktun') return 1
     if (a.isStack && !b.isStack) return -1
     if (!a.isStack && b.isStack) return 1
     return a.name.localeCompare(b.name)
@@ -2189,12 +2211,18 @@ onUnmounted(() => {
               />
               <div class="flex items-center gap-2">
                 <component
-                  :is="group.isStack ? Layers : Server"
+                  :is="group.key === 'docktun' ? ShieldCheck : group.isStack ? Layers : Server"
                   class="h-4 w-4"
-                  :class="group.isStack ? 'text-indigo-400' : 'text-slate-400'"
+                  :class="group.key === 'docktun' ? 'text-cyan-400' : group.isStack ? 'text-indigo-400' : 'text-slate-400'"
                 />
                 <span class="text-sm font-bold text-slate-100 font-mono group-hover:text-cyan-300 transition-colors">
                   {{ group.name }}
+                </span>
+                <span
+                  v-if="group.key === 'docktun'"
+                  class="rounded-full bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 font-mono"
+                >
+                  System Core
                 </span>
               </div>
             </button>
@@ -2448,10 +2476,8 @@ onUnmounted(() => {
               </span>
             </div>
 
-            <!-- Image & Command -->
+            <!-- Status & Restarts -->
             <div class="flex flex-wrap items-center gap-3 text-xs text-slate-400">
-              <span class="font-mono text-slate-300">{{ container.image }}</span>
-              <span>•</span>
               <span class="flex items-center gap-1 text-slate-400">
                 <Clock class="h-3 w-3 text-slate-500" /> {{ container.uptime || container.status }}
               </span>
