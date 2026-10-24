@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { RotateCcw, ShieldCheck, KeyRound, Globe, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
+import SystemDiagnostics from '../components/SystemDiagnostics.vue'
 import { useApi } from '../composables/useApi'
 
 const { apiFetch } = useApi()
@@ -50,6 +51,8 @@ onMounted(() => {
       <h1 class="cyber-heading text-xl lg:text-2xl">System Settings & Maintenance</h1>
       <p class="text-xs text-muted font-mono mt-1">// Manage credentials, tunnel configuration, and host utilities</p>
     </div>
+
+    <SystemDiagnostics />
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 

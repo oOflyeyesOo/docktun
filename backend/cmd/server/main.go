@@ -102,6 +102,7 @@ func main() {
     r.Post("/auth/refresh", authHandler.Refresh)
 
     r.Get("/api/status", statusHandler.Get)
+    r.Get("/api/diagnostics", handler.Diagnostics())
     r.Post("/api/control/{action}", controlHandler.Execute)
 
     r.Get("/api/logs/history", logsHandler.History)
