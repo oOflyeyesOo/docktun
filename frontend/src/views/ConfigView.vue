@@ -625,7 +625,7 @@ onUnmounted(() => {
         <button
           @click="restartTunnel"
           :disabled="saving"
-          class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-700 hover:border-amber-600 hover:bg-amber-950/40"
+          class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-700 hover:border-amber-600 hover:bg-amber-50/40"
           title="Restart Cloudflare Tunnel daemon"
         >
           <RotateCcw class="h-3.5 w-3.5" :class="saving ? 'animate-spin' : ''" />
@@ -645,7 +645,7 @@ onUnmounted(() => {
       <button
         @click="restartTunnel"
         :disabled="saving"
-        class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-700 hover:border-amber-600 hover:bg-amber-950/40"
+        class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-700 hover:border-amber-600 hover:bg-amber-50/40"
         title="Restart Cloudflare Tunnel daemon"
       >
         <RotateCcw class="h-3.5 w-3.5" :class="saving ? 'animate-spin' : ''" />
@@ -664,7 +664,7 @@ onUnmounted(() => {
     <div
       v-if="message"
       class="rounded-lg border p-3 text-xs font-mono flex items-center justify-between"
-      :class="message.type === 'success' ? 'border-emerald-500/40 bg-emerald-950/30 text-emerald-700' : 'border-red-500/40 bg-red-950/30 text-red-700'"
+      :class="message.type === 'success' ? 'border-emerald-500/40 bg-emerald-50/30 text-emerald-700' : 'border-red-500/40 bg-red-50/30 text-red-700'"
     >
       <div class="flex items-center gap-2">
         <CheckCircle2 v-if="message.type === 'success'" class="h-4 w-4 text-emerald-600" />
@@ -820,7 +820,7 @@ onUnmounted(() => {
       <!-- Diagnostic Alert Banner when Tunnel is Degraded -->
       <div
         v-if="tunnelStatus && !tunnelStatus.running"
-        class="rounded-lg border border-red-900/60 bg-red-950/40 p-4 text-xs text-red-200 flex flex-col sm:flex-row sm:items-start justify-between gap-3"
+        class="rounded-lg border border-red-900/60 bg-red-50/40 p-4 text-xs text-red-200 flex flex-col sm:flex-row sm:items-start justify-between gap-3"
       >
         <div class="flex items-start gap-2.5">
           <AlertCircle class="h-4 w-4 text-red-600 mt-0.5 shrink-0" />
@@ -828,7 +828,7 @@ onUnmounted(() => {
             <p class="font-semibold text-red-700">
               Cloudflare Tunnel Daemon is {{ tunnelStatus.status || 'degraded' }}
             </p>
-            <p v-if="tunnelStatus.last_error" class="font-mono text-[11px] text-red-700/90 bg-red-950/70 p-2.5 rounded border border-red-900/40 whitespace-pre-wrap leading-relaxed">
+            <p v-if="tunnelStatus.last_error" class="font-mono text-[11px] text-red-700/90 bg-red-50/70 p-2.5 rounded border border-red-900/40 whitespace-pre-wrap leading-relaxed">
               {{ tunnelStatus.last_error }}
             </p>
             <p v-else class="text-slate-600 text-[11px]">
@@ -839,7 +839,7 @@ onUnmounted(() => {
         <button
           @click="restartTunnel"
           :disabled="saving"
-          class="cyber-btn text-xs flex items-center gap-1.5 py-1 px-3 border-red-800 bg-red-950/60 hover:bg-red-900/70 text-red-200 shrink-0 self-start sm:self-auto"
+          class="cyber-btn text-xs flex items-center gap-1.5 py-1 px-3 border-red-800 bg-red-50/60 hover:bg-red-100/70 text-red-200 shrink-0 self-start sm:self-auto"
         >
           <RotateCcw class="h-3 w-3" :class="saving ? 'animate-spin' : ''" />
           <span>Restart Daemon</span>
@@ -967,7 +967,7 @@ onUnmounted(() => {
           <button
             @click="syncAllDnsRoutes"
             :disabled="syncLoading"
-            class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-800 bg-cyan-950/30 hover:bg-cyan-900/50"
+            class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-800 bg-cyan-50/30 hover:bg-cyan-100/50"
             title="Automatically create or verify DNS CNAME records in Cloudflare for all hostnames above"
           >
             <RefreshCw class="h-3.5 w-3.5" :class="syncLoading ? 'animate-spin' : ''" />
@@ -976,7 +976,7 @@ onUnmounted(() => {
           <button
             @click="save(true)"
             :disabled="saving"
-            class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-700 border-emerald-600 bg-emerald-950/40 hover:bg-emerald-900/50 font-medium"
+            class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-700 border-emerald-600 bg-emerald-50/40 hover:bg-emerald-100/50 font-medium"
             title="Save config and restart tunnel container so changes are active immediately"
           >
             <RotateCcw class="h-3.5 w-3.5" :class="saving ? 'animate-spin' : ''" />
@@ -1104,7 +1104,7 @@ onUnmounted(() => {
                 <span
                   v-if="probeResults[rule.hostname]"
                   class="rounded px-2 py-0.5 text-[10px] font-mono font-bold"
-                  :class="probeResults[rule.hostname].reachable ? 'bg-emerald-950/80 text-emerald-600 border border-emerald-800/50' : 'bg-red-950/80 text-red-600 border border-red-800/50'"
+                  :class="probeResults[rule.hostname].reachable ? 'bg-emerald-50/80 text-emerald-600 border border-emerald-800/50' : 'bg-red-50/80 text-red-600 border border-red-800/50'"
                 >
                   {{ probeResults[rule.hostname].reachable ? `UP ${probeResults[rule.hostname].latency_ms}ms • HTTP ${probeResults[rule.hostname].status_code}` : (probeResults[rule.hostname].error || 'TIMEOUT') }}
                 </span>
@@ -1116,7 +1116,7 @@ onUnmounted(() => {
                   type="button"
                   @click="toggleRulePause(rule)"
                   class="rounded px-2 py-0.5 text-[10px] font-mono font-semibold transition"
-                  :class="rule.service.startsWith('http_status:') ? 'bg-amber-950 text-amber-700 border border-amber-800 hover:bg-amber-900/60' : 'bg-white text-slate-600 border border-slate-200 hover:text-slate-800'"
+                  :class="rule.service.startsWith('http_status:') ? 'bg-amber-50 text-amber-700 border border-amber-800 hover:bg-amber-100/60' : 'bg-white text-slate-600 border border-slate-200 hover:text-slate-800'"
                   :title="rule.service.startsWith('http_status:') ? 'Resume routing to container' : 'Temporarily pause rule with HTTP 503 maintenance mode'"
                 >
                   {{ rule.service.startsWith('http_status:') ? '⚠ MAINTENANCE (503) • CLICK TO RESUME' : 'Pause (503 Mode)' }}
@@ -1124,7 +1124,7 @@ onUnmounted(() => {
 
                 <span
                   v-if="isDocktunRule(rule)"
-                  class="inline-flex items-center gap-1 rounded bg-cyan-950/60 border border-cyan-800/40 px-2 py-0.5 text-[10px] font-mono text-cyan-700 font-semibold"
+                  class="inline-flex items-center gap-1 rounded bg-cyan-50/60 border border-cyan-800/40 px-2 py-0.5 text-[10px] font-mono text-cyan-700 font-semibold"
                 >
                   <Sliders class="h-3 w-3" />
                   DockTun Dashboard
@@ -1192,7 +1192,7 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <div class="p-3 rounded-lg bg-indigo-950/40 border border-indigo-500/30 text-[11px] text-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2 mt-1">
+            <div class="p-3 rounded-lg bg-indigo-50/40 border border-indigo-500/30 text-[11px] text-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2 mt-1">
               <div class="flex items-center gap-2">
                 <Gamepad2 class="h-4 w-4 text-indigo-600 shrink-0" />
                 <span>
@@ -1367,12 +1367,12 @@ onUnmounted(() => {
           <span v-if="cfApiSuccess" class="text-xs text-emerald-600 font-medium">Credentials saved!</span>
         </div>
 
-        <div v-if="cfApiError" class="rounded-lg border border-red-500/40 bg-red-950/20 p-3 text-xs text-red-700 font-mono">
+        <div v-if="cfApiError" class="rounded-lg border border-red-500/40 bg-red-50/20 p-3 text-xs text-red-700 font-mono">
           {{ cfApiError }}
         </div>
 
         <!-- Automated DNS Management Actions Card -->
-        <div class="rounded-xl border border-cyan-900/40 bg-cyan-950/20 p-4 space-y-3">
+        <div class="rounded-xl border border-cyan-900/40 bg-cyan-50/20 p-4 space-y-3">
           <div class="flex items-center gap-2">
             <Zap class="h-4 w-4 text-cyan-600" />
             <h3 class="text-xs font-bold uppercase tracking-wider text-cyan-700">Automated DNS Route Management</h3>
@@ -1385,7 +1385,7 @@ onUnmounted(() => {
             <button
               @click="syncAllDnsRoutes"
               :disabled="syncLoading || (!cfApiToken && !cfApiHasToken)"
-              class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/60 disabled:opacity-50"
+              class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/60 disabled:opacity-50"
             >
               <RefreshCw class="h-3.5 w-3.5" :class="syncLoading ? 'animate-spin' : ''" />
               <span>{{ syncLoading ? 'Syncing DNS…' : 'Sync All Ingress Routes to Cloudflare DNS' }}</span>
@@ -1410,7 +1410,7 @@ onUnmounted(() => {
               <button
                 @click="createWildcardRoute"
                 :disabled="wildcardLoading || (!cfApiToken && !cfApiHasToken) || !wildcardDomainInput"
-                class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-700 border-emerald-600 bg-emerald-950/40 hover:bg-emerald-900/60 disabled:opacity-50"
+                class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-700 border-emerald-600 bg-emerald-50/40 hover:bg-emerald-100/60 disabled:opacity-50"
               >
                 <CheckCircle2 class="h-3.5 w-3.5" :class="wildcardLoading ? 'animate-spin' : ''" />
                 <span>{{ wildcardLoading ? 'Creating…' : 'Create Wildcard DNS (*.domain)' }}</span>
@@ -1454,7 +1454,7 @@ onUnmounted(() => {
         </div>
 
         <!-- Zero Trust Access Applications Card -->
-        <div class="rounded-xl border border-indigo-900/40 bg-indigo-950/20 p-4 space-y-3">
+        <div class="rounded-xl border border-indigo-900/40 bg-indigo-50/20 p-4 space-y-3">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
               <ShieldCheck class="h-4 w-4 text-indigo-600" />
@@ -1569,14 +1569,14 @@ onUnmounted(() => {
                 class="cyber-input text-xs font-mono w-full"
               />
             </div>
-            <div v-else class="text-[11px] text-indigo-700/80 bg-indigo-950/30 border border-indigo-900/40 rounded p-2">
+            <div v-else class="text-[11px] text-indigo-700/80 bg-indigo-50/30 border border-indigo-900/40 rounded p-2">
               All users who successfully log in using any Identity Provider (IdP) configured in your Cloudflare Zero Trust dashboard will be granted access.
             </div>
 
             <button
               @click="createAccessApp"
               :disabled="creatingAccessApp || !newAccessAppHost || (!cfApiToken && !cfApiHasToken)"
-              class="cyber-btn text-xs flex items-center gap-1.5 text-indigo-700 border-indigo-600 bg-indigo-950/40 hover:bg-indigo-900/60 disabled:opacity-50"
+              class="cyber-btn text-xs flex items-center gap-1.5 text-indigo-700 border-indigo-600 bg-indigo-50/40 hover:bg-indigo-100/60 disabled:opacity-50"
             >
               <ShieldCheck class="h-3.5 w-3.5" :class="creatingAccessApp ? 'animate-spin' : ''" />
               <span>{{ creatingAccessApp ? 'Applying Zero Trust…' : 'Apply Zero Trust Wall' }}</span>
@@ -1613,7 +1613,7 @@ onUnmounted(() => {
           <button
             @click="createManualBackup"
             :disabled="backupsLoading"
-            class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-700 bg-cyan-950/40 hover:bg-cyan-900/50"
+            class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-700 bg-cyan-50/40 hover:bg-cyan-100/50"
           >
             <Plus class="h-3 w-3" />
             <span>Create Snapshot</span>

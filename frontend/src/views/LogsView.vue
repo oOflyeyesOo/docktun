@@ -262,11 +262,11 @@ const filteredAuditEntries = computed(() => {
 })
 
 function getActionBadgeStyle(action: string) {
-  if (action === 'login') return 'bg-emerald-950/80 text-emerald-600 border-emerald-800/60'
-  if (action === 'logout' || action.includes('delete')) return 'bg-rose-950/80 text-rose-600 border-rose-800/60'
-  if (action.includes('project') || action.includes('compose')) return 'bg-indigo-950/80 text-indigo-700 border-indigo-800/60'
+  if (action === 'login') return 'bg-emerald-50/80 text-emerald-600 border-emerald-800/60'
+  if (action === 'logout' || action.includes('delete')) return 'bg-rose-50/80 text-rose-600 border-rose-800/60'
+  if (action.includes('project') || action.includes('compose')) return 'bg-indigo-50/80 text-indigo-700 border-indigo-800/60'
   if (action.includes('deploy') || action.includes('run')) return 'bg-violet-950/80 text-violet-300 border-violet-800/60'
-  if (action.includes('config')) return 'bg-cyan-950/80 text-cyan-600 border-cyan-800/60'
+  if (action.includes('config')) return 'bg-cyan-50/80 text-cyan-600 border-cyan-800/60'
   return 'bg-slate-100 text-slate-700 border-slate-300'
 }
 
@@ -332,7 +332,7 @@ onUnmounted(() => {
           <button
             @click="setTab('stream')"
             class="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all"
-            :class="activeTab === 'stream' ? 'bg-cyan-950/80 text-cyan-700 border border-cyan-800/80 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
+            :class="activeTab === 'stream' ? 'bg-cyan-50/80 text-cyan-700 border border-cyan-800/80 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
           >
             <ScrollText class="h-3.5 w-3.5" />
             <span>Realtime Logs</span>
@@ -340,7 +340,7 @@ onUnmounted(() => {
           <button
             @click="setTab('audit')"
             class="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all"
-            :class="activeTab === 'audit' ? 'bg-indigo-950/80 text-indigo-700 border border-indigo-800/80 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
+            :class="activeTab === 'audit' ? 'bg-indigo-50/80 text-indigo-700 border border-indigo-800/80 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
           >
             <Shield class="h-3.5 w-3.5" />
             <span>Audit Trail</span>
@@ -372,13 +372,13 @@ onUnmounted(() => {
           <span
             v-if="selectedSource === 'cloudflared'"
             class="rounded px-2.5 py-1 text-[10px] font-mono font-bold uppercase tracking-wider"
-            :class="wsStatus === 'OPEN' ? 'bg-emerald-950/80 text-emerald-600 border border-emerald-800/60' : 'bg-red-950/80 text-red-600 border border-red-800/60'"
+            :class="wsStatus === 'OPEN' ? 'bg-emerald-50/80 text-emerald-600 border border-emerald-800/60' : 'bg-red-50/80 text-red-600 border border-red-800/60'"
           >
             WS: {{ wsStatus }}
           </span>
           <span
             v-else
-            class="rounded px-2.5 py-1 text-[10px] font-mono font-bold uppercase tracking-wider bg-cyan-950/80 text-cyan-600 border border-cyan-800/60"
+            class="rounded px-2.5 py-1 text-[10px] font-mono font-bold uppercase tracking-wider bg-cyan-50/80 text-cyan-600 border border-cyan-800/60"
           >
             POLLING: 3S
           </span>
@@ -421,7 +421,7 @@ onUnmounted(() => {
             v-for="f in ['all', 'error', 'warn', 'info']"
             :key="f"
             @click="filter = f"
-            :class="filter === f ? 'bg-cyan-950/80 text-cyan-700 font-bold border-r border-slate-200' : 'text-slate-600 hover:text-slate-800 border-r border-slate-200'"
+            :class="filter === f ? 'bg-cyan-50/80 text-cyan-700 font-bold border-r border-slate-200' : 'text-slate-600 hover:text-slate-800 border-r border-slate-200'"
             class="px-3 py-1.5 text-xs uppercase tracking-wider transition-colors last:border-r-0"
           >
             {{ f }}

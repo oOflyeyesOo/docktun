@@ -184,7 +184,7 @@ onMounted(() => loadMesh())
     <div
       v-if="message"
       class="flex items-center gap-2.5 rounded-lg border px-4 py-3 text-xs"
-      :class="messageType === 'success' ? 'border-emerald-500/30 bg-emerald-950/40 text-emerald-700' : 'border-red-500/30 bg-red-950/40 text-red-700'"
+      :class="messageType === 'success' ? 'border-emerald-500/30 bg-emerald-50/40 text-emerald-700' : 'border-red-500/30 bg-red-50/40 text-red-700'"
     >
       <CheckCircle2 v-if="messageType === 'success'" class="h-4 w-4 flex-shrink-0" />
       <AlertCircle v-else class="h-4 w-4 flex-shrink-0" />
@@ -196,7 +196,7 @@ onMounted(() => loadMesh())
       <button
         @click="mode = 'public'"
         class="cyber-card-glow text-left transition"
-        :class="mode === 'public' ? 'border-cyan-500 bg-cyan-950/20' : ''"
+        :class="mode === 'public' ? 'border-cyan-500 bg-cyan-50/20' : ''"
       >
         <Globe class="mb-3 h-5 w-5 text-cyan-600" />
         <div class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-600">Public Ingress</div>
@@ -251,7 +251,7 @@ onMounted(() => loadMesh())
           <button
             @click="syncFromActiveTunnel(true)"
             :disabled="syncingTunnel"
-            class="flex items-center gap-1.5 self-start sm:self-auto rounded border border-cyan-500/40 bg-cyan-950/40 px-3 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-900/50 transition"
+            class="flex items-center gap-1.5 self-start sm:self-auto rounded border border-cyan-500/40 bg-cyan-50/40 px-3 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-100/50 transition"
             title="Auto-fill values from active Cloudflare Tunnel configuration"
           >
             <RefreshCw class="h-3.5 w-3.5" :class="syncingTunnel ? 'animate-spin' : ''" />
@@ -260,7 +260,7 @@ onMounted(() => loadMesh())
         </div>
 
         <!-- Live Tunnel Connection Badge -->
-        <div v-if="activeStatus" class="flex flex-wrap items-center gap-3 rounded-lg border border-cyan-900/40 bg-cyan-950/20 p-3 text-xs">
+        <div v-if="activeStatus" class="flex flex-wrap items-center gap-3 rounded-lg border border-cyan-900/40 bg-cyan-50/20 p-3 text-xs">
           <div class="flex items-center gap-1.5">
             <Radio class="h-3.5 w-3.5 text-emerald-600 animate-pulse" />
             <span class="text-slate-600">Tunnel Status:</span>

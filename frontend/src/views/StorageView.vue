@@ -892,7 +892,7 @@ onMounted(async () => {
         >
           <FolderOpen class="h-3.5 w-3.5 text-cyan-700" />
           <span>File Explorer</span>
-          <span class="rounded bg-indigo-950/80 px-1.5 py-0.2 text-[10px] font-mono text-cyan-700">Live</span>
+          <span class="rounded bg-indigo-50/80 px-1.5 py-0.2 text-[10px] font-mono text-cyan-700">Live</span>
         </button>
 
         <!-- 2. Volumes Tab -->
@@ -2079,7 +2079,7 @@ onMounted(async () => {
           </label>
 
           <!-- Option 5: Dangling Volumes (With Warning) -->
-          <label class="flex items-start gap-3 p-3 rounded-lg border border-amber-900/50 bg-amber-950/20 hover:bg-amber-950/30 cursor-pointer">
+          <label class="flex items-start gap-3 p-3 rounded-lg border border-amber-900/50 bg-amber-50/20 hover:bg-amber-50/30 cursor-pointer">
             <input type="checkbox" v-model="reclaimOptions.prune_volumes" class="mt-0.5 rounded bg-slate-100 text-amber-500" />
             <div>
               <span class="font-bold text-amber-700 block flex items-center gap-1.5">
@@ -2241,7 +2241,7 @@ onMounted(async () => {
         </div>
 
         <!-- High-Impact Danger Callout -->
-        <div class="p-3 rounded-lg border border-rose-500/30 bg-rose-950/20 text-xs font-mono flex items-start gap-2.5 text-rose-700">
+        <div class="p-3 rounded-lg border border-rose-500/30 bg-rose-50/20 text-xs font-mono flex items-start gap-2.5 text-rose-700">
           <ShieldAlert class="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
           <div class="leading-relaxed">
             {{ pendingDelete.warning }}

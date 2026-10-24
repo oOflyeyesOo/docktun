@@ -676,7 +676,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
       <div class="cyber-card space-y-4">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div class="flex items-center gap-3">
-            <div class="rounded-xl border border-purple-500/30 bg-purple-950/40 p-3 text-purple-600">
+            <div class="rounded-xl border border-purple-500/30 bg-purple-50/40 p-3 text-purple-600">
               <Radio class="h-6 w-6" />
             </div>
             <div>
@@ -742,7 +742,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
         <div
           v-if="tailscaleMsg"
           class="p-3 rounded-lg text-xs font-mono flex items-center gap-2"
-          :class="tailscaleMsg.type === 'success' ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-700' : 'bg-rose-950/60 border border-rose-500/40 text-rose-700'"
+          :class="tailscaleMsg.type === 'success' ? 'bg-emerald-50/60 border border-emerald-500/40 text-emerald-700' : 'bg-rose-50/60 border border-rose-500/40 text-rose-700'"
         >
           <CheckCircle2 v-if="tailscaleMsg.type === 'success'" class="h-4 w-4 shrink-0" />
           <AlertCircle v-else class="h-4 w-4 shrink-0" />
@@ -752,7 +752,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
         <!-- Needs Login Auth URL Banner -->
         <div
           v-if="tailscale?.backend_state === 'NeedsLogin' && tailscale.auth_url"
-          class="p-4 rounded-xl border border-amber-500/40 bg-amber-950/40 space-y-3"
+          class="p-4 rounded-xl border border-amber-500/40 bg-amber-50/40 space-y-3"
         >
           <div class="flex items-center gap-2 text-amber-700 font-semibold text-xs">
             <KeyRound class="h-4 w-4 text-amber-600" /> Complete Node Authentication
@@ -954,7 +954,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 <td class="py-2.5 px-3 text-right">
                   <button
                     @click="removeExposure(c)"
-                    class="cyber-btn-sm text-rose-700 border-rose-500/30 hover:bg-rose-950/60"
+                    class="cyber-btn-sm text-rose-700 border-rose-500/30 hover:bg-rose-50/60"
                   >
                     Unexpose
                   </button>
@@ -1013,7 +1013,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
       <div class="cyber-card space-y-4">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div class="flex items-center gap-3">
-            <div class="rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-3 text-emerald-600">
+            <div class="rounded-xl border border-emerald-500/30 bg-emerald-50/40 p-3 text-emerald-600">
               <Shield class="h-6 w-6" />
             </div>
             <div>
@@ -1168,7 +1168,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 <td class="py-2.5 px-3 text-right">
                   <button
                     @click="removeExposure(c)"
-                    class="cyber-btn-sm text-rose-700 border-rose-500/30 hover:bg-rose-950/60"
+                    class="cyber-btn-sm text-rose-700 border-rose-500/30 hover:bg-rose-50/60"
                   >
                     Unexpose
                   </button>
@@ -1237,7 +1237,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
               </button>
               <button
                 @click="deleteWireguardPeer(peer.name)"
-                class="cyber-btn-secondary text-xs p-1.5 text-rose-600 hover:bg-rose-950/60"
+                class="cyber-btn-secondary text-xs p-1.5 text-rose-600 hover:bg-rose-50/60"
                 title="Delete peer"
               >
                 <Trash2 class="h-3.5 w-3.5" />
@@ -1285,7 +1285,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 type="button"
                 @click="newPeerAllowedIPs = 'containers'"
                 class="p-2.5 rounded-lg border text-left transition"
-                :class="newPeerAllowedIPs === 'containers' ? 'border-emerald-500 bg-emerald-950/40 text-emerald-700' : 'border-slate-200 bg-white text-slate-600'"
+                :class="newPeerAllowedIPs === 'containers' ? 'border-emerald-500 bg-emerald-50/40 text-emerald-700' : 'border-slate-200 bg-white text-slate-600'"
               >
                 <div class="font-semibold text-xs">Containers & LAN</div>
                 <div class="text-[10px] text-slate-500">Split tunnel for Docker containers</div>
@@ -1295,7 +1295,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 type="button"
                 @click="newPeerAllowedIPs = 'all'"
                 class="p-2.5 rounded-lg border text-left transition"
-                :class="newPeerAllowedIPs === 'all' ? 'border-emerald-500 bg-emerald-950/40 text-emerald-700' : 'border-slate-200 bg-white text-slate-600'"
+                :class="newPeerAllowedIPs === 'all' ? 'border-emerald-500 bg-emerald-50/40 text-emerald-700' : 'border-slate-200 bg-white text-slate-600'"
               >
                 <div class="font-semibold text-xs">Full Tunnel</div>
                 <div class="text-[10px] text-slate-500">Routes 0.0.0.0/0 (all traffic)</div>
@@ -1450,7 +1450,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 type="button"
                 @click="exposeForm.mode = 'private'"
                 class="p-2.5 rounded-lg border text-left transition"
-                :class="exposeForm.mode === 'private' ? 'border-purple-500 bg-purple-950/40 text-purple-700' : 'border-slate-200 bg-white text-slate-600'"
+                :class="exposeForm.mode === 'private' ? 'border-purple-500 bg-purple-50/40 text-purple-700' : 'border-slate-200 bg-white text-slate-600'"
               >
                 <div class="font-semibold text-xs">Private (VPN / Mesh)</div>
                 <div class="text-[10px] text-slate-500">Tailscale or WireGuard</div>
@@ -1460,7 +1460,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 type="button"
                 @click="exposeForm.mode = 'public'"
                 class="p-2.5 rounded-lg border text-left transition"
-                :class="exposeForm.mode === 'public' ? 'border-orange-500 bg-orange-950/40 text-orange-700' : 'border-slate-200 bg-white text-slate-600'"
+                :class="exposeForm.mode === 'public' ? 'border-orange-500 bg-orange-50/40 text-orange-700' : 'border-slate-200 bg-white text-slate-600'"
               >
                 <div class="font-semibold text-xs">Public Edge Route</div>
                 <div class="text-[10px] text-slate-500">Cloudflare Tunnel Domain</div>
@@ -1591,7 +1591,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                     class="cyber-input text-xs font-mono w-full"
                   />
                 </div>
-                <div v-else class="text-[10px] text-indigo-700/80 bg-indigo-950/30 border border-indigo-900/40 rounded p-2">
+                <div v-else class="text-[10px] text-indigo-700/80 bg-indigo-50/30 border border-indigo-900/40 rounded p-2">
                   All users who successfully authenticate with your Cloudflare Zero Trust Identity Provider will be allowed.
                 </div>
               </div>

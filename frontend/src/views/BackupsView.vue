@@ -140,12 +140,12 @@ onMounted(() => {
     </div>
 
     <!-- Feedback Banners -->
-    <div v-if="message" class="rounded-lg border border-emerald-500/30 bg-emerald-950/40 px-4 py-3 text-xs text-emerald-700 flex items-center gap-2">
+    <div v-if="message" class="rounded-lg border border-emerald-500/30 bg-emerald-50/40 px-4 py-3 text-xs text-emerald-700 flex items-center gap-2">
       <Check class="h-4 w-4 flex-shrink-0" />
       <span>{{ message }}</span>
     </div>
 
-    <div v-if="errorMessage" class="rounded-lg border border-red-500/30 bg-red-950/40 px-4 py-3 text-xs text-red-700 flex items-center gap-2">
+    <div v-if="errorMessage" class="rounded-lg border border-red-500/30 bg-red-50/40 px-4 py-3 text-xs text-red-700 flex items-center gap-2">
       <AlertCircle class="h-4 w-4 flex-shrink-0" />
       <span>{{ errorMessage }}</span>
     </div>

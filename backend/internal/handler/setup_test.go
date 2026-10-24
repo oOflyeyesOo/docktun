@@ -64,7 +64,7 @@ func TestSetupRoutes(t *testing.T) {
 	if w.Code != http.StatusConflict {
 		t.Fatal(w.Code)
 	}
-	req := httptest.NewRequest("POST", "/api/setup/reconfigure", strings.NewReader(`{}`))
+	req := httptest.NewRequest("POST", "/api/setup/reconfigure", strings.NewReader(`{"admin_username":"owner"}`))
 	req.Header.Set("Authorization", "Bearer "+result.AccessToken)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)

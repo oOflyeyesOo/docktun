@@ -28,15 +28,16 @@ func (h *Setup) Status(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Setup) Details(w http.ResponseWriter, r *http.Request) {
 	id, _ := r.Context().Value("user_id").(int)
-	status, err := h.svc.GetStatus(false)
 	if id <= 0 {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+	status, err := h.svc.GetStatus(false)
 	if err != nil {
 		setupError(w, err)
 		return
 	}
+	status.AdminUsername, _ = r.Context().Value("username").(string)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)

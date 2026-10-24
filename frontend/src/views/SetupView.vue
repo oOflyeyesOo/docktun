@@ -265,7 +265,7 @@ onMounted(() => {
         <!-- Error Banner -->
         <div
           v-if="errorMessage"
-          class="p-3.5 rounded-lg border border-rose-500/50 bg-rose-950/20 text-rose-700 text-xs font-mono flex items-center gap-2"
+          class="p-3.5 rounded-lg border border-rose-500/50 bg-rose-50/20 text-rose-700 text-xs font-mono flex items-center gap-2"
         >
           <AlertCircle class="h-4 w-4 shrink-0 text-rose-600" />
           <span>{{ errorMessage }}</span>
@@ -288,9 +288,9 @@ onMounted(() => {
               class="h-6 w-6 rounded-full flex items-center justify-center font-mono text-[11px] border shrink-0 transition-all"
               :class="
                 step === st.num
-                  ? 'border-cyan-400 bg-cyan-950 text-cyan-700 shadow-sm'
+                  ? 'border-cyan-400 bg-cyan-50 text-cyan-700 shadow-sm'
                   : step > st.num
-                  ? 'border-emerald-500 bg-emerald-950 text-emerald-600'
+                  ? 'border-emerald-500 bg-emerald-50 text-emerald-600'
                   : 'border-slate-200 bg-white text-slate-600'
               "
             >
@@ -322,7 +322,7 @@ onMounted(() => {
           <!-- Notice if admin already set in env -->
           <div
             v-if="systemStatus.has_admin_user"
-            class="p-3 rounded-lg border border-indigo-500/40 bg-indigo-950/20 text-indigo-700 text-xs font-mono flex items-center gap-2"
+            class="p-3 rounded-lg border border-indigo-500/40 bg-indigo-50/20 text-indigo-700 text-xs font-mono flex items-center gap-2"
           >
             <CheckCircle2 class="h-4 w-4 text-indigo-600 shrink-0" />
             <span>Account credentials are managed in Settings. This wizard only changes configuration.</span>
@@ -404,7 +404,7 @@ onMounted(() => {
               class="flex flex-col text-left p-3.5 rounded-xl border transition-all cursor-pointer relative"
               :class="
                 form.tunnel_type === 'cloudflare'
-                  ? 'border-cyan-500 bg-cyan-950/40 text-cyan-700 shadow-md ring-1 ring-cyan-500'
+                  ? 'border-cyan-500 bg-cyan-50/40 text-cyan-700 shadow-md ring-1 ring-cyan-500'
                   : 'border-slate-200 bg-white/40 text-slate-600 hover:border-slate-300'
               "
             >
@@ -424,7 +424,7 @@ onMounted(() => {
               class="flex flex-col text-left p-3.5 rounded-xl border transition-all cursor-pointer relative"
               :class="
                 form.tunnel_type === 'wireguard'
-                  ? 'border-indigo-500 bg-indigo-950/40 text-indigo-700 shadow-md ring-1 ring-indigo-500'
+                  ? 'border-indigo-500 bg-indigo-50/40 text-indigo-700 shadow-md ring-1 ring-indigo-500'
                   : 'border-slate-200 bg-white/40 text-slate-600 hover:border-slate-300'
               "
             >
@@ -687,7 +687,7 @@ onMounted(() => {
               class="flex items-center justify-between p-3 rounded-lg border transition-all cursor-pointer"
               :class="
                 form.selected_container_ids[c.id]
-                  ? 'border-cyan-500/60 bg-cyan-950/20'
+                  ? 'border-cyan-500/60 bg-cyan-50/20'
                   : 'border-slate-200 bg-white/30 opacity-70 hover:opacity-100'
               "
               @click="form.selected_container_ids[c.id] = !form.selected_container_ids[c.id]"
@@ -799,7 +799,7 @@ onMounted(() => {
           </div>
 
           <!-- Submitting Progress Banner -->
-          <div v-if="submitting" class="p-4 rounded-xl border border-cyan-500/50 bg-cyan-950/30 text-cyan-700 flex items-center gap-3 text-xs font-mono">
+          <div v-if="submitting" class="p-4 rounded-xl border border-cyan-500/50 bg-cyan-50/30 text-cyan-700 flex items-center gap-3 text-xs font-mono">
             <RotateCcw class="h-5 w-5 animate-spin text-cyan-600 shrink-0" />
             <div class="space-y-0.5">
               <div class="font-bold">INITIALIZING DOCKTUN...</div>

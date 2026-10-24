@@ -1910,7 +1910,7 @@ onUnmounted(() => {
       <div class="flex flex-wrap items-center gap-2">
         <button
           @click="openLaunchModal"
-          class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-700 border-cyan-500/50 bg-cyan-950/40 hover:bg-cyan-900/60 shadow-sm"
+          class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-700 border-cyan-500/50 bg-cyan-50/40 hover:bg-cyan-100/60 shadow-sm"
           title="Run a new Docker container or deploy a Compose stack"
         >
           <Plus class="h-3.5 w-3.5 text-cyan-600" />
@@ -1920,7 +1920,7 @@ onUnmounted(() => {
         <button
           @click="checkAllContainerUpdates"
           :disabled="checkingUpdates || loading"
-          class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-700 hover:border-amber-500/60 hover:bg-amber-950/30"
+          class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-700 hover:border-amber-500/60 hover:bg-amber-50/30"
           title="Check remote registries for newer image tags on all containers"
         >
           <Sparkles class="h-3.5 w-3.5 text-amber-600" :class="checkingUpdates ? 'animate-spin' : ''" />
@@ -2039,7 +2039,7 @@ onUnmounted(() => {
         <button
           @click="filter = 'updates'"
           class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors flex items-center gap-1.5"
-          :class="filter === 'updates' ? 'bg-amber-950/70 text-amber-700 border border-amber-500/40 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
+          :class="filter === 'updates' ? 'bg-amber-50/70 text-amber-700 border border-amber-500/40 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
         >
           <ArrowUpCircle class="h-3 w-3 text-amber-600" />
           <span>Updates</span>
@@ -2065,7 +2065,7 @@ onUnmounted(() => {
         <button
           @click="toggleGroupByStack"
           class="cyber-btn-secondary flex items-center gap-1.5 text-xs py-1.5 px-3"
-          :class="groupByStack ? 'border-indigo-500/60 bg-indigo-950/40 text-indigo-700' : 'text-slate-600 hover:text-slate-800'"
+          :class="groupByStack ? 'border-indigo-500/60 bg-indigo-50/40 text-indigo-700' : 'text-slate-600 hover:text-slate-800'"
           title="Toggle grouping containers by Compose Stacks"
         >
           <Layers class="h-3.5 w-3.5" :class="groupByStack ? 'text-indigo-600' : 'text-slate-500'" />
@@ -2135,7 +2135,7 @@ onUnmounted(() => {
           <button
             @click="runBatchAction('start')"
             :disabled="batchLoading"
-            class="cyber-btn flex items-center gap-1.5 text-xs text-emerald-700 border-emerald-500/40 hover:bg-emerald-950/40"
+            class="cyber-btn flex items-center gap-1.5 text-xs text-emerald-700 border-emerald-500/40 hover:bg-emerald-50/40"
             title="Start selected containers"
           >
             <Play class="h-3 w-3 fill-current" />
@@ -2144,7 +2144,7 @@ onUnmounted(() => {
           <button
             @click="runBatchAction('stop')"
             :disabled="batchLoading"
-            class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-700 hover:border-amber-500/40 hover:bg-amber-950/40"
+            class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-700 hover:border-amber-500/40 hover:bg-amber-50/40"
             title="Stop selected containers"
           >
             <Square class="h-3 w-3 fill-current" />
@@ -2299,7 +2299,7 @@ onUnmounted(() => {
               <button
                 @click="runStackAction(group.projectId, 'up')"
                 :disabled="stackActionLoading[group.projectId]"
-                class="cyber-btn flex items-center gap-1 text-[11px] py-1 px-2.5 text-emerald-700 border-emerald-500/40 hover:bg-emerald-950/40"
+                class="cyber-btn flex items-center gap-1 text-[11px] py-1 px-2.5 text-emerald-700 border-emerald-500/40 hover:bg-emerald-50/40"
                 title="docker compose up -d"
               >
                 <Play class="h-3 w-3 fill-current" />
@@ -2319,7 +2319,7 @@ onUnmounted(() => {
               <button
                 @click="openDeployPrompt(group.projectId, group.name)"
                 :disabled="stackActionLoading[group.projectId]"
-                class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2.5 text-indigo-700 hover:border-indigo-500/50 hover:bg-indigo-950/30"
+                class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2.5 text-indigo-700 hover:border-indigo-500/50 hover:bg-indigo-50/30"
                 title="Git pull & docker compose up --build"
               >
                 <Rocket class="h-3 w-3" />
@@ -2329,7 +2329,7 @@ onUnmounted(() => {
               <button
                 @click="runStackAction(group.projectId, 'down')"
                 :disabled="stackActionLoading[group.projectId]"
-                class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2 text-rose-600 hover:border-rose-500/50 hover:bg-rose-950/30"
+                class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2 text-rose-600 hover:border-rose-500/50 hover:bg-rose-50/30"
                 title="docker compose down"
               >
                 <Square class="h-3 w-3 fill-current" />
@@ -2366,7 +2366,7 @@ onUnmounted(() => {
             v-for="container in group.containers"
             :key="container.id"
             class="cyber-card transition-all duration-200 hover:border-slate-300"
-            :class="selectedContainerIds[container.id] ? 'border-cyan-500/60 bg-cyan-950/15' : ''"
+            :class="selectedContainerIds[container.id] ? 'border-cyan-500/60 bg-cyan-50/15' : ''"
           >
             <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <!-- Left: Checkbox + Identity & Status (Clickable to open Control Center) -->
@@ -2541,7 +2541,7 @@ onUnmounted(() => {
             <!-- Full Control Center Trigger Button -->
             <button
               @click="openContainerModal(container, 'overview')"
-              class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-700 border-cyan-600/50 bg-cyan-950/40 hover:bg-cyan-900/50"
+              class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-700 border-cyan-600/50 bg-cyan-50/40 hover:bg-cyan-100/50"
               title="Open Container Control Center (Overview, Compose, .env, Files, Logs)"
             >
               <Sliders class="h-3.5 w-3.5" />
@@ -2575,7 +2575,7 @@ onUnmounted(() => {
               v-if="!container.running"
               @click="runAction(container, 'start')"
               :disabled="!!actionLoading[container.id]"
-              class="cyber-btn flex items-center gap-1.5 text-xs text-emerald-700 hover:border-emerald-600 hover:bg-emerald-950/40"
+              class="cyber-btn flex items-center gap-1.5 text-xs text-emerald-700 hover:border-emerald-600 hover:bg-emerald-50/40"
             >
               <Play class="h-3.5 w-3.5 fill-current" />
               <span>{{ actionLoading[container.id] === 'start' ? 'Starting…' : 'Start' }}</span>
@@ -2585,7 +2585,7 @@ onUnmounted(() => {
               v-if="container.running"
               @click="runAction(container, 'stop')"
               :disabled="!!actionLoading[container.id]"
-              class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-700 hover:border-amber-600 hover:bg-amber-950/40"
+              class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-700 hover:border-amber-600 hover:bg-amber-50/40"
             >
               <Square class="h-3.5 w-3.5 fill-current" />
               <span>{{ actionLoading[container.id] === 'stop' ? 'Stopping…' : 'Stop' }}</span>
@@ -2809,7 +2809,7 @@ onUnmounted(() => {
                       class="cyber-input text-xs font-mono"
                     />
                   </div>
-                  <div v-else class="text-[10px] text-indigo-700/80 bg-indigo-950/30 border border-indigo-900/40 rounded p-2">
+                  <div v-else class="text-[10px] text-indigo-700/80 bg-indigo-50/30 border border-indigo-900/40 rounded p-2">
                     All users who successfully authenticate with your Cloudflare Zero Trust Identity Provider will be allowed.
                   </div>
                 </div>
@@ -2872,7 +2872,7 @@ onUnmounted(() => {
               <button
                 @click="saveExposure(container)"
                 :disabled="exposeSaving[container.id]"
-                class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-700 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/50"
+                class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
               >
                 <ShieldCheck class="h-3.5 w-3.5" />
                 <span>{{ exposeSaving[container.id] ? 'Saving & Applying…' : 'Save & Apply Ingress' }}</span>
@@ -2972,7 +2972,7 @@ onUnmounted(() => {
           <button
             @click="handleTabChange('overview')"
             class="flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium transition-colors whitespace-nowrap"
-            :class="selectedTab === 'overview' ? 'bg-cyan-950/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
+            :class="selectedTab === 'overview' ? 'bg-cyan-50/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
           >
             <Activity class="h-3.5 w-3.5" />
             <span>Overview</span>
@@ -2981,7 +2981,7 @@ onUnmounted(() => {
           <button
             @click="handleTabChange('access')"
             class="flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium transition-colors whitespace-nowrap"
-            :class="selectedTab === 'access' ? 'bg-cyan-950/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
+            :class="selectedTab === 'access' ? 'bg-cyan-50/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
           >
             <Globe class="h-3.5 w-3.5" />
             <span>Access & Networks</span>
@@ -2995,13 +2995,13 @@ onUnmounted(() => {
           <button
             @click="handleTabChange('compose')"
             class="flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium transition-colors whitespace-nowrap"
-            :class="selectedTab === 'compose' ? 'bg-cyan-950/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
+            :class="selectedTab === 'compose' ? 'bg-cyan-50/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
           >
             <FileCode class="h-3.5 w-3.5" />
             <span>Compose</span>
             <span
               v-if="selectedContainer.project_id"
-              class="rounded bg-cyan-900/60 px-1 py-0.2 text-[9px] text-cyan-700 font-mono"
+              class="rounded bg-cyan-100/60 px-1 py-0.2 text-[9px] text-cyan-700 font-mono"
             >
               stack
             </span>
@@ -3010,7 +3010,7 @@ onUnmounted(() => {
           <button
             @click="handleTabChange('env')"
             class="flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium transition-colors whitespace-nowrap"
-            :class="selectedTab === 'env' ? 'bg-cyan-950/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
+            :class="selectedTab === 'env' ? 'bg-cyan-50/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
           >
             <Sliders class="h-3.5 w-3.5" />
             <span>Environment (.env)</span>
@@ -3019,7 +3019,7 @@ onUnmounted(() => {
           <button
             @click="handleTabChange('files')"
             class="flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium transition-colors whitespace-nowrap"
-            :class="selectedTab === 'files' ? 'bg-cyan-950/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
+            :class="selectedTab === 'files' ? 'bg-cyan-50/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
           >
             <FolderOpen class="h-3.5 w-3.5" />
             <span>Files & Storage</span>
@@ -3028,7 +3028,7 @@ onUnmounted(() => {
           <button
             @click="handleTabChange('logs')"
             class="flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium transition-colors whitespace-nowrap"
-            :class="selectedTab === 'logs' ? 'bg-cyan-950/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
+            :class="selectedTab === 'logs' ? 'bg-cyan-50/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
           >
             <ScrollText class="h-3.5 w-3.5" />
             <span>Realtime Logs</span>
@@ -3037,7 +3037,7 @@ onUnmounted(() => {
           <button
             @click="handleTabChange('exec')"
             class="flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium transition-colors whitespace-nowrap"
-            :class="selectedTab === 'exec' ? 'bg-cyan-950/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
+            :class="selectedTab === 'exec' ? 'bg-cyan-50/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
           >
             <Terminal class="h-3.5 w-3.5" />
             <span>Terminal (Exec)</span>
@@ -3134,7 +3134,7 @@ onUnmounted(() => {
                     v-if="selectedContainer.update_available"
                     @click="confirmUpdate(selectedContainer)"
                     :disabled="!!updatingContainer[selectedContainer.id]"
-                    class="cyber-btn flex items-center gap-1.5 text-xs text-amber-200 border-amber-500 bg-amber-950/70 hover:bg-amber-900"
+                    class="cyber-btn flex items-center gap-1.5 text-xs text-amber-200 border-amber-500 bg-amber-50/70 hover:bg-amber-100"
                   >
                     <ArrowUpCircle class="h-3.5 w-3.5 text-amber-600" :class="updatingContainer[selectedContainer.id] ? 'animate-spin' : ''" />
                     <span>{{ updatingContainer[selectedContainer.id] ? 'Updating…' : 'Update to Latest' }}</span>
@@ -3432,7 +3432,7 @@ onUnmounted(() => {
               </div>
 
               <!-- DNS Requirement Note for Public Mode -->
-              <div v-if="getExpose(selectedContainer.id).mode === 'public'" class="rounded-lg border border-cyan-900/40 bg-cyan-950/20 p-3.5 text-xs text-slate-600 space-y-1.5">
+              <div v-if="getExpose(selectedContainer.id).mode === 'public'" class="rounded-lg border border-cyan-900/40 bg-cyan-50/20 p-3.5 text-xs text-slate-600 space-y-1.5">
                 <div class="flex items-center gap-1.5 text-cyan-700 font-semibold">
                   <Globe class="h-4 w-4" />
                   <span>Cloudflare DNS Requirement</span>
@@ -3443,7 +3443,7 @@ onUnmounted(() => {
               </div>
 
               <!-- Active Public Link preview -->
-              <div v-if="getExpose(selectedContainer.id).mode === 'public' && getExpose(selectedContainer.id).hostname" class="rounded border border-cyan-900/50 bg-cyan-950/30 p-3 flex items-center justify-between">
+              <div v-if="getExpose(selectedContainer.id).mode === 'public' && getExpose(selectedContainer.id).hostname" class="rounded border border-cyan-900/50 bg-cyan-50/30 p-3 flex items-center justify-between">
                 <div class="flex items-center gap-2 text-xs">
                   <span class="text-slate-600">Live URL:</span>
                   <a
@@ -3486,7 +3486,7 @@ onUnmounted(() => {
                 <button
                   @click="saveExposure(selectedContainer)"
                   :disabled="exposeSaving[selectedContainer.id]"
-                  class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-700 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/50 self-start sm:self-auto"
+                  class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50 self-start sm:self-auto"
                 >
                   <RotateCcw v-if="exposeSaving[selectedContainer.id]" class="h-3.5 w-3.5 animate-spin" />
                   <ShieldCheck v-else class="h-3.5 w-3.5" />
@@ -3523,7 +3523,7 @@ onUnmounted(() => {
                     <button
                       @click="runStackAction(selectedContainer.project_id, 'up')"
                       :disabled="!!stackActionLoading[selectedContainer.project_id]"
-                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-emerald-600 hover:border-emerald-500/60 hover:bg-emerald-950/30"
+                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-emerald-600 hover:border-emerald-500/60 hover:bg-emerald-50/30"
                       title="docker compose up -d"
                     >
                       <Play class="h-3 w-3 fill-current" />
@@ -3533,7 +3533,7 @@ onUnmounted(() => {
                     <button
                       @click="runStackAction(selectedContainer.project_id, 'down')"
                       :disabled="!!stackActionLoading[selectedContainer.project_id]"
-                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-amber-600 hover:border-amber-500/60 hover:bg-amber-950/30"
+                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-amber-600 hover:border-amber-500/60 hover:bg-amber-50/30"
                       title="docker compose down"
                     >
                       <Square class="h-3 w-3 fill-current" />
@@ -3543,7 +3543,7 @@ onUnmounted(() => {
                     <button
                       @click="runStackAction(selectedContainer.project_id, 'restart')"
                       :disabled="!!stackActionLoading[selectedContainer.project_id]"
-                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-cyan-700 hover:border-cyan-500/60 hover:bg-cyan-950/30"
+                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-cyan-700 hover:border-cyan-500/60 hover:bg-cyan-50/30"
                       title="docker compose restart"
                     >
                       <RotateCcw class="h-3 w-3" :class="stackActionLoading[selectedContainer.project_id] ? 'animate-spin' : ''" />
@@ -3572,7 +3572,7 @@ onUnmounted(() => {
                     <button
                       @click="saveContainerCompose(false)"
                       :disabled="composeSaving"
-                      class="cyber-btn text-xs flex items-center gap-1 text-cyan-700 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/50"
+                      class="cyber-btn text-xs flex items-center gap-1 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
                       title="Save edits to docker-compose.yml"
                     >
                       <Save class="h-3 w-3" />
@@ -3654,7 +3654,7 @@ onUnmounted(() => {
                 <button
                   @click="scaffoldProject"
                   :disabled="projectScaffolding"
-                  class="cyber-btn flex items-center gap-2 mx-auto text-xs text-cyan-700 border-cyan-500 bg-cyan-950/60 hover:bg-cyan-900/60 px-5 py-2.5"
+                  class="cyber-btn flex items-center gap-2 mx-auto text-xs text-cyan-700 border-cyan-500 bg-cyan-50/60 hover:bg-cyan-100/60 px-5 py-2.5"
                 >
                   <RotateCcw v-if="projectScaffolding" class="h-4 w-4 animate-spin" />
                   <Plus v-else class="h-4 w-4" />
@@ -3695,7 +3695,7 @@ onUnmounted(() => {
                   <button
                     @click="saveContainerEnv(false)"
                     :disabled="envSaving"
-                    class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/50"
+                    class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
                   >
                     <Save class="h-3.5 w-3.5" />
                     <span>Save</span>
@@ -3703,7 +3703,7 @@ onUnmounted(() => {
                   <button
                     @click="saveContainerEnv(true)"
                     :disabled="envSaving"
-                    class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-700 border-emerald-600 bg-emerald-950/40 hover:bg-emerald-900/50"
+                    class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-700 border-emerald-600 bg-emerald-50/40 hover:bg-emerald-100/50"
                   >
                     <RotateCcw class="h-3.5 w-3.5" />
                     <span>Save & Restart</span>
@@ -3732,7 +3732,7 @@ onUnmounted(() => {
               <button
                 @click="scaffoldProject"
                 :disabled="projectScaffolding"
-                class="cyber-btn flex items-center gap-2 mx-auto text-xs text-cyan-700 border-cyan-500 bg-cyan-950/60 px-5 py-2.5"
+                class="cyber-btn flex items-center gap-2 mx-auto text-xs text-cyan-700 border-cyan-500 bg-cyan-50/60 px-5 py-2.5"
               >
                 <span>Generate Project & .env</span>
               </button>
@@ -3907,7 +3907,7 @@ onUnmounted(() => {
                 <button
                   @click="scaffoldProject"
                   :disabled="projectScaffolding"
-                  class="cyber-btn text-xs text-cyan-700 border-cyan-500 bg-cyan-950/60"
+                  class="cyber-btn text-xs text-cyan-700 border-cyan-500 bg-cyan-50/60"
                 >
                   Generate Project File Tree
                 </button>
@@ -3925,7 +3925,7 @@ onUnmounted(() => {
                   <ScrollText class="h-4 w-4 text-cyan-600" />
                   <span class="text-sm font-bold text-slate-900 font-mono">{{ selectedContainer.name }}</span>
                   <span class="rounded bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600 font-mono">{{ selectedContainer.image }}</span>
-                  <span class="inline-flex items-center gap-1 rounded bg-emerald-950/60 border border-emerald-800/50 px-2 py-0.5 text-[10px] text-emerald-600 font-medium">
+                  <span class="inline-flex items-center gap-1 rounded bg-emerald-50/60 border border-emerald-800/50 px-2 py-0.5 text-[10px] text-emerald-600 font-medium">
                     <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                     Isolated Service Logs
                   </span>
@@ -4069,7 +4069,7 @@ onUnmounted(() => {
               <button
                 @click="runContainerExec"
                 :disabled="execLoading || !execCmd.trim()"
-                class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-700 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/50"
+                class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
               >
                 <RotateCcw v-if="execLoading" class="h-3.5 w-3.5 animate-spin" />
                 <Play v-else class="h-3.5 w-3.5 fill-current" />
@@ -4093,7 +4093,7 @@ onUnmounted(() => {
                 <span
                   v-if="execExitCode !== null"
                   class="rounded px-2 py-0.5 text-[10px] font-bold"
-                  :class="execExitCode === 0 ? 'bg-emerald-950 text-emerald-600 border border-emerald-800' : 'bg-red-950 text-red-600 border border-red-800'"
+                  :class="execExitCode === 0 ? 'bg-emerald-50 text-emerald-600 border border-emerald-800' : 'bg-red-50 text-red-600 border border-red-800'"
                 >
                   Exit Code: {{ execExitCode }}
                 </span>
@@ -4247,7 +4247,7 @@ onUnmounted(() => {
           <button
             @click="launchTab = 'compose'"
             class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition shrink-0"
-            :class="launchTab === 'compose' ? 'bg-cyan-950/80 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
+            :class="launchTab === 'compose' ? 'bg-cyan-50/80 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
           >
             <FileCode class="h-3.5 w-3.5" />
             <span>Docker Compose (YAML)</span>
@@ -4255,7 +4255,7 @@ onUnmounted(() => {
           <button
             @click="launchTab = 'templates'"
             class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition shrink-0"
-            :class="launchTab === 'templates' ? 'bg-cyan-950/80 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
+            :class="launchTab === 'templates' ? 'bg-cyan-50/80 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
           >
             <Sparkles class="h-3.5 w-3.5 text-amber-600" />
             <span>App Templates</span>
@@ -4263,7 +4263,7 @@ onUnmounted(() => {
           <button
             @click="launchTab = 'dockerrun'"
             class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition shrink-0"
-            :class="launchTab === 'dockerrun' ? 'bg-cyan-950/80 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
+            :class="launchTab === 'dockerrun' ? 'bg-cyan-50/80 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
           >
             <Terminal class="h-3.5 w-3.5" />
             <span>Docker Run Command</span>
@@ -4271,7 +4271,7 @@ onUnmounted(() => {
           <button
             @click="launchTab = 'gitstack'"
             class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition shrink-0"
-            :class="launchTab === 'gitstack' ? 'bg-cyan-950/80 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
+            :class="launchTab === 'gitstack' ? 'bg-cyan-50/80 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
           >
             <GitBranch class="h-3.5 w-3.5" />
             <span>Git / Remote Stack</span>
@@ -4379,7 +4379,7 @@ onUnmounted(() => {
             <button
               @click="deployComposeStack"
               :disabled="composeDeploying || !composeDeployForm.name.trim() || !composeDeployForm.compose_content.trim()"
-              class="cyber-btn flex items-center gap-2 text-xs text-cyan-700 border-cyan-500/80 bg-cyan-950/40 hover:bg-cyan-900/60 font-bold"
+              class="cyber-btn flex items-center gap-2 text-xs text-cyan-700 border-cyan-500/80 bg-cyan-50/40 hover:bg-cyan-100/60 font-bold"
             >
               <RotateCcw v-if="composeDeploying" class="h-3.5 w-3.5 animate-spin" />
               <Rocket v-else class="h-3.5 w-3.5" />
@@ -4426,7 +4426,7 @@ onUnmounted(() => {
               <div class="space-y-2">
                 <div class="flex items-start justify-between">
                   <div class="flex items-center gap-2">
-                    <div class="rounded-lg bg-cyan-950/80 border border-cyan-800/40 p-2 text-cyan-700">
+                    <div class="rounded-lg bg-cyan-50/80 border border-cyan-800/40 p-2 text-cyan-700">
                       <component :is="tmpl.iconComponent" class="h-4 w-4" />
                     </div>
                     <div>
@@ -4460,7 +4460,7 @@ onUnmounted(() => {
                 <button
                   type="button"
                   @click="selectTemplate(tmpl)"
-                  class="cyber-btn text-[11px] py-1 px-2.5 text-cyan-700 border-cyan-600 bg-cyan-950/30 hover:bg-cyan-900/60 flex items-center gap-1.5"
+                  class="cyber-btn text-[11px] py-1 px-2.5 text-cyan-700 border-cyan-600 bg-cyan-50/30 hover:bg-cyan-100/60 flex items-center gap-1.5"
                 >
                   <Rocket class="h-3 w-3" />
                   <span>Use Template</span>
@@ -4530,7 +4530,7 @@ onUnmounted(() => {
             <button
               @click="runDockerCommand"
               :disabled="dockerRunLoading || !dockerRunCmd.trim()"
-              class="cyber-btn flex items-center gap-2 text-xs text-cyan-700 border-cyan-500/80 bg-cyan-950/40 hover:bg-cyan-900/60 font-bold"
+              class="cyber-btn flex items-center gap-2 text-xs text-cyan-700 border-cyan-500/80 bg-cyan-50/40 hover:bg-cyan-100/60 font-bold"
             >
               <RotateCcw v-if="dockerRunLoading" class="h-3.5 w-3.5 animate-spin" />
               <Play v-else class="h-3.5 w-3.5 fill-current" />
@@ -4569,7 +4569,7 @@ onUnmounted(() => {
             <button
               @click="submitNewProject"
               :disabled="newProjectSaving || !newProjectForm.name.trim() || !newProjectForm.path.trim()"
-              class="cyber-btn flex items-center gap-2 text-xs text-emerald-700 border-emerald-500/80 bg-emerald-950/40 hover:bg-emerald-900/60 font-bold"
+              class="cyber-btn flex items-center gap-2 text-xs text-emerald-700 border-emerald-500/80 bg-emerald-50/40 hover:bg-emerald-100/60 font-bold"
             >
               <RotateCcw v-if="newProjectSaving" class="h-3.5 w-3.5 animate-spin" />
               <Package v-else class="h-3.5 w-3.5" />

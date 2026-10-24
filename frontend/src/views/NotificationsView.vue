@@ -64,8 +64,8 @@ const channelOptions = [
     id: 'discord',
     name: 'Discord',
     desc: 'Rich embed webhook alerts to a Discord channel',
-    color: 'hover:border-indigo-500 hover:bg-indigo-950/20',
-    selectedBorder: 'border-indigo-500 bg-indigo-950/30 text-indigo-700',
+    color: 'hover:border-indigo-500 hover:bg-indigo-50/20',
+    selectedBorder: 'border-indigo-500 bg-indigo-50/30 text-indigo-700',
     placeholder: 'https://discord.com/api/webhooks/...',
   },
   {
@@ -80,24 +80,24 @@ const channelOptions = [
     id: 'slack',
     name: 'Slack',
     desc: 'Incoming Webhook messages to your Slack channel',
-    color: 'hover:border-emerald-500 hover:bg-emerald-950/20',
-    selectedBorder: 'border-emerald-500 bg-emerald-950/30 text-emerald-700',
+    color: 'hover:border-emerald-500 hover:bg-emerald-50/20',
+    selectedBorder: 'border-emerald-500 bg-emerald-50/30 text-emerald-700',
     placeholder: 'https://hooks.slack.com/services/...',
   },
   {
     id: 'ntfy',
     name: 'Ntfy.sh',
     desc: 'Self-hosted or cloud push notifications to mobile/desktop',
-    color: 'hover:border-amber-500 hover:bg-amber-950/20',
-    selectedBorder: 'border-amber-500 bg-amber-950/30 text-amber-700',
+    color: 'hover:border-amber-500 hover:bg-amber-50/20',
+    selectedBorder: 'border-amber-500 bg-amber-50/30 text-amber-700',
     placeholder: 'https://ntfy.sh/my_docktun_alerts',
   },
   {
     id: 'webhook',
     name: 'Generic Webhook',
     desc: 'Custom HTTP POST JSON payload to any server or API',
-    color: 'hover:border-cyan-500 hover:bg-cyan-950/20',
-    selectedBorder: 'border-cyan-500 bg-cyan-950/30 text-cyan-700',
+    color: 'hover:border-cyan-500 hover:bg-cyan-50/20',
+    selectedBorder: 'border-cyan-500 bg-cyan-50/30 text-cyan-700',
     placeholder: 'https://api.yourdomain.com/webhook',
   },
 ]
@@ -186,7 +186,7 @@ load()
       <div class="flex items-center gap-3">
         <span
           class="rounded-full px-2.5 py-1 text-[10px] font-mono font-bold uppercase tracking-wider"
-          :class="form.enabled ? 'bg-emerald-950/80 text-emerald-600 border border-emerald-800/60' : 'bg-slate-100 text-slate-600 border border-slate-300'"
+          :class="form.enabled ? 'bg-emerald-50/80 text-emerald-600 border border-emerald-800/60' : 'bg-slate-100 text-slate-600 border border-slate-300'"
         >
           {{ form.enabled ? 'ALERTS ACTIVE' : 'ALERTS DISABLED' }}
         </span>
@@ -208,7 +208,7 @@ load()
     <div
       v-if="message"
       class="border p-3 rounded-lg text-xs font-mono flex items-center justify-between"
-      :class="message.type === 'success' ? 'border-emerald-500/50 bg-emerald-950/20 text-emerald-700' : 'border-rose-500/50 bg-rose-950/20 text-rose-700'"
+      :class="message.type === 'success' ? 'border-emerald-500/50 bg-emerald-50/20 text-emerald-700' : 'border-rose-500/50 bg-rose-50/20 text-rose-700'"
     >
       <div class="flex items-center gap-2">
         <CheckCircle2 v-if="message.type === 'success'" class="h-4 w-4 text-emerald-600" />

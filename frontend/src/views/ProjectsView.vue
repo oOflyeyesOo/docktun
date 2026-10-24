@@ -817,7 +817,7 @@ onMounted(async () => {
         <p class="text-xs text-muted font-mono mt-1">// Manage Compose stacks, containers, and volumes</p>
       </div>
       <div class="flex items-center gap-2">
-        <button @click="openCatalog" class="cyber-btn flex items-center gap-2 text-cyan-700 border-cyan-800 bg-cyan-950/40 hover:bg-cyan-900/50" title="Deploy pre-configured popular apps with 1 click">
+        <button @click="openCatalog" class="cyber-btn flex items-center gap-2 text-cyan-700 border-cyan-800 bg-cyan-50/40 hover:bg-cyan-100/50" title="Deploy pre-configured popular apps with 1 click">
           <Sparkles class="w-4 h-4 text-cyan-600" /> App Catalog
         </button>
         <button @click="openDockerRun" class="cyber-btn flex items-center gap-2">
@@ -1290,7 +1290,7 @@ onMounted(async () => {
         <!-- Catalog Header -->
         <div class="p-5 border-b border-border bg-surface flex items-center justify-between">
           <div class="flex items-center gap-3">
-            <div class="rounded-lg bg-cyan-950/80 border border-cyan-800 p-2 text-cyan-700">
+            <div class="rounded-lg bg-cyan-50/80 border border-cyan-800 p-2 text-cyan-700">
               <Sparkles class="w-5 h-5 text-cyan-600" />
             </div>
             <div>
@@ -1325,7 +1325,7 @@ onMounted(async () => {
                   :key="cat"
                   @click="catalogCategory = cat"
                   class="rounded px-2.5 py-1 transition whitespace-nowrap"
-                  :class="catalogCategory === cat ? 'bg-cyan-950 text-cyan-700 border border-cyan-700' : 'bg-surface text-muted hover:text-slate-900'"
+                  :class="catalogCategory === cat ? 'bg-cyan-50 text-cyan-700 border border-cyan-700' : 'bg-surface text-muted hover:text-slate-900'"
                 >
                   {{ cat }}
                 </button>
@@ -1378,7 +1378,7 @@ onMounted(async () => {
                 </button>
                 <h3 class="text-sm font-bold text-cyan-700 font-mono ml-2">Deploy {{ selectedTemplate.title }}</h3>
               </div>
-              <span class="rounded bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 text-xs font-mono text-cyan-700">
+              <span class="rounded bg-cyan-50 border border-cyan-800 px-2.5 py-0.5 text-xs font-mono text-cyan-700">
                 {{ selectedTemplate.category }}
               </span>
             </div>
@@ -1417,7 +1417,7 @@ onMounted(async () => {
             v-if="selectedTemplate"
             @click="deployFromTemplate"
             :disabled="deployingTemplate || !templateForm.name || !templateForm.path"
-            class="cyber-btn flex items-center gap-2 text-cyan-700 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/50"
+            class="cyber-btn flex items-center gap-2 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
           >
             <RotateCcw v-if="deployingTemplate" class="w-4 h-4 animate-spin" />
             <Rocket v-else class="w-4 h-4 text-emerald-600" />
