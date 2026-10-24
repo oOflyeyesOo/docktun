@@ -34,6 +34,7 @@ import {
   Sliders,
   Code2
 } from 'lucide-vue-next'
+import { cloudflareEnabled as isCloudflareEnabled } from '../lib/tunnel-provider.mjs'
 import { useApi } from '../composables/useApi'
 
 const { apiFetch } = useApi()
@@ -580,6 +581,8 @@ const localServices = computed(() => {
   })
 })
 
+const cloudflareEnabled = computed(() => isCloudflareEnabled(status.value))
+
 const isTunnelRunning = computed(() => {
   return status.value?.status === 'running' || status.value?.status === 'healthy'
 })
@@ -624,6 +627,7 @@ onUnmounted(() => {
         <h1 class="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-3 mt-1">
           <span>Infrastructure Overview</span>
           <span
+            v-if="cloudflareEnabled"
             class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold"
             :class="isTunnelRunning ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30' : 'bg-rose-500/10 text-rose-600 border border-rose-500/30'"
           >
@@ -635,6 +639,7 @@ onUnmounted(() => {
 
       <div class="flex items-center gap-2 flex-wrap">
         <button
+          v-if="cloudflareEnabled"
           @click="triggerDnsSync"
           :disabled="dnsSyncing"
           class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-2 px-3 text-slate-800"
@@ -655,6 +660,7 @@ onUnmounted(() => {
         </button>
 
         <button
+          v-if="cloudflareEnabled"
           @click="controlTunnel('restart')"
           :disabled="!!actionLoading"
           class="cyber-btn text-xs flex items-center gap-1.5 py-2 px-3 bg-indigo-600 hover:bg-indigo-500"
@@ -668,7 +674,7 @@ onUnmounted(() => {
 
     <!-- Tunnel Degraded Diagnostic Banner -->
     <div
-      v-if="!isTunnelRunning && status"
+      v-if="cloudflareEnabled && !isTunnelRunning && status"
       class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-200 flex flex-col sm:flex-row sm:items-start justify-between gap-3 shadow-lg"
     >
       <div class="flex items-start gap-3">
@@ -703,7 +709,7 @@ onUnmounted(() => {
     <!-- 4 High-Density Executive Telemetry Metric Cards -->
     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <!-- 1. Cloudflare Tunnel Card -->
-      <div class="cyber-card flex flex-col justify-between">
+      <div v-if="cloudflareEnabled" class="cyber-card flex flex-col justify-between">
         <div>
           <div class="flex items-center justify-between text-slate-600">
             <span class="text-[11px] font-semibold uppercase tracking-wider">Cloudflare Tunnel</span>

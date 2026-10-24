@@ -1,5 +1,6 @@
 """Disposable Compose integration: only controls containers created by this test."""
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -18,7 +19,7 @@ with tempfile.TemporaryDirectory() as directory:
     compose_file.write_text(json.dumps({
         'services': {
             'app': {
-                'image': 'docktun:test',
+                'image': os.environ.get('DOCKTUN_TEST_IMAGE', 'docktun:test'),
                 'ports': ['127.0.0.1::3001'],
                 'volumes': ['data:/app/data', '/var/run/docker.sock:/var/run/docker.sock'],
                 'healthcheck': {'test': ['CMD', 'curl', '-fsS', 'http://localhost:3001/healthz'], 'interval': '2s', 'timeout': '2s', 'retries': 30},

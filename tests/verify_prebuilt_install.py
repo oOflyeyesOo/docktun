@@ -34,3 +34,17 @@ assert profile_services["cloudflared"]["image"] == "cloudflare/cloudflared:lates
 assert any(port.get("target") == 3001 for port in services["docktun"]["ports"])
 assert any("/var/run/docker.sock" in str(mount.get("source")) for mount in services["docktun"]["volumes"])
 print("Prebuilt Compose installer structure passed")
+# Tailscale is opt-in and shares exactly the UI's Docker volume, without a TUN device.
+with_tailscale = json.loads(subprocess.check_output(
+    ['docker', 'compose', '-f', compose.name, '--profile', 'tailscale', 'config', '--format', 'json'],
+    cwd=root, env=env, text=True,
+))
+ts = with_tailscale['services']['tailscale']
+assert 'tailscale' not in services and 'cloudflared' not in services
+assert 'cloudflared' not in with_tailscale['services']
+assert ts['environment']['TS_USERSPACE'] == 'true'
+assert not ts.get('devices') and not ts.get('cap_add')
+mount = next(m for m in ts['volumes'] if m['target'] == '/var/lib/tailscale')
+assert mount['type'] == 'volume'
+assert with_tailscale['volumes'][mount['source']]['name'] == with_tailscale['services']['docktun']['environment']['TAILSCALE_STATE_VOLUME']
+print('Tailscale profile, portable userspace mode and shared named state volume passed')

@@ -67,11 +67,20 @@ func (s *MeshService) Load() (*MeshConfig, error) {
 	var cfg MeshConfig
 	data, err := os.ReadFile(s.storagePath)
 	if err == nil {
-		_ = json.Unmarshal(data, &cfg)
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return nil, fmt.Errorf("read mesh selection: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read mesh selection: %w", err)
 	}
 
 	if cfg.Mode == "" {
-		cfg.Mode = "public"
+		cfg.Mode = "none"
+		if s.appCfg != nil {
+			if _, err := os.Stat(s.appCfg.CloudflaredConfig); err == nil {
+				cfg.Mode = "public"
+			}
+		}
 	}
 
 	// Auto-fill Cloudflare tunnel parameters from active tunnel configuration
@@ -155,5 +164,5 @@ func (s *MeshService) Save(cfg *MeshConfig) error {
 		return fmt.Errorf("marshal mesh config: %w", err)
 	}
 
-	return os.WriteFile(s.storagePath, data, 0644)
+	return os.WriteFile(s.storagePath, data, 0600)
 }

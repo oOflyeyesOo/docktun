@@ -10,6 +10,8 @@ services:
     ports:
       - "${PORT:-8080}:3001"
     environment:
+      TAILSCALE_STATE_VOLUME: ${TAILSCALE_STATE_VOLUME:-docktun-tailscale-state}
+      TAILSCALE_NETWORK: cloudflared
       DB_PATH: /app/data/app.db
       CLOUDFLARED_CONFIG_PATH: /etc/cloudflared/config.yml
       CLOUDFLARED_CONTAINER: docktun-cloudflared
@@ -45,7 +47,26 @@ services:
     networks:
       - cloudflared
 
+  # Optional; the UI uses the same volume when it creates this container.
+  tailscale:
+    profiles: ["tailscale"]
+    image: tailscale/tailscale:latest
+    container_name: docktun-tailscale
+    hostname: docktun
+    restart: unless-stopped
+    environment:
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_AUTH_ONCE: "true"
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+    networks:
+      - cloudflared
+
 volumes:
+  tailscale-state:
+    name: ${TAILSCALE_STATE_VOLUME:-docktun-tailscale-state}
   docktun-data:
   docktun-cloudflared:
 

@@ -1,5 +1,6 @@
 """Isolated production-image lifecycle check. Never mounts the host Docker socket."""
 import json
+import os
 import subprocess
 import time
 import urllib.error
@@ -38,7 +39,7 @@ def ready():
 
 try:
     docker("volume", "create", volume)
-    docker("run", "-d", "--name", name, "-p", "127.0.0.1:18080:3001", "-v", volume + ":/app/data", "docktun:test")
+    docker("run", "-d", "--name", name, "-p", "127.0.0.1:18080:3001", "-v", volume + ":/app/data", os.environ.get("DOCKTUN_TEST_IMAGE", "docktun:test"))
     ready()
     assert request("/api/setup/status")["completed"] is False
     credentials = {"admin_username": "owner", "admin_password": "test-password-at-least-12"}

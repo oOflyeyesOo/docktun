@@ -2,6 +2,7 @@ name: docktun
 
 services:
   cloudflared:
+    profiles: ["cloudflare"]
     image: cloudflare/cloudflared:latest
     container_name: docktun-cloudflared
     restart: unless-stopped
@@ -41,6 +42,8 @@ services:
       CLOUDFLARED_CONFIG_PATH: ${CLOUDFLARED_CONFIG_PATH:-/etc/cloudflared/config.yml}
       CLOUDFLARED_CONTAINER: ${CLOUDFLARED_CONTAINER:-docktun-cloudflared}
       CLOUDFLARED_METRICS: ${CLOUDFLARED_METRICS:-http://docktun-cloudflared:2000/metrics}
+      TAILSCALE_STATE_VOLUME: ${TAILSCALE_STATE_VOLUME:-docktun-tailscale-state}
+      TAILSCALE_NETWORK: cloudflared
       DB_PATH: ${DB_PATH:-/app/data/app.db}
       LISTEN_ADDR: ${LISTEN_ADDR:-0.0.0.0:3001}
       SELF_PATH: ${SELF_PATH:-/opt/projects/docktun}
@@ -90,15 +93,12 @@ services:
     restart: unless-stopped
     environment:
       - TS_AUTHKEY=${TS_AUTHKEY:-}
+      - TS_AUTH_ONCE=true
       - TS_STATE_DIR=/var/lib/tailscale
-      - TS_USERSPACE=${TS_USERSPACE:-true}
+      - TS_USERSPACE=true
       - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:-}
     volumes:
-      - ./data/tailscale:/var/lib/tailscale
-      - /dev/net/tun:/dev/net/tun
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
+      - tailscale-state:/var/lib/tailscale
     networks:
       - cloudflared
 
@@ -127,6 +127,10 @@ services:
       - "${WIREGUARD_PORT:-51820}:51820/udp"
     networks:
       - cloudflared
+
+volumes:
+  tailscale-state:
+    name: ${TAILSCALE_STATE_VOLUME:-docktun-tailscale-state}
 
 networks:
   cloudflared:

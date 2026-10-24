@@ -79,6 +79,14 @@ docker compose up -d
 # http://localhost:8080 or http://<your-server-ip>:8080
 ```
 
+### Tailscale-only installs and persistent state
+
+Select Tailscale in onboarding, then start/connect it on the Remote Access page. Cloudflare is optional; only start its service with the `cloudflare` profile after configuring it. The shared Docker network is still named `cloudflared`; its name does not require the Cloudflare service.
+
+Both the UI-created Tailscale container and `docker compose --profile tailscale up -d` use the named Docker volume `docktun-tailscale-state`. Set `TAILSCALE_STATE_VOLUME` in your Compose environment to use a different named volume. Do not set it to `/app/data/tailscale`: that path exists inside DockTun, while Docker mount sources are resolved by the host daemon. The default userspace mode needs no `/dev/net/tun` device or extra Linux capabilities, including on Synology. Kernel routing and exit-node networking require separate host configuration.
+
+Existing Tailscale containers are reused without changing their mounts. For older source installs using `./data/tailscale`, keep the existing container until you have backed up and migrated its state into the named volume before recreating it; otherwise you will need to authenticate a new node. Never remove an old state directory or volume during upgrade. Revisit authenticated onboarding once to save the selected provider if upgrading an installation that did not persist that selection.
+
 ### Source build troubleshooting for Synology and older Docker Compose installations
 
 **Use the complete repository source tree as the Docker build context.** The Dockerfile is not standalone. In particular, `frontend/package.json`, `frontend/pnpm-lock.yaml`, `frontend/pnpm-workspace.yaml`, `backend/go.mod`, and `backend/go.sum` must all exist beneath the directory that contains `Dockerfile` and `docker-compose.yml`. A build log that says "Sending build context to Docker daemon 1.865kB" indicates the source files were not included. Upload/extract or clone the **entire** repo into the Synology Container Manager project folder, and select that folder as the build context.
