@@ -86,6 +86,7 @@ func main() {
   setupSvc := service.NewSetupService(cfg, database, dockerContainersSvc, cfAPISvc, configSvc, meshSvc, auditSvc, dataDir)
   setupHandler := handler.NewSetup(setupSvc, authHandler)
 
+  r.Get("/healthz", handler.Readiness(database))
   r.Get("/api/setup/status", setupHandler.Status)
   authLimiter := middleware.NewRateLimiter(10, time.Minute)
   r.With(authLimiter.Limit).Post("/api/setup/complete", setupHandler.Complete)
