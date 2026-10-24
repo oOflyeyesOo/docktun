@@ -1,4 +1,4 @@
-﻿package handler
+package handler
 
 import (
 	"encoding/json"
@@ -6,14 +6,12 @@ import (
 	"strconv"
 	"time"
 
+	"docktun/internal/ws"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
-	"docktun/internal/ws"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
+var upgrader = websocket.Upgrader{}
 
 type Logs struct {
 	hub    *ws.Hub
@@ -32,7 +30,7 @@ func (h *Logs) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
 		return []byte(h.secret), nil
-	})
+	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired())
 	if err != nil {
 		http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 		return

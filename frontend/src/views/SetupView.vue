@@ -47,7 +47,7 @@ const systemStatus = ref<any>({
   host_arch: 'amd64',
   num_cpu: 4,
   docker_version: 'Loading...',
-  docker_connected: true,
+  docker_connected: false,
   tunnel_configured: false,
   tunnel_type: 'none',
   discovered_containers: [],
@@ -56,6 +56,7 @@ const systemStatus = ref<any>({
 
 // Wizard Form State
 const form = reactive({
+  setup_token: '',
   admin_username: 'admin',
   admin_password: '',
   confirm_password: '',
@@ -93,7 +94,7 @@ const passwordMismatch = computed(() => {
 
 const passwordValid = computed(() => {
   if (systemStatus.value.has_admin_user && !form.admin_password) return true
-  return form.admin_password.length >= 6 && !passwordMismatch.value
+  return new TextEncoder().encode(form.admin_password).length >= 12 && new TextEncoder().encode(form.admin_password).length <= 72 && !passwordMismatch.value
 })
 
 // Container Selection Helpers
@@ -120,10 +121,16 @@ async function loadSetupStatus() {
   errorMessage.value = null
   try {
     const force = route.query.force === 'true'
-    const res = await fetch(`/api/setup/status?force=${force}`)
+    const res = await fetch(`/api/setup/status`)
     if (res.ok) {
-      const data = await res.json()
+      let data = await res.json()
+      if (data.completed && !authStore.isAuthenticated) {
+        await router.replace('/login')
+        return
+      }
+      if (authStore.isAuthenticated) data = await apiFetch<any>('/api/setup/details')
       systemStatus.value = data
+      if (data.has_admin_user) step.value = 2
       if (data.admin_username) {
         form.admin_username = data.admin_username
       }
@@ -159,8 +166,9 @@ async function finishSetup() {
     const selectedIds = Object.keys(form.selected_container_ids).filter((id) => form.selected_container_ids[id])
 
     const payload = {
+      setup_token: form.setup_token,
       admin_username: form.admin_username,
-      admin_password: form.admin_password,
+      admin_password: systemStatus.value.has_admin_user ? '' : form.admin_password,
       tunnel: {
         type: form.tunnel_type,
         cloudflare_token: form.cloudflare_mode === 'token' ? form.cloudflare_token : '',
@@ -185,9 +193,9 @@ async function finishSetup() {
     }
 
     submitStep.value = 'Applying tunnel routes and connecting container networks...'
-    const res = await fetch('/api/setup/complete', {
+    const res = await fetch(systemStatus.value.has_admin_user ? '/api/setup/reconfigure' : '/api/setup/complete', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(authStore.token ? { Authorization: `Bearer ${authStore.token}` } : {}) },
       body: JSON.stringify(payload),
     })
 
@@ -297,6 +305,10 @@ onMounted(() => {
         <!-- STEP 1: ADMIN ACCOUNT                                             -->
         <!-- ================================================================= -->
         <div v-if="step === 1" class="space-y-5 animate-fade-in">
+          <label class="block text-sm">Setup token
+            <input v-model="form.setup_token" type="password" autocomplete="off" class="cyber-input w-full mt-2" placeholder="Paste the token from data/setup.token on the host" />
+            <span class="block text-xs text-slate-400 mt-2">Retrieve it with: docker compose exec docktun cat /app/data/setup.token</span>
+          </label>
           <div>
             <h2 class="text-lg font-bold text-slate-100 flex items-center gap-2">
               <KeyRound class="h-5 w-5 text-cyan-400" />
@@ -313,7 +325,7 @@ onMounted(() => {
             class="p-3 rounded-lg border border-indigo-500/40 bg-indigo-950/20 text-indigo-300 text-xs font-mono flex items-center gap-2"
           >
             <CheckCircle2 class="h-4 w-4 text-indigo-400 shrink-0" />
-            <span>Admin user already detected from environment variables. You can keep existing credentials or type a new password below.</span>
+            <span>Account credentials are managed in Settings. This wizard only changes configuration.</span>
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl">
@@ -799,7 +811,7 @@ onMounted(() => {
         <!-- Wizard Navigation Footer -->
         <div class="flex items-center justify-between pt-4 border-t border-slate-800">
           <button
-            v-if="step > 1"
+            v-if="step > (systemStatus.has_admin_user ? 2 : 1)"
             type="button"
             @click="step--"
             :disabled="submitting"

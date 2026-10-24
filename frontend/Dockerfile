@@ -1,9 +1,9 @@
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm install
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN corepack enable && corepack prepare pnpm@11.25.0 --activate && pnpm install --frozen-lockfile
 COPY . .
-RUN npm run build
+RUN pnpm run build
 
 FROM nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html

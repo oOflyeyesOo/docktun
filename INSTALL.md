@@ -149,3 +149,34 @@ sudo ./install.sh
 ```
 When running `install.sh`, press `Enter` to resume with your preserved tunnel, and enter fresh admin credentials!
 
+
+## Secure setup and reconfiguration
+
+On a fresh installation, start with `docker compose up -d --build`. Retrieve the
+one-time ownership secret on the host with:
+
+```sh
+docker compose exec docktun cat /app/data/setup.token
+```
+
+Open the dashboard and provide that token plus a password of 12–72 bytes.
+Alternatively set `SETUP_TOKEN` to a secret of at least 32 bytes before startup.
+Never expose that token in screenshots, URLs, or shared logs. The token is useless
+for public setup after any account exists or setup has been marked complete.
+Existing installations sign in normally. Use `/setup?force=true` while signed in
+to reconfigure tunnels, container imports, and notifications. Account changes
+belong in Settings; reconfiguration cannot reset credentials or issue sessions.
+
+The public setup status endpoint exposes only the setup lock state. Detailed
+host/container discovery requires authentication. Once an account is created,
+public setup stays locked even if later configuration fails: sign in and rerun
+the authenticated wizard. Some changes may have applied before an error; review
+those settings before retrying.
+
+JWT signing secrets must contain at least 32 bytes. Automatically generated
+secrets persist in `data/jwt.secret`; protect and back up the data directory.
+Instances with shorter existing secrets must replace them with a strong secret;
+this signs out existing sessions. Forwarded IP headers are not trusted, so a
+reverse proxy shares one login rate-limit budget unless trusted-proxy support
+is added. Use HTTPS when exposing the dashboard. Docker socket access grants
+host-level control; restrict dashboard access accordingly.

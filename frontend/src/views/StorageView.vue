@@ -366,17 +366,6 @@ async function executeCreateItem() {
   }
 }
 
-// Delete Item
-async function deleteStorageFile(file: any) {
-  const confirmed = confirm(
-    `Are you sure you want to permanently delete "${file.name}" from ${selectedTarget.value.name}?`
-  )
-  if (!confirmed) return
-
-  try {
-    const params = new URLSearchParams({
-      target_type: selectedTarget.value.type,
-      target_id: selectedTarget.value.id,
 // ---------------------------------------------------------------------------
 // PRE-DELETION INFORMATION & CONFIRMATION MODAL STATE
 // ---------------------------------------------------------------------------
