@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { remoteAccessTab } from '../lib/tunnel-provider.mjs'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Globe,
@@ -85,6 +86,7 @@ interface TailscalePeer {
 }
 
 interface TailscaleStatus {
+  last_error?: string
   installed: boolean
   running: boolean
   version: string
@@ -492,6 +494,8 @@ onMounted(async () => {
   if (qTab && ['cloudflare', 'tailscale', 'wireguard'].includes(qTab)) {
     activeTab.value = qTab as any
   }
+  const mesh = await apiFetch<any>('/api/mesh')
+  activeTab.value = remoteAccessTab(qTab, mesh.mode)
   await fetchOverview()
   await fetchContainerExposures()
   if (activeTab.value === 'tailscale') await fetchTailscale()
@@ -748,6 +752,10 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           <AlertCircle v-else class="h-4 w-4 shrink-0" />
           <span>{{ tailscaleMsg.text }}</span>
         </div>
+
+        <p v-if="tailscale?.last_error" class="p-3 rounded-lg text-xs text-amber-700 bg-amber-50">
+          {{ tailscale.last_error }}
+        </p>
 
         <!-- Needs Login Auth URL Banner -->
         <div

@@ -178,6 +178,19 @@ func (s *SetupService) GetStatus(force bool) (SetupStatus, error) {
 		}
 	}
 
+	// Persisted selection takes precedence over leftover Cloudflare files/tokens.
+	if s.meshSvc != nil {
+		mesh, err := s.meshSvc.Load()
+		if err != nil {
+			return SetupStatus{}, err
+		}
+		status.TunnelType = mesh.Mode
+		if mesh.Mode == "public" {
+			status.TunnelType = "cloudflare"
+		}
+		status.TunnelConfigured = mesh.Mode != "none"
+	}
+
 	// 4. Discover existing containers & stacks
 	if status.DockerConnected && s.dockerContainers != nil {
 		if cList, err := s.dockerContainers.List(); err == nil {
@@ -312,9 +325,34 @@ func (s *SetupService) Reconfigure(req SetupCompleteRequest, userID int, ip stri
 }
 
 func (s *SetupService) applyConfiguration(req SetupCompleteRequest, adminID int, ip string) (SetupCompleteResult, error) {
+	provider := strings.ToLower(strings.TrimSpace(req.Tunnel.Type))
+	if provider == "" {
+		provider = "none"
+	}
+	switch provider {
+	case "cloudflare", "tailscale", "wireguard", "none":
+	default:
+		return SetupCompleteResult{}, fmt.Errorf("unsupported tunnel provider: %s", provider)
+	}
+	if s.meshSvc != nil {
+		mesh, err := s.meshSvc.Load()
+		if err != nil {
+			return SetupCompleteResult{}, err
+		}
+		mesh.Mode, mesh.Enabled = provider, provider != "none"
+		if provider == "cloudflare" {
+			mesh.Mode = "public"
+		}
+		if provider == "tailscale" && req.Tunnel.TailscaleAuthKey != "" {
+			mesh.Tailscale.AuthKey = strings.TrimSpace(req.Tunnel.TailscaleAuthKey)
+		}
+		if err := s.meshSvc.Save(mesh); err != nil {
+			return SetupCompleteResult{}, err
+		}
+	}
 	// 2. Configure Tunnel / Remote Access
 	tunnelStatus := "Local / mDNS Only"
-	switch strings.ToLower(req.Tunnel.Type) {
+	switch provider {
 	case "cloudflare":
 		tunnelStatus = "Cloudflare Tunnel Configured"
 		if req.Tunnel.CloudflareToken != "" {

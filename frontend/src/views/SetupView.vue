@@ -63,7 +63,7 @@ const form = reactive({
   show_password: false,
 
   // Tunnel Config
-  tunnel_type: 'cloudflare' as 'cloudflare' | 'wireguard' | 'tailscale' | 'none',
+  tunnel_type: 'none' as 'cloudflare' | 'wireguard' | 'tailscale' | 'none',
   cloudflare_mode: 'token' as 'token' | 'api' | 'existing',
   cloudflare_token: '',
   cloudflare_api_token: '',
@@ -130,6 +130,7 @@ async function loadSetupStatus() {
       }
       if (authStore.isAuthenticated) data = await apiFetch<any>('/api/setup/details')
       systemStatus.value = data
+      form.tunnel_type = data.tunnel_type || 'none'
       if (data.has_admin_user) step.value = 2
       if (data.admin_username) {
         form.admin_username = data.admin_username

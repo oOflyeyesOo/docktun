@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -61,6 +62,13 @@ func (s *Cloudflared) IsRunning() bool {
 }
 
 func (s *Cloudflared) Status() ProcessState {
+	mesh, err := NewMeshService(filepath.Dir(s.cfg.DBPath), nil, s.cfg).Load()
+	if err != nil {
+		return ProcessState{Status: "configuration error", LastError: err.Error()}
+	}
+	if mesh.Mode != "public" {
+		return ProcessState{Status: "disabled"}
+	}
 	cName := s.findContainer()
 	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Status}} {{.State.StartedAt}}", cName).Output()
 	if err != nil {

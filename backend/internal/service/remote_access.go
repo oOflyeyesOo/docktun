@@ -67,6 +67,7 @@ type TailscalePeer struct {
 }
 
 type TailscaleStatus struct {
+	LastError    string          `json:"last_error,omitempty"`
 	Installed    bool            `json:"installed"`
 	Running      bool            `json:"running"`
 	Version      string          `json:"version"`
@@ -141,6 +142,7 @@ type RemoteAccessService struct {
 	audit               *AuditLogger
 	dataDir             string
 	dockerContainersSvc *DockerContainers
+	runDocker           func(context.Context, ...string) ([]byte, error)
 }
 
 func NewRemoteAccessService(
@@ -165,6 +167,13 @@ func NewRemoteAccessService(
 	}
 }
 
+func (s *RemoteAccessService) docker(ctx context.Context, args ...string) ([]byte, error) {
+	if s.runDocker != nil {
+		return s.runDocker(ctx, args...)
+	}
+	return exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+}
+
 func (s *RemoteAccessService) isContainerRunning(name string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -179,8 +188,7 @@ func (s *RemoteAccessService) isContainerRunning(name string) bool {
 func (s *RemoteAccessService) isContainerInstalled(name string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.Id}}", name)
-	out, err := cmd.Output()
+	out, err := s.docker(ctx, "inspect", "--format", "{{.Id}}", name)
 	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
@@ -288,6 +296,7 @@ func (s *RemoteAccessService) GetTailscaleStatus() (*TailscaleStatus, error) {
 	cmd := exec.CommandContext(ctx, "docker", "exec", "docktun-tailscale", "tailscale", "status", "--json")
 	out, err := cmd.Output()
 	if err != nil {
+		status.LastError = "Cannot query tailscaled. Check the Tailscale container logs and its /var/lib/tailscale state volume permissions."
 		status.BackendState = "Starting"
 		return status, nil
 	}
@@ -345,6 +354,15 @@ func (s *RemoteAccessService) GetTailscaleStatus() (*TailscaleStatus, error) {
 }
 
 func (s *RemoteAccessService) TailscaleUp(authKey, hostname string) error {
+	if authKey == "" && s.meshSvc != nil {
+		mesh, err := s.meshSvc.Load()
+		if err != nil {
+			return err
+		}
+		if mesh.Mode == "tailscale" {
+			authKey = mesh.Tailscale.AuthKey
+		}
+	}
 	if !s.isContainerRunning("docktun-tailscale") {
 		if err := s.TailscaleControl("start"); err != nil {
 			return fmt.Errorf("failed to start tailscale container: %w", err)
@@ -412,28 +430,39 @@ func (s *RemoteAccessService) TailscaleSetOptions(advertiseRoutes string, exitNo
 }
 
 func (s *RemoteAccessService) TailscaleControl(action string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 	switch strings.ToLower(action) {
 	case "start":
 		if s.isContainerInstalled("docktun-tailscale") {
-			return exec.Command("docker", "start", "docktun-tailscale").Run()
+			_, err := s.docker(ctx, "start", "docktun-tailscale")
+			return err
 		}
-		// Launch via docker run
-		dataDir := filepath.Join(s.dataDir, "tailscale")
-		_ = os.MkdirAll(dataDir, 0755)
+		// Docker resolves mount sources on the daemon host, not inside DockTun.
+		// Use the same named volume as the optional Compose service.
+		volume := os.Getenv("TAILSCALE_STATE_VOLUME")
+		if volume == "" {
+			volume = "docktun-tailscale-state"
+		}
+		if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]+$`).MatchString(volume) {
+			return fmt.Errorf("TAILSCALE_STATE_VOLUME must be a Docker volume name, not a container or host path")
+		}
+		network := os.Getenv("TAILSCALE_NETWORK")
+		if network == "" {
+			network = "cloudflared"
+		}
 		runArgs := []string{
 			"run", "-d",
 			"--name", "docktun-tailscale",
 			"--hostname", "docktun",
 			"--restart", "unless-stopped",
-			"--cap-add", "NET_ADMIN",
-			"--cap-add", "NET_RAW",
-			"--network", "cloudflared",
-			"-v", fmt.Sprintf("%s:/var/lib/tailscale", dataDir),
+			"--network", network,
+			"--mount", fmt.Sprintf("type=volume,source=%s,target=/var/lib/tailscale", volume),
 			"-e", "TS_USERSPACE=true",
 			"-e", "TS_STATE_DIR=/var/lib/tailscale",
 			"tailscale/tailscale:latest",
 		}
-		out, err := exec.Command("docker", runArgs...).CombinedOutput()
+		out, err := s.docker(ctx, runArgs...)
 		if err != nil {
 			return fmt.Errorf("failed to launch tailscale container: %s (%w)", strings.TrimSpace(string(out)), err)
 		}
@@ -759,14 +788,14 @@ func (s *RemoteAccessService) GetContainerExposures() ([]ContainerExposureItem, 
 		ports := parsePortsFromString(c.Ports)
 
 		item := ContainerExposureItem{
-			ID:           c.ID,
-			Name:         c.Name,
-			Image:        c.Image,
-			Running:      c.Running,
-			Ports:        ports,
-			ExposureMode: c.ExposureMode,
-			PrivateType:  c.PrivateType,
-			PrivatePort:  c.PrivatePort,
+			ID:               c.ID,
+			Name:             c.Name,
+			Image:            c.Image,
+			Running:          c.Running,
+			Ports:            ports,
+			ExposureMode:     c.ExposureMode,
+			PrivateType:      c.PrivateType,
+			PrivatePort:      c.PrivatePort,
 			Hostname:         c.Hostname,
 			Target:           c.Target,
 			ZeroTrustEnabled: c.ZeroTrustEnabled,
