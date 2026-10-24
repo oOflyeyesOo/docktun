@@ -10,6 +10,8 @@ services:
       - ./cloudflared:/etc/cloudflared:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    sysctls:
+      - net.ipv4.ping_group_range=0 65535
     networks:
       - cloudflared
 
