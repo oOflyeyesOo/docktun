@@ -43,9 +43,37 @@ cd /opt/docktun
 docker network create cloudflared 2>/dev/null || true
 docker compose up -d
 
+# Docker Compose must be run from the full repository checkout.
+# If the build says "COPY frontend/package.json ... not found",
+# verify you have backend/, frontend/, Dockerfile, and docker-compose.yml
+# together under /opt/docktun (not just the Dockerfile).
+
 # Open in your browser to launch the Onboarding Wizard:
 # http://localhost:8080 or http://<your-server-ip>:8080
 ```
+
+### Synology and older Docker Compose installations
+
+**Use the complete repository source tree as the Docker build context.** The Dockerfile is not standalone. In particular, `frontend/package.json`, `frontend/pnpm-lock.yaml`, `frontend/pnpm-workspace.yaml`, `backend/go.mod`, and `backend/go.sum` must all exist beneath the directory that contains `Dockerfile` and `docker-compose.yml`. A build log that says "Sending build context to Docker daemon 1.865kB" indicates the source files were not included. Upload/extract or clone the **entire** repo into the Synology Container Manager project folder, and select that folder as the build context.
+
+For a shell-based installation:
+
+```sh
+git clone https://github.com/oOflyeyesOo/docktun.git
+cd docktun
+test -f frontend/package.json && test -f frontend/pnpm-lock.yaml && test -f frontend/pnpm-workspace.yaml
+test -f backend/go.mod && test -f Dockerfile && test -f docker-compose.yml
+docker compose config
+docker compose up -d --build
+```
+
+If the repository is private, cloning requires authorized GitHub access. For DSM Container Manager's graphical project installer, copy the **entire** source tree to the project directory before starting the build. Do not copy only the Compose file or Dockerfile.
+
+The Compose file avoids newer `env_file: [{path, required}]` syntax. A local `.env` file is **optional** for first-run setup; Compose will read it automatically for variable substitution when present. You can copy `.env.example` to `.env` to customize settings without supplying an initial administrator password. Configure credentials using the first-run onboarding flow.
+
+If `docker compose` is unavailable or the project still fails validation, check `docker compose version` (or `docker-compose version`). Upgrade Synology Container Manager / the Compose plugin where possible: obsolete Compose v1 installations may not support other required features, such as service profiles.
+
+Docker running as a non-root account is not the reason the Dockerfile `COPY` instruction cannot find build context files. The account will still need permissions to use the Docker daemon socket for DockTun's management features.
 
 ### Option 2: Single Docker Run Command
 
