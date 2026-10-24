@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"strings"
 
@@ -27,15 +28,20 @@ func (a *Auth) Verify(next http.Handler) http.Handler {
 		tokenStr := strings.TrimPrefix(header, "Bearer ")
 		token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
 			return []byte(a.secret), nil
-		})
+		}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired())
 		if err != nil || !token.Valid {
 			http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 			return
 		}
 
 		claims := token.Claims.(jwt.MapClaims)
-		userID := int(claims["sub"].(float64))
-		username := claims["username"].(string)
+		subject, ok := claims["sub"].(float64)
+		username, named := claims["username"].(string)
+		if !ok || !named || username == "" || subject <= 0 || subject > 2147483647 || math.Trunc(subject) != subject {
+			http.Error(w, `{"error":"invalid token identity"}`, http.StatusUnauthorized)
+			return
+		}
+		userID := int(subject)
 
 		ctx := context.WithValue(r.Context(), "user_id", userID)
 		ctx = context.WithValue(ctx, "username", username)

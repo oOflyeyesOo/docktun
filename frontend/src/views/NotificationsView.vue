@@ -64,8 +64,8 @@ const channelOptions = [
     id: 'discord',
     name: 'Discord',
     desc: 'Rich embed webhook alerts to a Discord channel',
-    color: 'hover:border-indigo-500 hover:bg-indigo-950/20',
-    selectedBorder: 'border-indigo-500 bg-indigo-950/30 text-indigo-300',
+    color: 'hover:border-indigo-500 hover:bg-indigo-50/20',
+    selectedBorder: 'border-indigo-500 bg-indigo-50/30 text-indigo-700',
     placeholder: 'https://discord.com/api/webhooks/...',
   },
   {
@@ -80,24 +80,24 @@ const channelOptions = [
     id: 'slack',
     name: 'Slack',
     desc: 'Incoming Webhook messages to your Slack channel',
-    color: 'hover:border-emerald-500 hover:bg-emerald-950/20',
-    selectedBorder: 'border-emerald-500 bg-emerald-950/30 text-emerald-300',
+    color: 'hover:border-emerald-500 hover:bg-emerald-50/20',
+    selectedBorder: 'border-emerald-500 bg-emerald-50/30 text-emerald-700',
     placeholder: 'https://hooks.slack.com/services/...',
   },
   {
     id: 'ntfy',
     name: 'Ntfy.sh',
     desc: 'Self-hosted or cloud push notifications to mobile/desktop',
-    color: 'hover:border-amber-500 hover:bg-amber-950/20',
-    selectedBorder: 'border-amber-500 bg-amber-950/30 text-amber-300',
+    color: 'hover:border-amber-500 hover:bg-amber-50/20',
+    selectedBorder: 'border-amber-500 bg-amber-50/30 text-amber-700',
     placeholder: 'https://ntfy.sh/my_docktun_alerts',
   },
   {
     id: 'webhook',
     name: 'Generic Webhook',
     desc: 'Custom HTTP POST JSON payload to any server or API',
-    color: 'hover:border-cyan-500 hover:bg-cyan-950/20',
-    selectedBorder: 'border-cyan-500 bg-cyan-950/30 text-cyan-300',
+    color: 'hover:border-cyan-500 hover:bg-cyan-50/20',
+    selectedBorder: 'border-cyan-500 bg-cyan-50/30 text-cyan-700',
     placeholder: 'https://api.yourdomain.com/webhook',
   },
 ]
@@ -168,16 +168,16 @@ load()
 <template>
   <div class="space-y-6 max-w-4xl">
     <!-- Header -->
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-slate-800 pb-4">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-4">
       <div>
-        <div class="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-          <Bell class="h-3.5 w-3.5 text-cyan-400" />
+        <div class="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-600">
+          <Bell class="h-3.5 w-3.5 text-cyan-600" />
           <span>Incident & Health Alerts</span>
         </div>
-        <h1 class="text-2xl font-bold tracking-tight text-slate-100 flex items-center gap-2">
+        <h1 class="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
           <span>Alerts & Notifications</span>
         </h1>
-        <p class="text-xs text-slate-400">
+        <p class="text-xs text-slate-600">
           Receive realtime alerts for tunnel outages, container crashes, deploy events, and host resource spikes.
         </p>
       </div>
@@ -186,7 +186,7 @@ load()
       <div class="flex items-center gap-3">
         <span
           class="rounded-full px-2.5 py-1 text-[10px] font-mono font-bold uppercase tracking-wider"
-          :class="form.enabled ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/60' : 'bg-slate-800 text-slate-400 border border-slate-700'"
+          :class="form.enabled ? 'bg-emerald-50/80 text-emerald-600 border border-emerald-800/60' : 'bg-slate-100 text-slate-600 border border-slate-300'"
         >
           {{ form.enabled ? 'ALERTS ACTIVE' : 'ALERTS DISABLED' }}
         </span>
@@ -198,7 +198,7 @@ load()
             class="sr-only peer"
           />
           <div
-            class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"
+            class="w-11 h-6 bg-slate-100 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"
           ></div>
         </label>
       </div>
@@ -208,24 +208,24 @@ load()
     <div
       v-if="message"
       class="border p-3 rounded-lg text-xs font-mono flex items-center justify-between"
-      :class="message.type === 'success' ? 'border-emerald-500/50 bg-emerald-950/20 text-emerald-300' : 'border-rose-500/50 bg-rose-950/20 text-rose-300'"
+      :class="message.type === 'success' ? 'border-emerald-500/50 bg-emerald-50/20 text-emerald-700' : 'border-rose-500/50 bg-rose-50/20 text-rose-700'"
     >
       <div class="flex items-center gap-2">
-        <CheckCircle2 v-if="message.type === 'success'" class="h-4 w-4 text-emerald-400" />
-        <AlertTriangle v-else class="h-4 w-4 text-rose-400" />
+        <CheckCircle2 v-if="message.type === 'success'" class="h-4 w-4 text-emerald-600" />
+        <AlertTriangle v-else class="h-4 w-4 text-rose-600" />
         <span>{{ message.text }}</span>
       </div>
-      <button @click="message = null" class="text-slate-400 hover:text-slate-200">✕</button>
+      <button @click="message = null" class="text-slate-600 hover:text-slate-800">✕</button>
     </div>
 
     <!-- 1. Notification Channel Selection -->
     <div class="cyber-card space-y-4">
-      <div class="border-b border-slate-800 pb-2">
-        <h2 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-          <Radio class="h-4 w-4 text-cyan-400" />
+      <div class="border-b border-slate-200 pb-2">
+        <h2 class="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+          <Radio class="h-4 w-4 text-cyan-600" />
           <span>1. Choose Notification Channel</span>
         </h2>
-        <p class="text-[11px] text-slate-400">Select where alerts and test pings will be dispatched.</p>
+        <p class="text-[11px] text-slate-600">Select where alerts and test pings will be dispatched.</p>
       </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
@@ -236,7 +236,7 @@ load()
           @click="form.type = c.id as any"
           class="flex flex-col text-left p-3 rounded-xl border transition-all cursor-pointer relative"
           :class="[
-            form.type === c.id ? c.selectedBorder : 'border-slate-800 bg-slate-900/50 text-slate-400 ' + c.color
+            form.type === c.id ? c.selectedBorder : 'border-slate-200 bg-white/50 text-slate-600 ' + c.color
           ]"
         >
           <div class="flex items-center justify-between">
@@ -246,26 +246,26 @@ load()
               class="h-2 w-2 rounded-full bg-cyan-400"
             ></span>
           </div>
-          <span class="text-[11px] text-slate-400 mt-1">{{ c.desc }}</span>
+          <span class="text-[11px] text-slate-600 mt-1">{{ c.desc }}</span>
         </button>
       </div>
     </div>
 
     <!-- 2. Channel Credentials & Endpoint -->
     <div class="cyber-card space-y-4">
-      <div class="border-b border-slate-800 pb-2">
-        <h2 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-          <Globe class="h-4 w-4 text-cyan-400" />
+      <div class="border-b border-slate-200 pb-2">
+        <h2 class="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+          <Globe class="h-4 w-4 text-cyan-600" />
           <span>2. Channel Endpoint & Credentials</span>
         </h2>
-        <p class="text-[11px] text-slate-400">Provide the destination URL or bot credentials for {{ form.type.toUpperCase() }}.</p>
+        <p class="text-[11px] text-slate-600">Provide the destination URL or bot credentials for {{ form.type.toUpperCase() }}.</p>
       </div>
 
       <!-- Telegram Specific Fields -->
       <template v-if="form.type === 'telegram'">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div class="space-y-1.5">
-            <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
               Telegram Bot Token
             </label>
             <input
@@ -278,7 +278,7 @@ load()
           </div>
 
           <div class="space-y-1.5">
-            <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
               Telegram Chat ID
             </label>
             <input
@@ -295,7 +295,7 @@ load()
       <!-- Webhook URL Field (Discord, Slack, Ntfy, Generic Webhook) -->
       <div v-else class="space-y-1.5">
         <div class="flex items-center justify-between">
-          <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+          <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
             {{ form.type === 'ntfy' ? 'Ntfy Topic URL' : 'Webhook URL' }}
           </label>
           <span class="text-[10px] text-slate-500 font-mono">
@@ -319,11 +319,11 @@ load()
       </div>
 
       <!-- Test & Diagnostic Status Info -->
-      <div v-if="form.last_tested_at" class="rounded-lg bg-slate-950 border border-slate-800 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs font-mono">
+      <div v-if="form.last_tested_at" class="rounded-lg bg-slate-50 border border-slate-200 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs font-mono">
         <div class="flex items-center gap-2">
-          <Info class="h-3.5 w-3.5 text-slate-400" />
-          <span class="text-slate-400">Last Status:</span>
-          <span :class="form.last_status?.includes('Error') || form.last_status?.includes('Failed') ? 'text-rose-400' : 'text-emerald-400 font-bold'">
+          <Info class="h-3.5 w-3.5 text-slate-600" />
+          <span class="text-slate-600">Last Status:</span>
+          <span :class="form.last_status?.includes('Error') || form.last_status?.includes('Failed') ? 'text-rose-600' : 'text-emerald-600 font-bold'">
             {{ form.last_status || 'Unknown' }}
           </span>
         </div>
@@ -335,82 +335,82 @@ load()
 
     <!-- 3. Alert Event Subscriptions -->
     <div class="cyber-card space-y-4">
-      <div class="border-b border-slate-800 pb-2">
-        <h2 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-          <ShieldCheck class="h-4 w-4 text-cyan-400" />
+      <div class="border-b border-slate-200 pb-2">
+        <h2 class="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+          <ShieldCheck class="h-4 w-4 text-cyan-600" />
           <span>3. Event Subscriptions & Trigger Rules</span>
         </h2>
-        <p class="text-[11px] text-slate-400">Select which occurrences should generate an instant notification.</p>
+        <p class="text-[11px] text-slate-600">Select which occurrences should generate an instant notification.</p>
       </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <!-- Tunnel Outage -->
-        <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-800 bg-slate-900/40 hover:border-slate-700 transition cursor-pointer">
+        <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 bg-white/40 hover:border-slate-300 transition cursor-pointer">
           <input
             type="checkbox"
             v-model="form.notify_tunnel_down"
-            class="h-4 w-4 mt-0.5 rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-cyan-500 cursor-pointer"
+            class="h-4 w-4 mt-0.5 rounded border-slate-300 bg-slate-50 text-cyan-500 focus:ring-cyan-500 cursor-pointer"
           />
           <div class="space-y-0.5">
-            <span class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-              <Globe class="h-3.5 w-3.5 text-cyan-400" />
+            <span class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+              <Globe class="h-3.5 w-3.5 text-cyan-600" />
               <span>Cloudflare Tunnel Outage</span>
             </span>
-            <p class="text-[11px] text-slate-400">
+            <p class="text-[11px] text-slate-600">
               Triggers immediately if the cloudflared connector disconnects or enters an error state.
             </p>
           </div>
         </label>
 
         <!-- Container Stopped / Crashed -->
-        <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-800 bg-slate-900/40 hover:border-slate-700 transition cursor-pointer">
+        <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 bg-white/40 hover:border-slate-300 transition cursor-pointer">
           <input
             type="checkbox"
             v-model="form.notify_container_stop"
-            class="h-4 w-4 mt-0.5 rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-cyan-500 cursor-pointer"
+            class="h-4 w-4 mt-0.5 rounded border-slate-300 bg-slate-50 text-cyan-500 focus:ring-cyan-500 cursor-pointer"
           />
           <div class="space-y-0.5">
-            <span class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-              <Server class="h-3.5 w-3.5 text-rose-400" />
+            <span class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+              <Server class="h-3.5 w-3.5 text-rose-600" />
               <span>Container Crashes & Exits</span>
             </span>
-            <p class="text-[11px] text-slate-400">
+            <p class="text-[11px] text-slate-600">
               Triggers when any container stops unexpectedly or fails health checks.
             </p>
           </div>
         </label>
 
         <!-- Compose Deployment Finished -->
-        <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-800 bg-slate-900/40 hover:border-slate-700 transition cursor-pointer">
+        <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 bg-white/40 hover:border-slate-300 transition cursor-pointer">
           <input
             type="checkbox"
             v-model="form.notify_deploy_finish"
-            class="h-4 w-4 mt-0.5 rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-cyan-500 cursor-pointer"
+            class="h-4 w-4 mt-0.5 rounded border-slate-300 bg-slate-50 text-cyan-500 focus:ring-cyan-500 cursor-pointer"
           />
           <div class="space-y-0.5">
-            <span class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-              <Rocket class="h-3.5 w-3.5 text-indigo-400" />
+            <span class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+              <Rocket class="h-3.5 w-3.5 text-indigo-600" />
               <span>Compose & Git Deployments</span>
             </span>
-            <p class="text-[11px] text-slate-400">
+            <p class="text-[11px] text-slate-600">
               Triggers when a stack deployment completes (success or failure log output).
             </p>
           </div>
         </label>
 
         <!-- High Host Resource Usage -->
-        <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-800 bg-slate-900/40 hover:border-slate-700 transition cursor-pointer">
+        <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 bg-white/40 hover:border-slate-300 transition cursor-pointer">
           <input
             type="checkbox"
             v-model="form.notify_high_usage"
-            class="h-4 w-4 mt-0.5 rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-cyan-500 cursor-pointer"
+            class="h-4 w-4 mt-0.5 rounded border-slate-300 bg-slate-50 text-cyan-500 focus:ring-cyan-500 cursor-pointer"
           />
           <div class="space-y-0.5">
-            <span class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-              <Cpu class="h-3.5 w-3.5 text-amber-400" />
+            <span class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+              <Cpu class="h-3.5 w-3.5 text-amber-600" />
               <span>High CPU & RAM Thresholds</span>
             </span>
-            <p class="text-[11px] text-slate-400">
+            <p class="text-[11px] text-slate-600">
               Alerts when host load exceeds your defined warning threshold.
             </p>
           </div>
@@ -418,10 +418,10 @@ load()
       </div>
 
       <!-- Threshold Controls (when notify_high_usage is active) -->
-      <div v-if="form.notify_high_usage" class="pt-3 border-t border-slate-800/80 grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div v-if="form.notify_high_usage" class="pt-3 border-t border-slate-200/80 grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
-          <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-            CPU Alert Threshold (%): <span class="text-cyan-300 font-mono font-bold">{{ form.cpu_threshold_percent }}%</span>
+          <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+            CPU Alert Threshold (%): <span class="text-cyan-700 font-mono font-bold">{{ form.cpu_threshold_percent }}%</span>
           </label>
           <input
             type="range"
@@ -433,8 +433,8 @@ load()
           />
         </div>
         <div>
-          <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-            RAM Alert Threshold (%): <span class="text-emerald-300 font-mono font-bold">{{ form.memory_threshold_percent }}%</span>
+          <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+            RAM Alert Threshold (%): <span class="text-emerald-700 font-mono font-bold">{{ form.memory_threshold_percent }}%</span>
           </label>
           <input
             type="range"
@@ -459,7 +459,7 @@ load()
           type="button"
           @click="testAlert"
           :disabled="testing || (!form.webhook_url && !form.telegram_bot_token)"
-          class="cyber-btn-secondary flex items-center gap-1.5 text-xs py-2 px-4 text-cyan-300 disabled:opacity-40"
+          class="cyber-btn-secondary flex items-center gap-1.5 text-xs py-2 px-4 text-cyan-700 disabled:opacity-40"
           title="Send a sample notification right now to test the connection"
         >
           <RotateCcw v-if="testing" class="h-3.5 w-3.5 animate-spin" />
@@ -471,7 +471,7 @@ load()
           type="button"
           @click="save"
           :disabled="saving"
-          class="cyber-btn flex items-center gap-1.5 text-xs py-2 px-5 text-white bg-indigo-600/80 hover:bg-indigo-600 border-indigo-500"
+          class="cyber-btn flex items-center gap-1.5 text-xs py-2 px-5 text-slate-900 bg-indigo-600/80 hover:bg-indigo-600 border-indigo-500"
         >
           <RotateCcw v-if="saving" class="h-3.5 w-3.5 animate-spin" />
           <Save v-else class="h-3.5 w-3.5" />

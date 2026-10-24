@@ -147,7 +147,7 @@ function getContainerName(serviceUrl: string): string {
           <select
             v-model="autoRefreshInterval"
             @change="onIntervalChange"
-            class="bg-transparent text-gray-200 outline-none cursor-pointer"
+            class="bg-transparent text-slate-800 outline-none cursor-pointer"
           >
             <option :value="10">10s</option>
             <option :value="30">30s</option>
@@ -170,7 +170,7 @@ function getContainerName(serviceUrl: string): string {
           <span class="text-xs font-mono uppercase tracking-wider">Total Targets</span>
           <Activity class="w-4 h-4 text-neon" />
         </div>
-        <p class="text-2xl font-bold font-mono text-gray-100">{{ results.length }}</p>
+        <p class="text-2xl font-bold font-mono text-slate-900">{{ results.length }}</p>
       </div>
 
       <div class="cyber-card p-4">
@@ -186,7 +186,7 @@ function getContainerName(serviceUrl: string): string {
           <span class="text-xs font-mono uppercase tracking-wider">Degraded / Down</span>
           <XCircle class="w-4 h-4 text-danger" />
         </div>
-        <p class="text-2xl font-bold font-mono" :class="offlineCount > 0 ? 'text-danger' : 'text-gray-400'">
+        <p class="text-2xl font-bold font-mono" :class="offlineCount > 0 ? 'text-danger' : 'text-slate-600'">
           {{ offlineCount }}
         </p>
       </div>
@@ -218,21 +218,21 @@ function getContainerName(serviceUrl: string): string {
         <button
           @click="filterStatus = 'all'"
           class="px-3 py-1 text-xs font-mono rounded transition-colors"
-          :class="filterStatus === 'all' ? 'bg-neon/15 text-neon font-medium' : 'text-muted hover:text-gray-200'"
+          :class="filterStatus === 'all' ? 'bg-neon/15 text-neon font-medium' : 'text-muted hover:text-slate-800'"
         >
           All ({{ results.length }})
         </button>
         <button
           @click="filterStatus = 'up'"
           class="px-3 py-1 text-xs font-mono rounded transition-colors"
-          :class="filterStatus === 'up' ? 'bg-neon/15 text-neon font-medium' : 'text-muted hover:text-gray-200'"
+          :class="filterStatus === 'up' ? 'bg-neon/15 text-neon font-medium' : 'text-muted hover:text-slate-800'"
         >
           Online ({{ onlineCount }})
         </button>
         <button
           @click="filterStatus = 'down'"
           class="px-3 py-1 text-xs font-mono rounded transition-colors"
-          :class="filterStatus === 'down' ? 'bg-danger/15 text-danger font-medium' : 'text-muted hover:text-gray-200'"
+          :class="filterStatus === 'down' ? 'bg-danger/15 text-danger font-medium' : 'text-muted hover:text-slate-800'"
         >
           Down ({{ offlineCount }})
         </button>
@@ -259,7 +259,7 @@ function getContainerName(serviceUrl: string): string {
                 :href="'https://' + r.hostname"
                 target="_blank"
                 rel="noopener"
-                class="text-sm font-semibold text-gray-100 font-mono hover:text-neon transition-colors flex items-center gap-1.5"
+                class="text-sm font-semibold text-slate-900 font-mono hover:text-neon transition-colors flex items-center gap-1.5"
               >
                 {{ r.hostname }}
                 <ExternalLink class="w-3.5 h-3.5 text-muted inline" />
@@ -267,7 +267,7 @@ function getContainerName(serviceUrl: string): string {
             </div>
 
             <div class="flex flex-wrap items-center gap-3 text-xs text-muted font-mono">
-              <span>Target: <strong class="text-gray-300">{{ r.service }}</strong></span>
+              <span>Target: <strong class="text-slate-700">{{ r.service }}</strong></span>
               <span v-if="getContainerName(r.service)">• Container: <strong class="text-cyan">{{ getContainerName(r.service) }}</strong></span>
             </div>
           </div>

@@ -206,21 +206,21 @@ function formatTimeAgo(dateStr: string): string {
 function getAuditBadge(action: string): { icon: any; color: string; label: string } {
   const act = (action || '').toLowerCase()
   if (act.includes('container') || act.includes('docker')) {
-    return { icon: Box, color: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20', label: 'Docker' }
+    return { icon: Box, color: 'text-indigo-600 bg-indigo-500/10 border-indigo-500/20', label: 'Docker' }
   }
   if (act.includes('tunnel') || act.includes('cloudflare') || act.includes('dns')) {
-    return { icon: Globe, color: 'text-orange-400 bg-orange-500/10 border-orange-500/20', label: 'Tunnel' }
+    return { icon: Globe, color: 'text-orange-600 bg-orange-500/10 border-orange-500/20', label: 'Tunnel' }
   }
   if (act.includes('tailscale') || act.includes('wireguard') || act.includes('mesh')) {
-    return { icon: Radio, color: 'text-purple-400 bg-purple-500/10 border-purple-500/20', label: 'Mesh' }
+    return { icon: Radio, color: 'text-purple-600 bg-purple-500/10 border-purple-500/20', label: 'Mesh' }
   }
   if (act.includes('config') || act.includes('backup')) {
-    return { icon: Layers, color: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20', label: 'Config' }
+    return { icon: Layers, color: 'text-cyan-600 bg-cyan-500/10 border-cyan-500/20', label: 'Config' }
   }
   if (act.includes('project') || act.includes('deploy')) {
-    return { icon: FolderOpen, color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20', label: 'Project' }
+    return { icon: FolderOpen, color: 'text-emerald-600 bg-emerald-500/10 border-emerald-500/20', label: 'Project' }
   }
-  return { icon: Shield, color: 'text-slate-400 bg-slate-800 border-slate-700', label: 'System' }
+  return { icon: Shield, color: 'text-slate-600 bg-slate-100 border-slate-300', label: 'System' }
 }
 
 function parseContainerPorts(portsStr?: string): { hostPort: string; targetPort: string } {
@@ -615,17 +615,17 @@ onUnmounted(() => {
 <template>
   <div class="space-y-6">
     <!-- Header Section -->
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-800/80 pb-4">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200/80 pb-4">
       <div>
         <div class="flex items-center gap-2">
-          <p class="text-[11px] font-semibold uppercase tracking-wider text-indigo-400">System Telemetry & Status</p>
-          <span class="rounded bg-slate-800 px-1.5 py-0.2 text-[10px] font-mono text-slate-300">DockTun Core</span>
+          <p class="text-[11px] font-semibold uppercase tracking-wider text-indigo-600">System Telemetry & Status</p>
+          <span class="rounded bg-slate-100 px-1.5 py-0.2 text-[10px] font-mono text-slate-700">DockTun Core</span>
         </div>
-        <h1 class="text-2xl font-bold tracking-tight text-white flex items-center gap-3 mt-1">
+        <h1 class="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-3 mt-1">
           <span>Infrastructure Overview</span>
           <span
             class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold"
-            :class="isTunnelRunning ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/10 text-rose-400 border border-rose-500/30'"
+            :class="isTunnelRunning ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30' : 'bg-rose-500/10 text-rose-600 border border-rose-500/30'"
           >
             <span class="h-1.5 w-1.5 rounded-full" :class="isTunnelRunning ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'"></span>
             <span>{{ isTunnelRunning ? 'Tunnel Active' : 'Tunnel Degraded' }}</span>
@@ -637,7 +637,7 @@ onUnmounted(() => {
         <button
           @click="triggerDnsSync"
           :disabled="dnsSyncing"
-          class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-2 px-3 text-slate-200"
+          class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-2 px-3 text-slate-800"
           title="Sync all ingress rules directly to Cloudflare DNS CNAME records"
         >
           <RefreshCw class="h-3.5 w-3.5" :class="dnsSyncing ? 'animate-spin' : ''" />
@@ -672,19 +672,19 @@ onUnmounted(() => {
       class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-200 flex flex-col sm:flex-row sm:items-start justify-between gap-3 shadow-lg"
     >
       <div class="flex items-start gap-3">
-        <AlertCircle class="h-5 w-5 text-rose-400 mt-0.5 shrink-0" />
+        <AlertCircle class="h-5 w-5 text-rose-600 mt-0.5 shrink-0" />
         <div class="space-y-2">
-          <p class="font-bold text-rose-300 text-sm">
+          <p class="font-bold text-rose-700 text-sm">
             Cloudflare Tunnel is {{ status?.status || 'degraded' }}
           </p>
-          <p v-if="status?.last_error" class="font-mono text-[11px] text-rose-200/90 bg-slate-950/80 p-2.5 rounded-lg border border-rose-900/50 whitespace-pre-wrap">
+          <p v-if="status?.last_error" class="font-mono text-[11px] text-rose-200/90 bg-slate-50/80 p-2.5 rounded-lg border border-rose-900/50 whitespace-pre-wrap">
             {{ status.last_error }}
           </p>
           <div class="flex items-center gap-3 pt-1 text-[11px]">
-            <router-link to="/access?tab=cloudflare" class="text-indigo-400 hover:underline font-semibold flex items-center gap-1">
+            <router-link to="/access?tab=cloudflare" class="text-indigo-600 hover:underline font-semibold flex items-center gap-1">
               <span>Inspect Tunnel Ingress Config &rarr;</span>
             </router-link>
-            <router-link to="/logs" class="text-slate-300 hover:underline font-semibold flex items-center gap-1">
+            <router-link to="/logs" class="text-slate-700 hover:underline font-semibold flex items-center gap-1">
               <span>View Tunnel Logs &rarr;</span>
             </router-link>
           </div>
@@ -705,9 +705,9 @@ onUnmounted(() => {
       <!-- 1. Cloudflare Tunnel Card -->
       <div class="cyber-card flex flex-col justify-between">
         <div>
-          <div class="flex items-center justify-between text-slate-400">
+          <div class="flex items-center justify-between text-slate-600">
             <span class="text-[11px] font-semibold uppercase tracking-wider">Cloudflare Tunnel</span>
-            <div class="p-1 rounded-md bg-orange-500/10 text-orange-400">
+            <div class="p-1 rounded-md bg-orange-500/10 text-orange-600">
               <Globe class="h-3.5 w-3.5" />
             </div>
           </div>
@@ -722,7 +722,7 @@ onUnmounted(() => {
                 :class="isTunnelRunning ? 'bg-emerald-500' : 'bg-rose-500'"
               ></span>
             </span>
-            <span class="text-base font-bold text-white truncate" :title="status?.tunnel_name || 'Active'">
+            <span class="text-base font-bold text-slate-900 truncate" :title="status?.tunnel_name || 'Active'">
               {{ status?.tunnel_name || 'docktun' }}
             </span>
           </div>
@@ -732,10 +732,10 @@ onUnmounted(() => {
             <span
               v-for="colo in (status?.colo_locations || [])"
               :key="colo"
-              class="inline-flex items-center gap-1 rounded bg-slate-800 border border-slate-700 px-1.5 py-0.5 text-[10px] font-mono text-cyan-300 font-semibold"
+              class="inline-flex items-center gap-1 rounded bg-slate-100 border border-slate-300 px-1.5 py-0.5 text-[10px] font-mono text-cyan-700 font-semibold"
               :title="`Edge Datacenter: ${colo}`"
             >
-              <Radio class="h-2.5 w-2.5 text-emerald-400 animate-pulse" />
+              <Radio class="h-2.5 w-2.5 text-emerald-600 animate-pulse" />
               <span>{{ colo }}</span>
             </span>
             <span v-if="!status?.colo_locations?.length && isTunnelRunning" class="text-[11px] text-slate-500 font-mono">
@@ -744,9 +744,9 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div class="mt-3 border-t border-slate-800/80 pt-2 flex items-center justify-between text-xs text-slate-400">
+        <div class="mt-3 border-t border-slate-200/80 pt-2 flex items-center justify-between text-xs text-slate-600">
           <span class="truncate">Uptime: {{ status?.uptime || '—' }}</span>
-          <span class="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-indigo-300 font-mono font-medium">
+          <span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-indigo-700 font-mono font-medium">
             {{ status?.ha_connections ? `${status.ha_connections} HA Links` : (status?.protocol || 'HTTP/2') }}
           </span>
         </div>
@@ -755,37 +755,37 @@ onUnmounted(() => {
       <!-- 2. Traffic & Origin Health Card -->
       <div class="cyber-card flex flex-col justify-between">
         <div>
-          <div class="flex items-center justify-between text-slate-400">
+          <div class="flex items-center justify-between text-slate-600">
             <span class="text-[11px] font-semibold uppercase tracking-wider">Traffic & Origins</span>
-            <div class="p-1 rounded-md bg-emerald-500/10 text-emerald-400">
+            <div class="p-1 rounded-md bg-emerald-500/10 text-emerald-600">
               <Activity class="h-3.5 w-3.5" />
             </div>
           </div>
           <div class="mt-2.5 flex items-baseline gap-2">
-            <span class="text-2xl font-bold font-mono text-white">
+            <span class="text-2xl font-bold font-mono text-slate-900">
               {{ status?.total_requests?.toLocaleString() || '0' }}
             </span>
-            <span class="text-xs text-slate-400">total requests</span>
+            <span class="text-xs text-slate-600">total requests</span>
           </div>
 
           <!-- Origin Health Dial Probe -->
           <div class="mt-2 flex items-center gap-2 text-xs">
             <span
               class="inline-flex items-center gap-1 text-[11px] font-mono font-bold"
-              :class="originHealthSummary.allUp ? 'text-emerald-400' : 'text-amber-400'"
+              :class="originHealthSummary.allUp ? 'text-emerald-600' : 'text-amber-600'"
             >
               <Activity class="h-3 w-3" />
               <span>{{ originHealthSummary.up }}/{{ originHealthSummary.total }} Healthy</span>
             </span>
-            <span class="text-[10px] font-mono text-cyan-300 px-1.5 py-0.2 rounded bg-slate-800 border border-slate-700">
+            <span class="text-[10px] font-mono text-cyan-700 px-1.5 py-0.2 rounded bg-slate-100 border border-slate-300">
               {{ originHealthSummary.avgLatency }}
             </span>
           </div>
         </div>
 
-        <div class="mt-3 border-t border-slate-800/80 pt-2 flex items-center justify-between text-xs text-slate-400">
-          <span class="text-slate-400">Active edge streams:</span>
-          <span class="font-mono text-emerald-400 font-bold">
+        <div class="mt-3 border-t border-slate-200/80 pt-2 flex items-center justify-between text-xs text-slate-600">
+          <span class="text-slate-600">Active edge streams:</span>
+          <span class="font-mono text-emerald-600 font-bold">
             {{ status?.active_connections || 0 }} live
           </span>
         </div>
@@ -794,33 +794,33 @@ onUnmounted(() => {
       <!-- 3. Container Fleet & Stacks Card -->
       <div class="cyber-card flex flex-col justify-between">
         <div>
-          <div class="flex items-center justify-between text-slate-400">
+          <div class="flex items-center justify-between text-slate-600">
             <span class="text-[11px] font-semibold uppercase tracking-wider">Container Fleet</span>
-            <div class="p-1 rounded-md bg-indigo-500/10 text-indigo-400">
+            <div class="p-1 rounded-md bg-indigo-500/10 text-indigo-600">
               <Server class="h-3.5 w-3.5" />
             </div>
           </div>
           <div class="mt-2.5 flex items-baseline gap-2">
-            <span class="text-2xl font-bold text-white font-mono">{{ containerStats.running }}</span>
-            <span class="text-xs text-slate-400">/ {{ containerStats.total }} running</span>
+            <span class="text-2xl font-bold text-slate-900 font-mono">{{ containerStats.running }}</span>
+            <span class="text-xs text-slate-600">/ {{ containerStats.total }} running</span>
           </div>
 
           <div class="mt-2 flex items-center gap-2 text-xs">
-            <span class="text-[11px] font-mono text-purple-300 bg-purple-500/10 border border-purple-500/20 px-2 py-0.2 rounded">
+            <span class="text-[11px] font-mono text-purple-700 bg-purple-500/10 border border-purple-500/20 px-2 py-0.2 rounded">
               {{ dashboardStackGroups.length }} Stacks
             </span>
-            <span :class="containerStats.stopped > 0 ? 'text-amber-400 font-medium' : 'text-slate-500'" class="text-[11px] font-mono">
+            <span :class="containerStats.stopped > 0 ? 'text-amber-600 font-medium' : 'text-slate-500'" class="text-[11px] font-mono">
               {{ containerStats.stopped }} stopped
             </span>
           </div>
         </div>
 
-        <div class="mt-3 border-t border-slate-800/80 pt-2 flex items-center justify-between text-xs text-slate-400">
+        <div class="mt-3 border-t border-slate-200/80 pt-2 flex items-center justify-between text-xs text-slate-600">
           <div>
             <router-link
               v-if="containerStats.updatesCount > 0"
               to="/containers"
-              class="inline-flex items-center gap-1 rounded bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.2 text-[10px] font-bold text-amber-300 animate-pulse hover:bg-amber-500/30"
+              class="inline-flex items-center gap-1 rounded bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.2 text-[10px] font-bold text-amber-700 animate-pulse hover:bg-amber-500/30"
               title="Click to view containers with updates available"
             >
               <Sparkles class="h-2.5 w-2.5" />
@@ -830,39 +830,39 @@ onUnmounted(() => {
               All up to date
             </span>
           </div>
-          <router-link to="/containers" class="text-indigo-400 hover:underline">Manage &rarr;</router-link>
+          <router-link to="/containers" class="text-indigo-600 hover:underline">Manage &rarr;</router-link>
         </div>
       </div>
 
       <!-- 4. Combined Resource Load Card -->
       <div class="cyber-card flex flex-col justify-between">
         <div>
-          <div class="flex items-center justify-between text-slate-400">
+          <div class="flex items-center justify-between text-slate-600">
             <span class="text-[11px] font-semibold uppercase tracking-wider">Host Resources</span>
-            <div class="p-1 rounded-md bg-purple-500/10 text-purple-400">
+            <div class="p-1 rounded-md bg-purple-500/10 text-purple-600">
               <Cpu class="h-3.5 w-3.5" />
             </div>
           </div>
           <div class="mt-2.5 flex items-center justify-between">
             <div class="flex items-baseline gap-1.5">
-              <span class="text-xl font-bold text-white font-mono">{{ containerStats.cpuPercent }}</span>
-              <span class="text-[11px] text-slate-400">CPU</span>
+              <span class="text-xl font-bold text-slate-900 font-mono">{{ containerStats.cpuPercent }}</span>
+              <span class="text-[11px] text-slate-600">CPU</span>
             </div>
             <div class="text-right font-mono text-xs">
-              <span class="text-emerald-400 font-bold">{{ containerStats.totalMemStr }}</span>
+              <span class="text-emerald-600 font-bold">{{ containerStats.totalMemStr }}</span>
               <span class="text-[10px] text-slate-500 block">/ {{ status?.docker_system?.mem_total_str || containerStats.totalLimitStr }}</span>
             </div>
           </div>
 
-          <div class="mt-2 flex items-center justify-between text-[11px] font-mono text-slate-400">
+          <div class="mt-2 flex items-center justify-between text-[11px] font-mono text-slate-600">
             <span>Engine: v{{ status?.docker_system?.server_version || '—' }} ({{ status?.docker_system?.architecture || 'x86_64' }})</span>
-            <span class="text-purple-300 font-semibold">{{ status?.docker_system?.cpus ? `${status.docker_system.cpus} vCPU` : '' }}</span>
+            <span class="text-purple-700 font-semibold">{{ status?.docker_system?.cpus ? `${status.docker_system.cpus} vCPU` : '' }}</span>
           </div>
         </div>
 
         <!-- Progress Bar -->
-        <div class="mt-3 border-t border-slate-800/80 pt-2 space-y-1">
-          <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+        <div class="mt-3 border-t border-slate-200/80 pt-2 space-y-1">
+          <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
             <div
               class="h-full bg-indigo-500 transition-all duration-300 rounded-full"
               :style="{ width: `${containerStats.cpuNum}%` }"
@@ -873,20 +873,20 @@ onUnmounted(() => {
     </div>
 
     <!-- Remote Access Multi-Pillar Connectivity Summary Banner -->
-    <div class="cyber-card p-4 bg-slate-900/40 border-slate-800/90">
+    <div class="cyber-card p-4 bg-white/40 border-slate-200/90">
       <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shrink-0">
+          <div class="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-600 border border-indigo-500/20 shrink-0">
             <Globe class="h-5 w-5" />
           </div>
           <div>
             <div class="flex items-center gap-2">
-              <h3 class="text-xs font-semibold text-white">Remote Access & Mesh Connectivity</h3>
-              <span class="text-[10px] font-mono text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.2 rounded">
+              <h3 class="text-xs font-semibold text-slate-900">Remote Access & Mesh Connectivity</h3>
+              <span class="text-[10px] font-mono text-indigo-700 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.2 rounded">
                 Ingress Hub
               </span>
             </div>
-            <p class="text-[11px] text-slate-400 mt-0.5">Unified secure ingress across Cloudflare edge tunnels, Tailscale zero-trust, and WireGuard VPN</p>
+            <p class="text-[11px] text-slate-600 mt-0.5">Unified secure ingress across Cloudflare edge tunnels, Tailscale zero-trust, and WireGuard VPN</p>
           </div>
         </div>
 
@@ -894,26 +894,26 @@ onUnmounted(() => {
           <!-- Cloudflare Badge Link -->
           <router-link
             to="/access?tab=cloudflare"
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono hover:border-orange-500/50 hover:bg-slate-900 transition group"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono hover:border-orange-500/50 hover:bg-white transition group"
             title="Configure Cloudflare Tunnel Ingress Routes"
           >
             <span class="h-2 w-2 rounded-full" :class="isTunnelRunning ? 'bg-emerald-400' : 'bg-rose-400'"></span>
-            <span class="text-slate-400 group-hover:text-slate-200">Cloudflare:</span>
-            <span class="text-orange-300 font-semibold">{{ status?.hostnames?.length || 0 }} routes</span>
+            <span class="text-slate-600 group-hover:text-slate-800">Cloudflare:</span>
+            <span class="text-orange-700 font-semibold">{{ status?.hostnames?.length || 0 }} routes</span>
           </router-link>
 
           <!-- Tailscale Badge Link -->
           <router-link
             to="/access?tab=tailscale"
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono hover:border-purple-500/50 hover:bg-slate-900 transition group"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono hover:border-purple-500/50 hover:bg-white transition group"
             title="Configure Tailscale Zero-Trust Mesh"
           >
             <span
               class="h-2 w-2 rounded-full"
               :class="remoteAccessOverview?.tailscale?.backend_state === 'Running' ? 'bg-emerald-400' : 'bg-slate-500'"
             ></span>
-            <span class="text-slate-400 group-hover:text-slate-200">Tailscale:</span>
-            <span class="text-purple-300 font-semibold">
+            <span class="text-slate-600 group-hover:text-slate-800">Tailscale:</span>
+            <span class="text-purple-700 font-semibold">
               {{ remoteAccessOverview?.tailscale?.backend_state === 'Running' ? 'Connected' : 'Stopped' }}
             </span>
           </router-link>
@@ -921,15 +921,15 @@ onUnmounted(() => {
           <!-- WireGuard Badge Link -->
           <router-link
             to="/access?tab=wireguard"
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono hover:border-emerald-500/50 hover:bg-slate-900 transition group"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono hover:border-emerald-500/50 hover:bg-white transition group"
             title="Configure WireGuard Peer VPN"
           >
             <span
               class="h-2 w-2 rounded-full"
               :class="remoteAccessOverview?.wireguard?.running ? 'bg-emerald-400' : 'bg-slate-500'"
             ></span>
-            <span class="text-slate-400 group-hover:text-slate-200">WireGuard:</span>
-            <span class="text-emerald-300 font-semibold">
+            <span class="text-slate-600 group-hover:text-slate-800">WireGuard:</span>
+            <span class="text-emerald-700 font-semibold">
               {{ remoteAccessOverview?.wireguard?.running ? `${remoteAccessOverview.wireguard.peers_count} peers` : 'Inactive' }}
             </span>
           </router-link>
@@ -937,10 +937,10 @@ onUnmounted(() => {
           <!-- Reworked Control Button -->
           <router-link
             to="/access"
-            class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-3 text-indigo-300 border-indigo-500/30 hover:bg-indigo-600/10 hover:border-indigo-400 transition"
+            class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-3 text-indigo-700 border-indigo-500/30 hover:bg-indigo-600/10 hover:border-indigo-400 transition"
             title="Open Ingress & Mesh Control Center"
           >
-            <ShieldCheck class="h-3.5 w-3.5 text-indigo-400" />
+            <ShieldCheck class="h-3.5 w-3.5 text-indigo-600" />
             <span class="font-medium">Configure Ingress & Mesh</span>
             <ArrowRight class="h-3.5 w-3.5 ml-0.5" />
           </router-link>
@@ -950,35 +950,35 @@ onUnmounted(() => {
 
     <!-- Combined Ingress Routing & Origin Health Directory -->
     <div class="cyber-card space-y-4">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/80 pb-3">
         <div class="flex items-center gap-2">
-          <Layers class="h-4 w-4 text-indigo-400" />
-          <h2 class="text-xs font-semibold text-white">
+          <Layers class="h-4 w-4 text-indigo-600" />
+          <h2 class="text-xs font-semibold text-slate-900">
             Ingress Routing & Origin Health
           </h2>
         </div>
 
         <div class="flex items-center gap-2 flex-wrap">
           <!-- Route Switcher Tabs -->
-          <div class="flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-950 p-1 text-xs">
+          <div class="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 text-xs">
             <button
               @click="routesTab = 'public'"
               class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition"
-              :class="routesTab === 'public' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+              :class="routesTab === 'public' ? 'bg-slate-100 text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
             >
-              <Globe class="h-3.5 w-3.5 text-orange-400" />
+              <Globe class="h-3.5 w-3.5 text-orange-600" />
               <span>Public Hostnames (Cloudflare)</span>
-              <span class="rounded bg-slate-900 px-1.5 py-0.2 text-[10px] text-orange-300 font-mono">{{ publicRoutes.length }}</span>
+              <span class="rounded bg-white px-1.5 py-0.2 text-[10px] text-orange-700 font-mono">{{ publicRoutes.length }}</span>
             </button>
 
             <button
               @click="routesTab = 'local'"
               class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition"
-              :class="routesTab === 'local' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+              :class="routesTab === 'local' ? 'bg-slate-100 text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
             >
-              <Wifi class="h-3.5 w-3.5 text-indigo-400" />
+              <Wifi class="h-3.5 w-3.5 text-indigo-600" />
               <span>Local Network (.local)</span>
-              <span class="rounded bg-slate-900 px-1.5 py-0.2 text-[10px] text-indigo-300 font-mono">{{ localServices.length }}</span>
+              <span class="rounded bg-white px-1.5 py-0.2 text-[10px] text-indigo-700 font-mono">{{ localServices.length }}</span>
             </button>
           </div>
 
@@ -986,7 +986,7 @@ onUnmounted(() => {
           <button
             @click="fetchHealth"
             :disabled="probingHealth"
-            class="cyber-btn-secondary text-xs flex items-center gap-1 py-1 px-2.5 text-slate-300"
+            class="cyber-btn-secondary text-xs flex items-center gap-1 py-1 px-2.5 text-slate-700"
             title="Probe live latency of ingress origins"
           >
             <RotateCcw class="h-3 w-3" :class="probingHealth ? 'animate-spin' : ''" />
@@ -994,7 +994,7 @@ onUnmounted(() => {
           </button>
           <router-link
             to="/access?tab=cloudflare"
-            class="cyber-btn-secondary text-xs flex items-center gap-1 py-1 px-2.5 text-indigo-300 hover:text-white"
+            class="cyber-btn-secondary text-xs flex items-center gap-1 py-1 px-2.5 text-indigo-700 hover:text-slate-900"
           >
             <span>Manage Rules</span>
             <ArrowRight class="h-3 w-3" />
@@ -1011,17 +1011,17 @@ onUnmounted(() => {
           <div
             v-for="r in publicRoutes"
             :key="r.hostname"
-            class="flex flex-col justify-between rounded-xl border border-slate-800/90 bg-slate-950 p-3.5 hover:border-slate-700 transition group shadow-sm"
+            class="flex flex-col justify-between rounded-xl border border-slate-200/90 bg-slate-50 p-3.5 hover:border-slate-300 transition group shadow-sm"
           >
             <div>
               <div class="flex items-center justify-between gap-2 mb-1.5">
                 <div class="flex items-center gap-2 truncate">
-                  <ShieldCheck class="h-4 w-4 text-emerald-400 shrink-0" />
+                  <ShieldCheck class="h-4 w-4 text-emerald-600 shrink-0" />
                   <a
                     :href="`https://${r.hostname}`"
                     target="_blank"
                     rel="noopener"
-                    class="font-mono text-xs font-bold text-white hover:text-indigo-300 truncate hover:underline"
+                    class="font-mono text-xs font-bold text-slate-900 hover:text-indigo-700 truncate hover:underline"
                     :title="`Open https://${r.hostname}`"
                   >
                     {{ r.hostname }}
@@ -1031,7 +1031,7 @@ onUnmounted(() => {
                 <!-- Latency Badge -->
                 <span
                   class="rounded-md px-2 py-0.5 text-[10px] font-mono font-semibold shrink-0"
-                  :class="r.status === 'up' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : (r.status === 'down' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30' : 'bg-slate-800 text-slate-400 border border-slate-700')"
+                  :class="r.status === 'up' ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30' : (r.status === 'down' ? 'bg-rose-500/10 text-rose-600 border border-rose-500/30' : 'bg-slate-100 text-slate-600 border border-slate-300')"
                 >
                   <span v-if="r.status === 'up'" class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 mr-1 animate-pulse"></span>
                   {{ r.status === 'up' ? r.latency : (r.status === 'down' ? 'TIMEOUT' : 'Edge Active') }}
@@ -1039,38 +1039,38 @@ onUnmounted(() => {
               </div>
 
               <!-- Target Origin Container Link -->
-              <div class="flex items-center gap-1.5 text-[11px] text-slate-400 font-mono truncate">
+              <div class="flex items-center gap-1.5 text-[11px] text-slate-600 font-mono truncate">
                 <span class="text-slate-500">&rarr;</span>
                 <span v-if="!r.service" class="text-slate-500">Cloudflare Edge Ingress</span>
                 <router-link
                   v-else-if="r.container"
                   :to="'/containers?name=' + encodeURIComponent(r.container)"
-                  class="text-indigo-400 hover:text-indigo-300 hover:underline truncate"
+                  class="text-indigo-600 hover:text-indigo-700 hover:underline truncate"
                   :title="`Inspect container '${r.container}'`"
                 >
                   {{ r.service }}
                 </router-link>
-                <span v-else class="text-slate-400 truncate">{{ r.service }}</span>
+                <span v-else class="text-slate-600 truncate">{{ r.service }}</span>
               </div>
             </div>
 
             <!-- Actions Bar -->
-            <div class="flex items-center justify-between pt-2.5 mt-2.5 border-t border-slate-800/60 text-xs">
+            <div class="flex items-center justify-between pt-2.5 mt-2.5 border-t border-slate-200/60 text-xs">
               <span class="text-[10px] font-mono text-slate-500 uppercase">HTTPS &bull; Cloudflare Edge</span>
               <div class="flex items-center gap-1">
                 <button
                   @click="copyUrl(`https://${r.hostname}`)"
-                  class="p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition"
+                  class="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition"
                   :title="copiedHost === `https://${r.hostname}` ? 'Copied!' : 'Copy URL'"
                 >
-                  <Check v-if="copiedHost === `https://${r.hostname}`" class="h-3.5 w-3.5 text-emerald-400" />
+                  <Check v-if="copiedHost === `https://${r.hostname}`" class="h-3.5 w-3.5 text-emerald-600" />
                   <Copy v-else class="h-3.5 w-3.5" />
                 </button>
                 <a
                   :href="`https://${r.hostname}`"
                   target="_blank"
                   rel="noopener"
-                  class="p-1.5 rounded-lg text-indigo-400 hover:bg-indigo-500/10 hover:text-indigo-300 transition"
+                  class="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-500/10 hover:text-indigo-700 transition"
                   title="Open URL in new tab"
                 >
                   <ExternalLink class="h-3.5 w-3.5" />
@@ -1090,27 +1090,27 @@ onUnmounted(() => {
           <div
             v-for="svc in localServices"
             :key="svc.id"
-            class="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950 p-3 hover:border-slate-700 transition group"
+            class="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3 hover:border-slate-300 transition group"
           >
             <div class="truncate pr-2">
               <div class="flex items-center gap-1.5">
                 <span class="h-2 w-2 rounded-full bg-emerald-400 shrink-0"></span>
                 <router-link
                   :to="'/containers?id=' + encodeURIComponent(svc.id)"
-                  class="font-mono text-xs font-semibold text-slate-200 hover:text-white truncate hover:underline"
+                  class="font-mono text-xs font-semibold text-slate-800 hover:text-slate-900 truncate hover:underline"
                   :title="`Inspect container '${svc.name}' in Control Center`"
                 >
                   {{ svc.name }}
                 </router-link>
                 <span
                   v-if="svc.hostPort"
-                  class="px-1.5 py-0.2 rounded bg-indigo-500/10 border border-indigo-500/30 text-[10px] font-mono text-indigo-300 font-semibold shrink-0"
+                  class="px-1.5 py-0.2 rounded bg-indigo-500/10 border border-indigo-500/30 text-[10px] font-mono text-indigo-700 font-semibold shrink-0"
                   :title="`Published host port: ${svc.hostPort}`"
                 >
                   :{{ svc.hostPort }}
                 </span>
               </div>
-              <div class="font-mono text-[11px] text-indigo-300 truncate mt-0.5" :title="svc.bestUrl">
+              <div class="font-mono text-[11px] text-indigo-700 truncate mt-0.5" :title="svc.bestUrl">
                 {{ svc.directUrl || svc.publicUrl || svc.localUrl }}
               </div>
             </div>
@@ -1118,17 +1118,17 @@ onUnmounted(() => {
             <div class="flex items-center gap-1 shrink-0">
               <button
                 @click="copyUrl(svc.bestUrl)"
-                class="p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition"
+                class="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-800 transition"
                 :title="copiedHost === svc.bestUrl ? 'Copied!' : 'Copy URL'"
               >
-                <Check v-if="copiedHost === svc.bestUrl" class="h-3.5 w-3.5 text-emerald-400" />
+                <Check v-if="copiedHost === svc.bestUrl" class="h-3.5 w-3.5 text-emerald-600" />
                 <Copy v-else class="h-3.5 w-3.5" />
               </button>
               <a
                 :href="svc.bestUrl"
                 target="_blank"
                 rel="noopener"
-                class="cyber-btn-secondary text-[11px] flex items-center gap-1 py-1 px-2.5 text-indigo-300 hover:text-white"
+                class="cyber-btn-secondary text-[11px] flex items-center gap-1 py-1 px-2.5 text-indigo-700 hover:text-slate-900"
                 :title="`Open ${svc.bestUrl} in new tab`"
               >
                 <span>Open</span>
@@ -1142,16 +1142,16 @@ onUnmounted(() => {
 
     <!-- Grouped Container Fleet & Managed Compose Stacks -->
     <div class="cyber-card space-y-4">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/80 pb-3">
         <div class="flex items-center gap-2 flex-wrap">
-          <Server class="h-4 w-4 text-emerald-400" />
-          <h2 class="text-xs font-semibold text-white">
+          <Server class="h-4 w-4 text-emerald-600" />
+          <h2 class="text-xs font-semibold text-slate-900">
             Container Fleet & Managed Stacks
           </h2>
-          <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
+          <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-mono">
             {{ filteredContainers.length }} / {{ containers.length }} containers
           </span>
-          <span v-if="dashboardStackGroups.length > 0" class="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300 border border-purple-500/30 font-mono">
+          <span v-if="dashboardStackGroups.length > 0" class="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-700 border border-purple-500/30 font-mono">
             {{ dashboardStackGroups.length }} stacks
           </span>
         </div>
@@ -1164,7 +1164,7 @@ onUnmounted(() => {
               v-model="searchQuery"
               type="text"
               placeholder="Search services…"
-              class="w-full pl-8 pr-2.5 py-1 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
+              class="w-full pl-8 pr-2.5 py-1 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-800 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
             />
           </div>
 
@@ -1172,7 +1172,7 @@ onUnmounted(() => {
           <select
             v-if="availableStacks.length > 0"
             v-model="stackFilter"
-            class="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-slate-300 focus:outline-none focus:border-indigo-500 font-mono"
+            class="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-slate-700 focus:outline-none focus:border-indigo-500 font-mono"
           >
             <option value="all">All Stacks</option>
             <option v-for="stk in availableStacks" :key="stk" :value="stk">
@@ -1184,7 +1184,7 @@ onUnmounted(() => {
           <!-- State Filter -->
           <select
             v-model="containerFilter"
-            class="text-xs bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-slate-300 focus:outline-none focus:border-indigo-500 font-mono"
+            class="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-slate-700 focus:outline-none focus:border-indigo-500 font-mono"
           >
             <option value="all">All States</option>
             <option value="running">Running</option>
@@ -1195,7 +1195,7 @@ onUnmounted(() => {
           <!-- Expand / Collapse All Toggle -->
           <button
             @click="areAllCollapsed ? expandAllStacks() : collapseAllStacks()"
-            class="cyber-btn-secondary text-xs flex items-center gap-1 py-1 px-2.5 text-slate-300"
+            class="cyber-btn-secondary text-xs flex items-center gap-1 py-1 px-2.5 text-slate-700"
             :title="areAllCollapsed ? 'Expand all stacks' : 'Collapse all stacks'"
           >
             <component :is="areAllCollapsed ? ChevronRight : ChevronDown" class="h-3.5 w-3.5" />
@@ -1214,38 +1214,38 @@ onUnmounted(() => {
         <div
           v-for="group in dashboardStackGroups"
           :key="group.key"
-          class="rounded-xl border border-slate-800/90 bg-slate-950/70 overflow-hidden transition-all duration-200 hover:border-slate-700/80 shadow-sm"
+          class="rounded-xl border border-slate-200/90 bg-slate-50/70 overflow-hidden transition-all duration-200 hover:border-slate-300/80 shadow-sm"
         >
           <!-- Stack Header Bar -->
           <div
             @click="toggleStackCollapse(group.key)"
-            class="flex flex-col sm:flex-row sm:items-center justify-between px-3.5 py-2.5 gap-2.5 bg-slate-900/60 cursor-pointer select-none transition hover:bg-slate-900/90"
+            class="flex flex-col sm:flex-row sm:items-center justify-between px-3.5 py-2.5 gap-2.5 bg-white/60 cursor-pointer select-none transition hover:bg-white/90"
           >
             <!-- Left: Toggle Chevron + Stack Icon + Title + Metrics -->
             <div class="flex items-center gap-2.5 flex-wrap">
               <component
                 :is="collapsedStacks[group.key] ? ChevronRight : ChevronDown"
-                class="h-4 w-4 text-slate-400 hover:text-indigo-400 transition-colors"
+                class="h-4 w-4 text-slate-600 hover:text-indigo-600 transition-colors"
               />
               <component
                 :is="group.key === 'docktun' ? ShieldCheck : (group.isStack ? Layers : Box)"
                 class="h-4 w-4"
-                :class="group.key === 'docktun' ? 'text-cyan-400' : (group.isStack ? 'text-indigo-400' : 'text-slate-400')"
+                :class="group.key === 'docktun' ? 'text-cyan-600' : (group.isStack ? 'text-indigo-600' : 'text-slate-600')"
               />
-              <span class="font-mono text-xs font-bold text-white">
+              <span class="font-mono text-xs font-bold text-slate-900">
                 {{ group.name }}
               </span>
 
               <!-- Badge: Core or Compose -->
               <span
                 v-if="group.key === 'docktun'"
-                class="rounded bg-cyan-500/10 border border-cyan-500/30 px-1.5 py-0.2 text-[10px] font-mono text-cyan-300 font-semibold"
+                class="rounded bg-cyan-500/10 border border-cyan-500/30 px-1.5 py-0.2 text-[10px] font-mono text-cyan-700 font-semibold"
               >
                 Core Stack
               </span>
               <span
                 v-else-if="group.isStack"
-                class="rounded bg-indigo-500/10 border border-indigo-500/30 px-1.5 py-0.2 text-[10px] font-mono text-indigo-300"
+                class="rounded bg-indigo-500/10 border border-indigo-500/30 px-1.5 py-0.2 text-[10px] font-mono text-indigo-700"
               >
                 Compose Stack
               </span>
@@ -1254,10 +1254,10 @@ onUnmounted(() => {
               <span
                 class="rounded-full px-2 py-0.2 text-[10px] font-mono font-semibold"
                 :class="group.runningCount === group.totalCount && group.totalCount > 0
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                  ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30'
                   : group.runningCount > 0
-                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
-                    : 'bg-slate-800 text-slate-400 border border-slate-700'"
+                    ? 'bg-amber-500/10 text-amber-600 border border-amber-500/30'
+                    : 'bg-slate-100 text-slate-600 border border-slate-300'"
               >
                 {{ group.runningCount }}/{{ group.totalCount }} running
               </span>
@@ -1265,7 +1265,7 @@ onUnmounted(() => {
               <!-- Stack CPU -->
               <span
                 v-if="group.runningCount > 0"
-                class="text-[10px] font-mono text-indigo-300 bg-slate-900 px-1.5 py-0.2 rounded border border-slate-800"
+                class="text-[10px] font-mono text-indigo-700 bg-white px-1.5 py-0.2 rounded border border-slate-200"
               >
                 CPU: {{ group.totalCpu }}
               </span>
@@ -1273,7 +1273,7 @@ onUnmounted(() => {
               <!-- Updates pill -->
               <span
                 v-if="group.hasUpdates"
-                class="rounded-full bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.2 text-[10px] font-bold text-amber-300 animate-pulse"
+                class="rounded-full bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.2 text-[10px] font-bold text-amber-700 animate-pulse"
               >
                 Update Available
               </span>
@@ -1285,7 +1285,7 @@ onUnmounted(() => {
               <router-link
                 v-if="group.projectId"
                 :to="'/containers?project=' + group.projectId + '&tab=compose'"
-                class="cyber-btn-secondary text-[11px] flex items-center gap-1 py-1 px-2 text-indigo-300 hover:text-white"
+                class="cyber-btn-secondary text-[11px] flex items-center gap-1 py-1 px-2 text-indigo-700 hover:text-slate-900"
                 title="Edit Compose YAML & environment"
               >
                 <Code2 class="h-3 w-3" />
@@ -1297,7 +1297,7 @@ onUnmounted(() => {
                 v-if="group.projectId"
                 @click="runStackAction(group.projectId, 'restart')"
                 :disabled="!!stackActionLoading[group.projectId]"
-                class="cyber-btn-secondary text-[11px] flex items-center gap-1 py-1 px-2 text-slate-300 hover:text-white"
+                class="cyber-btn-secondary text-[11px] flex items-center gap-1 py-1 px-2 text-slate-700 hover:text-slate-900"
                 :title="`Restart all services in stack ${group.name}`"
               >
                 <RotateCcw class="h-3 w-3" :class="stackActionLoading[group.projectId] === 'restart' ? 'animate-spin' : ''" />
@@ -1306,7 +1306,7 @@ onUnmounted(() => {
 
               <button
                 @click="toggleStackCollapse(group.key)"
-                class="text-slate-400 hover:text-white p-1 text-xs"
+                class="text-slate-600 hover:text-slate-900 p-1 text-xs"
                 :title="collapsedStacks[group.key] ? 'Expand' : 'Collapse'"
               >
                 <span class="text-[10px] font-mono uppercase">{{ collapsedStacks[group.key] ? 'Expand' : 'Hide' }}</span>
@@ -1315,24 +1315,24 @@ onUnmounted(() => {
           </div>
 
           <!-- Stack Member Containers (Collapsible) -->
-          <div v-show="!collapsedStacks[group.key]" class="divide-y divide-slate-800/50 p-1 bg-slate-950/40">
+          <div v-show="!collapsedStacks[group.key]" class="divide-y divide-slate-200/50 p-1 bg-slate-50/40">
             <div
               v-for="c in group.containers"
               :key="c.id"
-              class="flex flex-col sm:flex-row sm:items-center justify-between py-2.5 px-3 gap-2 transition hover:bg-slate-900/50 rounded-lg"
+              class="flex flex-col sm:flex-row sm:items-center justify-between py-2.5 px-3 gap-2 transition hover:bg-white/50 rounded-lg"
             >
               <!-- Left: Pulsing status, Name, Exposure badge, Uptime (NO image name to keep it clean!) -->
               <div class="flex items-center gap-2.5 min-w-0 flex-1">
                 <span
                   class="h-2.5 w-2.5 flex-shrink-0 rounded-full"
-                  :class="c.running ? 'bg-emerald-400 shadow-sm shadow-emerald-500/50' : 'bg-slate-600'"
+                  :class="c.running ? 'bg-emerald-400 shadow-sm shadow-emerald-500/50' : 'bg-slate-300'"
                 ></span>
 
                 <div class="min-w-0 flex-1">
                   <div class="flex items-center gap-2 flex-wrap">
                     <router-link
                       :to="'/containers?id=' + encodeURIComponent(c.id)"
-                      class="font-mono text-xs font-bold text-white hover:text-indigo-300 truncate hover:underline"
+                      class="font-mono text-xs font-bold text-slate-900 hover:text-indigo-700 truncate hover:underline"
                       :title="`Open ${c.name} in Control Center`"
                     >
                       {{ c.name }}
@@ -1344,7 +1344,7 @@ onUnmounted(() => {
                       :href="resolveContainerUrls(c).bestUrl"
                       target="_blank"
                       rel="noopener"
-                      class="p-0.5 rounded text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition"
+                      class="p-0.5 rounded text-indigo-600 hover:text-indigo-700 hover:bg-indigo-500/10 transition"
                       :title="`Open Web Application: ${resolveContainerUrls(c).bestUrl}`"
                     >
                       <ExternalLink class="h-3 w-3" />
@@ -1353,28 +1353,28 @@ onUnmounted(() => {
                     <!-- Exposure Badge -->
                     <span
                       v-if="c.exposure_mode === 'public'"
-                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[9px] font-mono font-semibold bg-orange-500/10 text-orange-300 border border-orange-500/30"
+                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[9px] font-mono font-semibold bg-orange-500/10 text-orange-700 border border-orange-500/30"
                     >
-                      <Globe class="h-2.5 w-2.5 text-orange-400" />
+                      <Globe class="h-2.5 w-2.5 text-orange-600" />
                       <span>Public: {{ c.hostname }}</span>
                     </span>
                     <span
                       v-else-if="c.exposure_mode === 'private'"
-                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[9px] font-mono font-semibold bg-purple-500/10 text-purple-300 border border-purple-500/30"
+                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[9px] font-mono font-semibold bg-purple-500/10 text-purple-700 border border-purple-500/30"
                     >
-                      <Shield class="h-2.5 w-2.5 text-purple-400" />
+                      <Shield class="h-2.5 w-2.5 text-purple-600" />
                       <span>Private Mesh</span>
                     </span>
                     <span
                       v-else-if="c.running"
-                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[9px] font-mono text-slate-400 bg-slate-900 border border-slate-800"
+                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[9px] font-mono text-slate-600 bg-white border border-slate-200"
                     >
-                      <Wifi class="h-2.5 w-2.5 text-indigo-400" />
+                      <Wifi class="h-2.5 w-2.5 text-indigo-600" />
                       <span>{{ c.name }}.local</span>
                     </span>
                     <span
                       v-else
-                      class="rounded-full px-2 py-0.2 text-[9px] font-mono text-slate-500 bg-slate-900"
+                      class="rounded-full px-2 py-0.2 text-[9px] font-mono text-slate-500 bg-white"
                     >
                       Internal
                     </span>
@@ -1382,14 +1382,14 @@ onUnmounted(() => {
                     <!-- Update Available Badge -->
                     <span
                       v-if="c.update_available"
-                      class="rounded-full px-1.5 py-0.2 text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse"
+                      class="rounded-full px-1.5 py-0.2 text-[9px] font-bold bg-amber-500/20 text-amber-700 border border-amber-500/40 animate-pulse"
                     >
                       Update
                     </span>
                   </div>
 
                   <!-- Uptime without image (Image is kept in Control Panel) -->
-                  <div class="text-[11px] text-slate-400 font-mono mt-0.5 flex items-center gap-1.5">
+                  <div class="text-[11px] text-slate-600 font-mono mt-0.5 flex items-center gap-1.5">
                     <Clock class="h-2.5 w-2.5 text-slate-500" />
                     <span>{{ c.uptime || c.status }}</span>
                     <span v-if="c.ports" class="text-slate-500 truncate max-w-[200px]" :title="c.ports">
@@ -1402,8 +1402,8 @@ onUnmounted(() => {
               <!-- Right: Live CPU/RAM & Actions -->
               <div class="flex items-center justify-between sm:justify-end gap-3 self-end sm:self-auto shrink-0">
                 <div v-if="c.running" class="text-right font-mono text-[11px]">
-                  <span class="text-indigo-400 font-bold mr-2">{{ c.cpu || '0.0%' }}</span>
-                  <span class="text-slate-400">{{ c.memory?.split('/')[0] || '' }}</span>
+                  <span class="text-indigo-600 font-bold mr-2">{{ c.cpu || '0.0%' }}</span>
+                  <span class="text-slate-600">{{ c.memory?.split('/')[0] || '' }}</span>
                 </div>
                 <div v-else class="text-[11px] text-slate-500 font-mono">
                   stopped
@@ -1416,7 +1416,7 @@ onUnmounted(() => {
                     :href="resolveContainerUrls(c).bestUrl"
                     target="_blank"
                     rel="noopener"
-                    class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-indigo-300 transition"
+                    class="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 hover:text-indigo-700 transition"
                     :title="`Open Web UI: ${resolveContainerUrls(c).bestUrl}`"
                   >
                     <ExternalLink class="h-3.5 w-3.5" />
@@ -1424,7 +1424,7 @@ onUnmounted(() => {
 
                   <router-link
                     :to="'/containers?id=' + encodeURIComponent(c.id)"
-                    class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-indigo-300 transition"
+                    class="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 hover:text-indigo-700 transition"
                     :title="`Inspect container '${c.name}' in Control Center`"
                   >
                     <Sliders class="h-3.5 w-3.5" />
@@ -1434,7 +1434,7 @@ onUnmounted(() => {
                     v-if="!c.running"
                     @click="runContainerAction(c, 'start')"
                     :disabled="!!containerActionLoading[c.id]"
-                    class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-emerald-400 transition"
+                    class="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 hover:text-emerald-600 transition"
                     title="Start container"
                   >
                     <Play class="h-3.5 w-3.5 fill-current" />
@@ -1443,7 +1443,7 @@ onUnmounted(() => {
                     v-if="c.running"
                     @click="runContainerAction(c, 'stop')"
                     :disabled="!!containerActionLoading[c.id]"
-                    class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-rose-400 transition"
+                    class="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 hover:text-rose-600 transition"
                     title="Stop container"
                   >
                     <Square class="h-3.5 w-3.5 fill-current" />
@@ -1451,7 +1451,7 @@ onUnmounted(() => {
                   <button
                     @click="runContainerAction(c, 'restart')"
                     :disabled="!!containerActionLoading[c.id]"
-                    class="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white transition"
+                    class="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition"
                     title="Restart container"
                   >
                     <RotateCcw
@@ -1467,14 +1467,14 @@ onUnmounted(() => {
       </div>
 
       <!-- Footer Bar -->
-      <div class="pt-3 border-t border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-        <span class="text-slate-400 font-mono text-[11px]">
+      <div class="pt-3 border-t border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+        <span class="text-slate-600 font-mono text-[11px]">
           Showing {{ dashboardStackGroups.length }} stacks ({{ filteredContainers.length }} containers)
         </span>
         <div class="flex items-center gap-3">
           <router-link
             to="/containers?tab=stacks"
-            class="text-purple-400 hover:text-purple-300 font-medium flex items-center gap-1"
+            class="text-purple-600 hover:text-purple-700 font-medium flex items-center gap-1"
           >
             <FolderOpen class="h-3.5 w-3.5" />
             <span>Manage Stacks &rarr;</span>
@@ -1492,13 +1492,13 @@ onUnmounted(() => {
 
     <!-- Recent System Events (Simplified List View) -->
     <div class="cyber-card space-y-3">
-      <div class="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+      <div class="flex items-center justify-between border-b border-slate-200/80 pb-2.5">
         <div class="flex items-center gap-2">
-          <Shield class="h-4 w-4 text-indigo-400" />
-          <h2 class="text-xs font-semibold text-white">Recent System Events</h2>
+          <Shield class="h-4 w-4 text-indigo-600" />
+          <h2 class="text-xs font-semibold text-slate-900">Recent System Events</h2>
           <span v-if="recentAudits.length > 0" class="text-[10px] text-slate-500 font-mono">({{ recentAudits.length }})</span>
         </div>
-        <router-link to="/audit" class="text-xs text-indigo-400 hover:text-indigo-300 hover:underline flex items-center gap-1 font-medium">
+        <router-link to="/audit" class="text-xs text-indigo-600 hover:text-indigo-700 hover:underline flex items-center gap-1 font-medium">
           <span>View Full Audit Log</span>
           <ArrowRight class="h-3 w-3" />
         </router-link>
@@ -1509,11 +1509,11 @@ onUnmounted(() => {
       </div>
 
       <!-- Scannable Vertical List -->
-      <div v-else class="divide-y divide-slate-800/60">
+      <div v-else class="divide-y divide-slate-200/60">
         <div
           v-for="item in recentAudits"
           :key="item.id"
-          class="py-2.5 px-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs hover:bg-slate-900/40 rounded-lg transition group"
+          class="py-2.5 px-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs hover:bg-white/40 rounded-lg transition group"
         >
           <div class="flex items-start sm:items-center gap-2.5 min-w-0 flex-1">
             <!-- Event Type Badge -->
@@ -1527,10 +1527,10 @@ onUnmounted(() => {
 
             <!-- Action & Detail Description -->
             <div class="min-w-0 flex-1">
-              <span class="font-semibold text-slate-200 capitalize">
+              <span class="font-semibold text-slate-800 capitalize">
                 {{ (item.action || '').replace(/_/g, ' ') }}
               </span>
-              <span v-if="item.detail" class="text-slate-400 ml-1.5 truncate inline-block align-bottom max-w-[280px] sm:max-w-[420px] lg:max-w-[620px]" :title="item.detail">
+              <span v-if="item.detail" class="text-slate-600 ml-1.5 truncate inline-block align-bottom max-w-[280px] sm:max-w-[420px] lg:max-w-[620px]" :title="item.detail">
                 — {{ item.detail }}
               </span>
             </div>
@@ -1538,10 +1538,10 @@ onUnmounted(() => {
 
           <!-- Meta (IP & Time) -->
           <div class="flex items-center gap-2 shrink-0 self-end sm:self-auto text-[11px] text-slate-500 font-mono">
-            <span v-if="item.ip_address" class="px-1.5 py-0.2 rounded bg-slate-950 border border-slate-800/80 text-slate-400">
+            <span v-if="item.ip_address" class="px-1.5 py-0.2 rounded bg-slate-50 border border-slate-200/80 text-slate-600">
               {{ item.ip_address }}
             </span>
-            <span class="text-slate-400 font-medium">{{ formatTimeAgo(item.created_at) }}</span>
+            <span class="text-slate-600 font-medium">{{ formatTimeAgo(item.created_at) }}</span>
           </div>
         </div>
       </div>

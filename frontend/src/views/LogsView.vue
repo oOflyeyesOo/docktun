@@ -163,9 +163,9 @@ const filteredContainerLogs = computed(() => {
 })
 
 function getLogClass(msg: string) {
-  if (msg.includes('ERR') || msg.includes('error') || msg.includes('FAIL')) return 'text-red-400 font-semibold'
-  if (msg.includes('WRN') || msg.includes('warn')) return 'text-amber-400'
-  return 'text-slate-300'
+  if (msg.includes('ERR') || msg.includes('error') || msg.includes('FAIL')) return 'text-red-600 font-semibold'
+  if (msg.includes('WRN') || msg.includes('warn')) return 'text-amber-600'
+  return 'text-slate-700'
 }
 
 function copyAllLogs() {
@@ -262,12 +262,12 @@ const filteredAuditEntries = computed(() => {
 })
 
 function getActionBadgeStyle(action: string) {
-  if (action === 'login') return 'bg-emerald-950/80 text-emerald-400 border-emerald-800/60'
-  if (action === 'logout' || action.includes('delete')) return 'bg-rose-950/80 text-rose-400 border-rose-800/60'
-  if (action.includes('project') || action.includes('compose')) return 'bg-indigo-950/80 text-indigo-300 border-indigo-800/60'
+  if (action === 'login') return 'bg-emerald-50/80 text-emerald-600 border-emerald-800/60'
+  if (action === 'logout' || action.includes('delete')) return 'bg-rose-50/80 text-rose-600 border-rose-800/60'
+  if (action.includes('project') || action.includes('compose')) return 'bg-indigo-50/80 text-indigo-700 border-indigo-800/60'
   if (action.includes('deploy') || action.includes('run')) return 'bg-violet-950/80 text-violet-300 border-violet-800/60'
-  if (action.includes('config')) return 'bg-cyan-950/80 text-cyan-400 border-cyan-800/60'
-  return 'bg-slate-800 text-slate-300 border-slate-700'
+  if (action.includes('config')) return 'bg-cyan-50/80 text-cyan-600 border-cyan-800/60'
+  return 'bg-slate-100 text-slate-700 border-slate-300'
 }
 
 function copyAuditData() {
@@ -317,22 +317,22 @@ onUnmounted(() => {
 <template>
   <div class="space-y-4 h-full flex flex-col">
     <!-- Header with Dual Tabs -->
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-slate-800 pb-3">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200 pb-3">
       <div>
-        <p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">Activity & Telemetry</p>
-        <h1 class="text-xl lg:text-2xl font-bold tracking-tight text-slate-100 flex items-center gap-2">
-          <component :is="activeTab === 'stream' ? ScrollText : Shield" class="h-6 w-6 text-cyan-400" />
+        <p class="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-600">Activity & Telemetry</p>
+        <h1 class="text-xl lg:text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+          <component :is="activeTab === 'stream' ? ScrollText : Shield" class="h-6 w-6 text-cyan-600" />
           <span>{{ activeTab === 'stream' ? 'Realtime Logs' : 'Audit Trail' }}</span>
         </h1>
       </div>
 
       <!-- Tab Switcher -->
       <div class="flex items-center gap-2">
-        <div class="flex rounded-lg border border-slate-800 bg-slate-900/80 p-1">
+        <div class="flex rounded-lg border border-slate-200 bg-white/80 p-1">
           <button
             @click="setTab('stream')"
             class="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all"
-            :class="activeTab === 'stream' ? 'bg-cyan-950/80 text-cyan-300 border border-cyan-800/80 shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+            :class="activeTab === 'stream' ? 'bg-cyan-50/80 text-cyan-700 border border-cyan-800/80 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
           >
             <ScrollText class="h-3.5 w-3.5" />
             <span>Realtime Logs</span>
@@ -340,7 +340,7 @@ onUnmounted(() => {
           <button
             @click="setTab('audit')"
             class="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-all"
-            :class="activeTab === 'audit' ? 'bg-indigo-950/80 text-indigo-300 border border-indigo-800/80 shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+            :class="activeTab === 'audit' ? 'bg-indigo-50/80 text-indigo-700 border border-indigo-800/80 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
           >
             <Shield class="h-3.5 w-3.5" />
             <span>Audit Trail</span>
@@ -354,12 +354,12 @@ onUnmounted(() => {
     <!-- ===================================================================== -->
     <div v-if="activeTab === 'stream'" class="space-y-4 flex-1 flex flex-col">
       <!-- Service Selector & Connection Badge -->
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 rounded-lg p-3 text-xs">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white/60 border border-slate-200 rounded-lg p-3 text-xs">
         <div class="flex flex-wrap items-center gap-2">
-          <label class="text-xs text-slate-400 font-medium">Service Source:</label>
+          <label class="text-xs text-slate-600 font-medium">Service Source:</label>
           <select
             v-model="selectedSource"
-            class="cyber-input text-xs font-mono py-1.5 px-3 min-w-[240px] border-cyan-800/80 bg-slate-900"
+            class="cyber-input text-xs font-mono py-1.5 px-3 min-w-[240px] border-cyan-800/80 bg-white"
           >
             <option value="cloudflared">Tunnel Daemon (cloudflared)</option>
             <optgroup label="Docker Containers (Isolated)">
@@ -372,13 +372,13 @@ onUnmounted(() => {
           <span
             v-if="selectedSource === 'cloudflared'"
             class="rounded px-2.5 py-1 text-[10px] font-mono font-bold uppercase tracking-wider"
-            :class="wsStatus === 'OPEN' ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/60' : 'bg-red-950/80 text-red-400 border border-red-800/60'"
+            :class="wsStatus === 'OPEN' ? 'bg-emerald-50/80 text-emerald-600 border border-emerald-800/60' : 'bg-red-50/80 text-red-600 border border-red-800/60'"
           >
             WS: {{ wsStatus }}
           </span>
           <span
             v-else
-            class="rounded px-2.5 py-1 text-[10px] font-mono font-bold uppercase tracking-wider bg-cyan-950/80 text-cyan-400 border border-cyan-800/60"
+            class="rounded px-2.5 py-1 text-[10px] font-mono font-bold uppercase tracking-wider bg-cyan-50/80 text-cyan-600 border border-cyan-800/60"
           >
             POLLING: 3S
           </span>
@@ -390,13 +390,13 @@ onUnmounted(() => {
             class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-1 px-3"
             title="Copy filtered logs"
           >
-            <Check v-if="copied" class="h-3.5 w-3.5 text-emerald-400" />
+            <Check v-if="copied" class="h-3.5 w-3.5 text-emerald-600" />
             <Copy v-else class="h-3.5 w-3.5" />
             <span>{{ copied ? 'Copied' : 'Copy' }}</span>
           </button>
           <button
             @click="downloadLogs"
-            class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-1 px-3 text-cyan-300"
+            class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-1 px-3 text-cyan-700"
             title="Download logs as .log file"
           >
             <Download class="h-3.5 w-3.5" />
@@ -416,12 +416,12 @@ onUnmounted(() => {
 
       <!-- Filters & Search Toolbar -->
       <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
-        <div class="flex border border-slate-800 rounded-lg overflow-hidden bg-slate-950">
+        <div class="flex border border-slate-200 rounded-lg overflow-hidden bg-slate-50">
           <button
             v-for="f in ['all', 'error', 'warn', 'info']"
             :key="f"
             @click="filter = f"
-            :class="filter === f ? 'bg-cyan-950/80 text-cyan-300 font-bold border-r border-slate-800' : 'text-slate-400 hover:text-slate-200 border-r border-slate-800'"
+            :class="filter === f ? 'bg-cyan-50/80 text-cyan-700 font-bold border-r border-slate-200' : 'text-slate-600 hover:text-slate-800 border-r border-slate-200'"
             class="px-3 py-1.5 text-xs uppercase tracking-wider transition-colors last:border-r-0"
           >
             {{ f }}
@@ -433,21 +433,21 @@ onUnmounted(() => {
             placeholder="grep in logs..."
             class="cyber-input !py-1.5 flex-1 sm:!w-56 !text-xs font-mono"
           />
-          <label class="flex items-center gap-1.5 text-xs text-slate-400 whitespace-nowrap cursor-pointer">
-            <input type="checkbox" v-model="autoScroll" class="rounded bg-slate-950" />
+          <label class="flex items-center gap-1.5 text-xs text-slate-600 whitespace-nowrap cursor-pointer">
+            <input type="checkbox" v-model="autoScroll" class="rounded bg-slate-50" />
             <span>Auto-tail</span>
           </label>
         </div>
       </div>
 
       <!-- Log Viewer Box -->
-      <div ref="logContainer" class="flex-1 cyber-card !p-0 overflow-auto min-h-[460px] max-h-[68vh] border border-slate-800 bg-slate-950 font-mono text-xs">
+      <div ref="logContainer" class="flex-1 cyber-card !p-0 overflow-auto min-h-[460px] max-h-[68vh] border border-slate-200 bg-slate-50 font-mono text-xs">
         <!-- 1. Cloudflared WS Stream -->
         <template v-if="selectedSource === 'cloudflared'">
           <div
             v-for="(log, i) in filteredWsLogs"
             :key="i"
-            class="px-4 py-1 border-b border-slate-800/40 hover:bg-slate-900/60 flex items-start gap-2"
+            class="px-4 py-1 border-b border-slate-200/40 hover:bg-white/60 flex items-start gap-2"
           >
             <span class="text-slate-500 whitespace-nowrap select-none">{{ log.time?.split('T')[1]?.slice(0, 8) || log.time }}</span>
             <span :class="getLogClass(log.message)" class="break-all">{{ log.message }}</span>
@@ -462,7 +462,7 @@ onUnmounted(() => {
           <div
             v-for="(line, idx) in filteredContainerLogs"
             :key="idx"
-            class="px-4 py-1 border-b border-slate-800/40 hover:bg-slate-900/60 flex items-start gap-3"
+            class="px-4 py-1 border-b border-slate-200/40 hover:bg-white/60 flex items-start gap-3"
           >
             <span class="text-slate-600 select-none text-[10px] w-8 text-right shrink-0">{{ idx + 1 }}</span>
             <span :class="getLogClass(line)" class="break-all">{{ line }}</span>
@@ -479,12 +479,12 @@ onUnmounted(() => {
     <!-- ===================================================================== -->
     <div v-else-if="activeTab === 'audit'" class="space-y-4 flex-1 flex flex-col">
       <!-- Audit Filter Bar -->
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 rounded-lg p-3">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white/60 border border-slate-200 rounded-lg p-3">
         <div class="flex flex-wrap items-center gap-2">
-          <label class="text-xs text-slate-400 font-medium">Filter Action:</label>
+          <label class="text-xs text-slate-600 font-medium">Filter Action:</label>
           <select
             v-model="auditFilterAction"
-            class="cyber-input text-xs font-mono py-1.5 px-3 min-w-[200px] border-indigo-800/80 bg-slate-900"
+            class="cyber-input text-xs font-mono py-1.5 px-3 min-w-[200px] border-indigo-800/80 bg-white"
           >
             <option v-for="opt in auditActionOptions" :key="opt.value" :value="opt.value">
               {{ opt.label }}
@@ -508,13 +508,13 @@ onUnmounted(() => {
             class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-1 px-3"
             title="Copy current audit entries JSON"
           >
-            <Check v-if="auditCopied" class="h-3.5 w-3.5 text-emerald-400" />
+            <Check v-if="auditCopied" class="h-3.5 w-3.5 text-emerald-600" />
             <Copy v-else class="h-3.5 w-3.5" />
             <span>{{ auditCopied ? 'Copied' : 'Copy' }}</span>
           </button>
           <button
             @click="exportAuditJson"
-            class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-1 px-3 text-cyan-300"
+            class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-1 px-3 text-cyan-700"
             title="Export audit logs to JSON"
           >
             <Download class="h-3.5 w-3.5" />
@@ -533,24 +533,24 @@ onUnmounted(() => {
       </div>
 
       <!-- Audit Table -->
-      <div class="cyber-card !p-0 overflow-x-auto border border-slate-800 bg-slate-950 flex-1 min-h-[440px]">
+      <div class="cyber-card !p-0 overflow-x-auto border border-slate-200 bg-slate-50 flex-1 min-h-[440px]">
         <table class="w-full text-xs font-mono">
           <thead>
-            <tr class="border-b border-slate-800 bg-slate-900/90 text-left">
-              <th class="px-4 py-3 text-slate-400 uppercase tracking-widest font-semibold">Timestamp</th>
-              <th class="px-4 py-3 text-slate-400 uppercase tracking-widest font-semibold">Action</th>
-              <th class="px-4 py-3 text-slate-400 uppercase tracking-widest font-semibold">Detail</th>
-              <th class="px-4 py-3 text-slate-400 uppercase tracking-widest font-semibold hidden md:table-cell">Origin IP</th>
-              <th class="px-4 py-3 text-slate-400 uppercase tracking-widest font-semibold text-right">Inspect</th>
+            <tr class="border-b border-slate-200 bg-white/90 text-left">
+              <th class="px-4 py-3 text-slate-600 uppercase tracking-widest font-semibold">Timestamp</th>
+              <th class="px-4 py-3 text-slate-600 uppercase tracking-widest font-semibold">Action</th>
+              <th class="px-4 py-3 text-slate-600 uppercase tracking-widest font-semibold">Detail</th>
+              <th class="px-4 py-3 text-slate-600 uppercase tracking-widest font-semibold hidden md:table-cell">Origin IP</th>
+              <th class="px-4 py-3 text-slate-600 uppercase tracking-widest font-semibold text-right">Inspect</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-800/50">
+          <tbody class="divide-y divide-slate-200/50">
             <tr
               v-for="e in filteredAuditEntries"
               :key="e.id"
-              class="hover:bg-slate-900/60 transition-colors"
+              class="hover:bg-white/60 transition-colors"
             >
-              <td class="px-4 py-2.5 text-slate-400 whitespace-nowrap">
+              <td class="px-4 py-2.5 text-slate-600 whitespace-nowrap">
                 {{ e.created_at }}
               </td>
               <td class="px-4 py-2.5 whitespace-nowrap">
@@ -561,19 +561,19 @@ onUnmounted(() => {
                   {{ e.action }}
                 </span>
               </td>
-              <td class="px-4 py-2.5 text-slate-300 max-w-md truncate" :title="e.detail">
+              <td class="px-4 py-2.5 text-slate-700 max-w-md truncate" :title="e.detail">
                 {{ e.detail?.split('\n')[0] || '—' }}
                 <span v-if="e.detail && e.detail.includes('\n')" class="text-slate-500 text-[10px] ml-1">
                   (+{{ e.detail.split('\n').length - 1 }} lines)
                 </span>
               </td>
-              <td class="px-4 py-2.5 text-slate-400 hidden md:table-cell whitespace-nowrap">
+              <td class="px-4 py-2.5 text-slate-600 hidden md:table-cell whitespace-nowrap">
                 {{ e.ip_address || 'local' }}
               </td>
               <td class="px-4 py-2.5 text-right whitespace-nowrap">
                 <button
                   @click="selectedAuditDetail = e"
-                  class="cyber-btn-secondary !px-2 !py-0.5 !text-[10px] text-cyan-300 hover:text-cyan-200"
+                  class="cyber-btn-secondary !px-2 !py-0.5 !text-[10px] text-cyan-700 hover:text-cyan-200"
                   title="View full audit payload and output"
                 >
                   <Eye class="h-3 w-3 inline mr-1" /> View
@@ -590,15 +590,15 @@ onUnmounted(() => {
       </div>
 
       <!-- Pagination Footer -->
-      <div class="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400 px-1">
+      <div class="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600 px-1">
         <div class="flex items-center gap-3">
-          <span>Total Records: <strong class="text-slate-200 font-mono">{{ auditTotal }}</strong></span>
+          <span>Total Records: <strong class="text-slate-800 font-mono">{{ auditTotal }}</strong></span>
           <span class="text-slate-600">|</span>
           <div class="flex items-center gap-1.5">
             <span>Per page:</span>
             <select
               v-model="auditLimit"
-              class="cyber-input !py-0.5 !px-2 !text-xs !w-auto border-slate-800 bg-slate-950 font-mono"
+              class="cyber-input !py-0.5 !px-2 !text-xs !w-auto border-slate-200 bg-slate-50 font-mono"
             >
               <option :value="10">10</option>
               <option :value="20">20</option>
@@ -639,16 +639,16 @@ onUnmounted(() => {
       @click.self="selectedAuditDetail = null"
     >
       <div class="cyber-card max-w-2xl w-full max-h-[85vh] flex flex-col border-cyan-500/40 p-5 space-y-4">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center justify-between border-b border-slate-200 pb-3">
           <div class="flex items-center gap-2">
-            <Shield class="h-5 w-5 text-cyan-400" />
-            <h3 class="text-sm font-bold text-slate-100 font-mono">
+            <Shield class="h-5 w-5 text-cyan-600" />
+            <h3 class="text-sm font-bold text-slate-900 font-mono">
               Audit Event #{{ selectedAuditDetail.id }}
             </h3>
           </div>
           <button
             @click="selectedAuditDetail = null"
-            class="text-slate-400 hover:text-slate-200 transition"
+            class="text-slate-600 hover:text-slate-800 transition"
           >
             <X class="h-4 w-4" />
           </button>
@@ -666,29 +666,29 @@ onUnmounted(() => {
           </div>
           <div>
             <span class="text-slate-500">Timestamp:</span>
-            <span class="ml-2 text-slate-300">{{ selectedAuditDetail.created_at }}</span>
+            <span class="ml-2 text-slate-700">{{ selectedAuditDetail.created_at }}</span>
           </div>
           <div>
             <span class="text-slate-500">Origin IP:</span>
-            <span class="ml-2 text-slate-300">{{ selectedAuditDetail.ip_address || 'local' }}</span>
+            <span class="ml-2 text-slate-700">{{ selectedAuditDetail.ip_address || 'local' }}</span>
           </div>
           <div>
             <span class="text-slate-500">User ID:</span>
-            <span class="ml-2 text-slate-300">{{ selectedAuditDetail.user_id || 'System / Anonymous' }}</span>
+            <span class="ml-2 text-slate-700">{{ selectedAuditDetail.user_id || 'System / Anonymous' }}</span>
           </div>
         </div>
 
         <div class="space-y-1.5 flex-1 flex flex-col min-h-0">
-          <label class="text-[10px] font-semibold uppercase tracking-widest text-slate-400">
+          <label class="text-[10px] font-semibold uppercase tracking-widest text-slate-600">
             Action Detail & Output Payload
           </label>
-          <pre class="flex-1 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-3 text-xs font-mono text-slate-200 whitespace-pre-wrap break-all max-h-80">{{ selectedAuditDetail.detail || '(No details recorded)' }}</pre>
+          <pre class="flex-1 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs font-mono text-slate-800 whitespace-pre-wrap break-all max-h-80">{{ selectedAuditDetail.detail || '(No details recorded)' }}</pre>
         </div>
 
         <div class="flex justify-end pt-2">
           <button
             @click="selectedAuditDetail = null"
-            class="cyber-btn !px-4 !py-1.5 text-xs text-slate-300"
+            class="cyber-btn !px-4 !py-1.5 text-xs text-slate-700"
           >
             Close
           </button>

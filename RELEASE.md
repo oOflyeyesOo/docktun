@@ -25,3 +25,15 @@ Then create a GitHub Release from the tag.
 2026.2.1 → bug fix
 2026.3.0 → next feature release
 ```
+
+## Release validation gate
+
+Before tagging a release, require the Validate workflow to pass: backend race
+tests, vet, build, reachable vulnerability scan, locked frontend install, audit,
+production build, Compose validation, and unified container build. Also run a
+fresh isolated Compose installation and verify setup-token retrieval, first
+account creation, login, authenticated wizard rerun, restart persistence, and
+expected denial of unauthenticated setup and configuration requests. Exercise
+a disposable container's discovery, start/stop, network connection, logs, and
+project deployment. Never use production volumes for deletion/prune tests.
+Passing compilation alone does not establish final-release readiness.

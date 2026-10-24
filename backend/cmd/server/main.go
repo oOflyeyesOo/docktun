@@ -49,7 +49,6 @@ func main() {
   r := chi.NewRouter()
   r.Use(chimw.Logger)
   r.Use(chimw.Recoverer)
-  r.Use(chimw.RealIP)
   r.Use(cors.Handler(cors.Options{
     AllowedOrigins:   []string{"http://localhost:3000", "http://localhost:8080"},
     AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE"},
@@ -87,14 +86,18 @@ func main() {
   setupSvc := service.NewSetupService(cfg, database, dockerContainersSvc, cfAPISvc, configSvc, meshSvc, auditSvc, dataDir)
   setupHandler := handler.NewSetup(setupSvc, authHandler)
 
+  r.Get("/healthz", handler.Readiness(database))
   r.Get("/api/setup/status", setupHandler.Status)
-  r.Post("/api/setup/complete", setupHandler.Complete)
-  r.Post("/auth/login", authHandler.Login)
+  authLimiter := middleware.NewRateLimiter(10, time.Minute)
+  r.With(authLimiter.Limit).Post("/api/setup/complete", setupHandler.Complete)
+  r.With(authLimiter.Limit).Post("/auth/login", authHandler.Login)
   r.Get("/api/logs/ws", logsHandler.Stream)
 
   r.Group(func(r chi.Router) {
     r.Use(authMw.Verify)
 
+    r.Get("/api/setup/details", setupHandler.Details)
+    r.Post("/api/setup/reconfigure", setupHandler.Reconfigure)
     r.Post("/auth/logout", authHandler.Logout)
     r.Post("/auth/refresh", authHandler.Refresh)
 

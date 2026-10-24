@@ -611,12 +611,12 @@ onUnmounted(() => {
     <!-- Header (shown when standalone page) -->
     <div v-if="!embedded" class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <div class="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-          <Globe class="h-3.5 w-3.5 text-cyan-400" />
+        <div class="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-600">
+          <Globe class="h-3.5 w-3.5 text-cyan-600" />
           <span>Cloudflare Tunnel Hub</span>
         </div>
-        <h1 class="text-2xl font-bold tracking-tight text-slate-100">Cloudflare Tunnel</h1>
-        <p class="text-xs text-slate-400">
+        <h1 class="text-2xl font-bold tracking-tight text-slate-900">Cloudflare Tunnel</h1>
+        <p class="text-xs text-slate-600">
           Manage remote edge routing, ingress hostnames, live edge traffic, and client TCP access.
         </p>
       </div>
@@ -625,7 +625,7 @@ onUnmounted(() => {
         <button
           @click="restartTunnel"
           :disabled="saving"
-          class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-300 hover:border-amber-600 hover:bg-amber-950/40"
+          class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-700 hover:border-amber-600 hover:bg-amber-50/40"
           title="Restart Cloudflare Tunnel daemon"
         >
           <RotateCcw class="h-3.5 w-3.5" :class="saving ? 'animate-spin' : ''" />
@@ -633,7 +633,7 @@ onUnmounted(() => {
         </button>
         <button
           @click="loadConfig"
-          class="cyber-btn flex items-center gap-1.5 text-xs text-slate-300"
+          class="cyber-btn flex items-center gap-1.5 text-xs text-slate-700"
         >
           <RefreshCw class="h-3.5 w-3.5" />
           <span>Reload</span>
@@ -645,7 +645,7 @@ onUnmounted(() => {
       <button
         @click="restartTunnel"
         :disabled="saving"
-        class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-300 hover:border-amber-600 hover:bg-amber-950/40"
+        class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-700 hover:border-amber-600 hover:bg-amber-50/40"
         title="Restart Cloudflare Tunnel daemon"
       >
         <RotateCcw class="h-3.5 w-3.5" :class="saving ? 'animate-spin' : ''" />
@@ -653,7 +653,7 @@ onUnmounted(() => {
       </button>
       <button
         @click="loadConfig"
-        class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-slate-300"
+        class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-slate-700"
       >
         <RefreshCw class="h-3.5 w-3.5" />
         <span>Reload</span>
@@ -664,24 +664,24 @@ onUnmounted(() => {
     <div
       v-if="message"
       class="rounded-lg border p-3 text-xs font-mono flex items-center justify-between"
-      :class="message.type === 'success' ? 'border-emerald-500/40 bg-emerald-950/30 text-emerald-300' : 'border-red-500/40 bg-red-950/30 text-red-300'"
+      :class="message.type === 'success' ? 'border-emerald-500/40 bg-emerald-50/30 text-emerald-700' : 'border-red-500/40 bg-red-50/30 text-red-700'"
     >
       <div class="flex items-center gap-2">
-        <CheckCircle2 v-if="message.type === 'success'" class="h-4 w-4 text-emerald-400" />
-        <AlertCircle v-else class="h-4 w-4 text-red-400" />
+        <CheckCircle2 v-if="message.type === 'success'" class="h-4 w-4 text-emerald-600" />
+        <AlertCircle v-else class="h-4 w-4 text-red-600" />
         <span>{{ message.text }}</span>
       </div>
-      <button @click="message = null" class="text-slate-400 hover:text-slate-200">
+      <button @click="message = null" class="text-slate-600 hover:text-slate-800">
         &times;
       </button>
     </div>
 
     <!-- Navigation Tabs -->
-    <div class="flex items-center gap-1 overflow-x-auto border-b border-slate-800 bg-slate-900/60 p-1 rounded-xl text-xs">
+    <div class="flex items-center gap-1 overflow-x-auto border-b border-slate-200 bg-white/60 p-1 rounded-xl text-xs">
       <button
         @click="activeTab = 'overview'"
         class="flex items-center gap-2 rounded-lg px-4 py-2 font-medium transition-colors whitespace-nowrap"
-        :class="activeTab === 'overview' ? 'bg-slate-800 text-cyan-400 shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+        :class="activeTab === 'overview' ? 'bg-slate-100 text-cyan-600 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
       >
         <Activity class="h-3.5 w-3.5" />
         <span>Overview & Diagnostics</span>
@@ -690,7 +690,7 @@ onUnmounted(() => {
       <button
         @click="activeTab = 'ingress'"
         class="flex items-center gap-2 rounded-lg px-4 py-2 font-medium transition-colors whitespace-nowrap"
-        :class="activeTab === 'ingress' ? 'bg-slate-800 text-cyan-400 shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+        :class="activeTab === 'ingress' ? 'bg-slate-100 text-cyan-600 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
       >
         <Layers class="h-3.5 w-3.5" />
         <span>Ingress Routes ({{ rules.length }})</span>
@@ -699,7 +699,7 @@ onUnmounted(() => {
       <button
         @click="activeTab = 'tcp'"
         class="flex items-center gap-2 rounded-lg px-4 py-2 font-medium transition-colors whitespace-nowrap"
-        :class="activeTab === 'tcp' ? 'bg-slate-800 text-cyan-400 shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+        :class="activeTab === 'tcp' ? 'bg-slate-100 text-cyan-600 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
       >
         <Terminal class="h-3.5 w-3.5" />
         <span>TCP Client Access</span>
@@ -708,7 +708,7 @@ onUnmounted(() => {
       <button
         @click="activeTab = 'api'"
         class="flex items-center gap-2 rounded-lg px-4 py-2 font-medium transition-colors whitespace-nowrap"
-        :class="activeTab === 'api' ? 'bg-slate-800 text-cyan-400 shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+        :class="activeTab === 'api' ? 'bg-slate-100 text-cyan-600 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
       >
         <KeyRound class="h-3.5 w-3.5" />
         <span>Cloudflare API & Edge</span>
@@ -718,7 +718,7 @@ onUnmounted(() => {
       <button
         @click="activeTab = 'backups'"
         class="flex items-center gap-2 rounded-lg px-4 py-2 font-medium transition-colors whitespace-nowrap"
-        :class="activeTab === 'backups' ? 'bg-slate-800 text-cyan-400 shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+        :class="activeTab === 'backups' ? 'bg-slate-100 text-cyan-600 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
       >
         <Archive class="h-3.5 w-3.5" />
         <span>Backups ({{ backups.length }})</span>
@@ -733,18 +733,18 @@ onUnmounted(() => {
       <div v-if="!embedded" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <!-- Tunnel Status -->
         <div class="cyber-card p-4 space-y-2">
-          <div class="flex items-center justify-between text-xs text-slate-400">
+          <div class="flex items-center justify-between text-xs text-slate-600">
             <span class="uppercase tracking-wider font-semibold text-[10px]">Tunnel Identity</span>
-            <Globe class="h-4 w-4 text-cyan-400" />
+            <Globe class="h-4 w-4 text-cyan-600" />
           </div>
-          <div class="font-mono text-sm font-bold text-slate-100 truncate" :title="tunnelId">
+          <div class="font-mono text-sm font-bold text-slate-900 truncate" :title="tunnelId">
             {{ tunnelId || 'Loading…' }}
           </div>
-          <div class="flex items-center gap-2 text-[11px] text-slate-400">
-            <span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-300 font-mono">{{ protocol }}</span>
+          <div class="flex items-center gap-2 text-[11px] text-slate-600">
+            <span class="rounded bg-slate-100 px-1.5 py-0.5 text-slate-700 font-mono">{{ protocol }}</span>
             <span
               class="flex items-center gap-1 font-semibold"
-              :class="tunnelStatus?.running ? 'text-emerald-400' : 'text-red-400'"
+              :class="tunnelStatus?.running ? 'text-emerald-600' : 'text-red-600'"
             >
               <span
                 class="h-2 w-2 rounded-full"
@@ -757,11 +757,11 @@ onUnmounted(() => {
 
         <!-- Total Requests -->
         <div class="cyber-card p-4 space-y-2">
-          <div class="flex items-center justify-between text-xs text-slate-400">
+          <div class="flex items-center justify-between text-xs text-slate-600">
             <span class="uppercase tracking-wider font-semibold text-[10px]">Total Routed Requests</span>
-            <Activity class="h-4 w-4 text-emerald-400" />
+            <Activity class="h-4 w-4 text-emerald-600" />
           </div>
-          <div class="text-2xl font-bold font-mono text-emerald-400">
+          <div class="text-2xl font-bold font-mono text-emerald-600">
             {{ tunnelStatus?.running ? (metrics?.total_requests?.toLocaleString() || '0') : '0' }}
           </div>
           <p class="text-[11px] text-slate-500">Cumulative ingress proxy traffic</p>
@@ -769,7 +769,7 @@ onUnmounted(() => {
 
         <!-- Active Connections -->
         <div class="cyber-card p-4 space-y-2">
-          <div class="flex items-center justify-between text-xs text-slate-400">
+          <div class="flex items-center justify-between text-xs text-slate-600">
             <span class="uppercase tracking-wider font-semibold text-[10px]">Active Edge Conns</span>
             <Network class="h-4 w-4 text-violet-400" />
           </div>
@@ -781,11 +781,11 @@ onUnmounted(() => {
 
         <!-- Active Hostnames -->
         <div class="cyber-card p-4 space-y-2">
-          <div class="flex items-center justify-between text-xs text-slate-400">
+          <div class="flex items-center justify-between text-xs text-slate-600">
             <span class="uppercase tracking-wider font-semibold text-[10px]">Public Hostnames</span>
-            <Layers class="h-4 w-4 text-amber-400" />
+            <Layers class="h-4 w-4 text-amber-600" />
           </div>
-          <div class="text-2xl font-bold font-mono text-amber-300">
+          <div class="text-2xl font-bold font-mono text-amber-700">
             {{ rules.length }}
           </div>
           <p class="text-[11px] text-slate-500">Active ingress mappings</p>
@@ -795,18 +795,18 @@ onUnmounted(() => {
       <!-- Compact Live Traffic Row (When embedded in Remote Access) -->
       <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="cyber-card p-4 space-y-2">
-          <div class="flex items-center justify-between text-xs text-slate-400">
+          <div class="flex items-center justify-between text-xs text-slate-600">
             <span class="uppercase tracking-wider font-semibold text-[10px]">Total Routed Requests</span>
-            <Activity class="h-4 w-4 text-emerald-400" />
+            <Activity class="h-4 w-4 text-emerald-600" />
           </div>
-          <div class="text-2xl font-bold font-mono text-emerald-400">
+          <div class="text-2xl font-bold font-mono text-emerald-600">
             {{ tunnelStatus?.running ? (metrics?.total_requests?.toLocaleString() || '0') : '0' }}
           </div>
           <p class="text-[11px] text-slate-500">Cumulative ingress proxy traffic</p>
         </div>
 
         <div class="cyber-card p-4 space-y-2">
-          <div class="flex items-center justify-between text-xs text-slate-400">
+          <div class="flex items-center justify-between text-xs text-slate-600">
             <span class="uppercase tracking-wider font-semibold text-[10px]">Active Edge Conns</span>
             <Network class="h-4 w-4 text-violet-400" />
           </div>
@@ -820,18 +820,18 @@ onUnmounted(() => {
       <!-- Diagnostic Alert Banner when Tunnel is Degraded -->
       <div
         v-if="tunnelStatus && !tunnelStatus.running"
-        class="rounded-lg border border-red-900/60 bg-red-950/40 p-4 text-xs text-red-200 flex flex-col sm:flex-row sm:items-start justify-between gap-3"
+        class="rounded-lg border border-red-900/60 bg-red-50/40 p-4 text-xs text-red-200 flex flex-col sm:flex-row sm:items-start justify-between gap-3"
       >
         <div class="flex items-start gap-2.5">
-          <AlertCircle class="h-4 w-4 text-red-400 mt-0.5 shrink-0" />
+          <AlertCircle class="h-4 w-4 text-red-600 mt-0.5 shrink-0" />
           <div class="space-y-1.5">
-            <p class="font-semibold text-red-300">
+            <p class="font-semibold text-red-700">
               Cloudflare Tunnel Daemon is {{ tunnelStatus.status || 'degraded' }}
             </p>
-            <p v-if="tunnelStatus.last_error" class="font-mono text-[11px] text-red-300/90 bg-red-950/70 p-2.5 rounded border border-red-900/40 whitespace-pre-wrap leading-relaxed">
+            <p v-if="tunnelStatus.last_error" class="font-mono text-[11px] text-red-700/90 bg-red-50/70 p-2.5 rounded border border-red-900/40 whitespace-pre-wrap leading-relaxed">
               {{ tunnelStatus.last_error }}
             </p>
-            <p v-else class="text-slate-400 text-[11px]">
+            <p v-else class="text-slate-600 text-[11px]">
               The container is not active. Check credentials in /etc/cloudflared/credentials.json or restart the tunnel daemon.
             </p>
           </div>
@@ -839,7 +839,7 @@ onUnmounted(() => {
         <button
           @click="restartTunnel"
           :disabled="saving"
-          class="cyber-btn text-xs flex items-center gap-1.5 py-1 px-3 border-red-800 bg-red-950/60 hover:bg-red-900/70 text-red-200 shrink-0 self-start sm:self-auto"
+          class="cyber-btn text-xs flex items-center gap-1.5 py-1 px-3 border-red-800 bg-red-50/60 hover:bg-red-100/70 text-red-200 shrink-0 self-start sm:self-auto"
         >
           <RotateCcw class="h-3 w-3" :class="saving ? 'animate-spin' : ''" />
           <span>Restart Daemon</span>
@@ -848,30 +848,30 @@ onUnmounted(() => {
 
       <!-- HTTP Status Code Breakdown -->
       <div v-if="metrics?.response_codes && Object.keys(metrics.response_codes).length" class="cyber-card p-4 space-y-3">
-        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Edge Response Codes</h3>
+        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-600">Edge Response Codes</h3>
         <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
           <div
             v-for="(count, code) in metrics.response_codes"
             :key="code"
-            class="rounded border border-slate-800 bg-slate-950 p-2.5 text-center font-mono"
+            class="rounded border border-slate-200 bg-slate-50 p-2.5 text-center font-mono"
           >
             <div
               class="text-xs font-bold"
-              :class="String(code).startsWith('2') ? 'text-emerald-400' : String(code).startsWith('4') ? 'text-amber-400' : 'text-red-400'"
+              :class="String(code).startsWith('2') ? 'text-emerald-600' : String(code).startsWith('4') ? 'text-amber-600' : 'text-red-600'"
             >
               HTTP {{ code }}
             </div>
-            <div class="text-sm font-bold text-slate-200 mt-1">{{ count }}</div>
+            <div class="text-sm font-bold text-slate-800 mt-1">{{ count }}</div>
           </div>
         </div>
       </div>
 
       <!-- Ingress Service Health & Latency -->
       <div class="cyber-card p-5 space-y-4">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center justify-between border-b border-slate-200 pb-3">
           <div class="flex items-center gap-2">
-            <Activity class="h-4 w-4 text-cyan-400" />
-            <h3 class="text-sm font-bold text-slate-100">Live Ingress Target Health & Latency</h3>
+            <Activity class="h-4 w-4 text-cyan-600" />
+            <h3 class="text-sm font-bold text-slate-900">Live Ingress Target Health & Latency</h3>
           </div>
           <button
             @click="fetchHealth"
@@ -887,20 +887,20 @@ onUnmounted(() => {
           No active ingress targets responding.
         </div>
 
-        <div v-else class="divide-y divide-slate-800/80">
+        <div v-else class="divide-y divide-slate-200/80">
           <div
             v-for="h in health"
             :key="h.hostname"
             class="flex items-center justify-between py-2.5 text-xs font-mono"
           >
             <div>
-              <div class="font-bold text-slate-200 flex items-center gap-2">
+              <div class="font-bold text-slate-800 flex items-center gap-2">
                 <span>{{ h.hostname }}</span>
                 <a
                   :href="`https://${h.hostname}`"
                   target="_blank"
                   rel="noopener"
-                  class="text-slate-500 hover:text-cyan-300"
+                  class="text-slate-500 hover:text-cyan-700"
                 >
                   <ExternalLink class="h-3 w-3" />
                 </a>
@@ -910,7 +910,7 @@ onUnmounted(() => {
                 <router-link
                   v-if="extractTargetHost(h.service)"
                   :to="'/containers?name=' + encodeURIComponent(extractTargetHost(h.service))"
-                  class="text-cyan-400 hover:underline text-[10px]"
+                  class="text-cyan-600 hover:underline text-[10px]"
                   :title="`Inspect container '${extractTargetHost(h.service)}'`"
                 >
                   (inspect container)
@@ -919,10 +919,10 @@ onUnmounted(() => {
             </div>
 
             <div class="flex items-center gap-3">
-              <span class="text-slate-400">{{ h.latency }}</span>
+              <span class="text-slate-600">{{ h.latency }}</span>
               <span
                 class="rounded border px-2 py-0.5 text-[10px] uppercase font-semibold"
-                :class="h.status === 'up' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400' : 'border-red-500/40 bg-red-500/10 text-red-400'"
+                :class="h.status === 'up' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600' : 'border-red-500/40 bg-red-500/10 text-red-600'"
               >
                 {{ h.status }}
               </span>
@@ -936,13 +936,13 @@ onUnmounted(() => {
     <!-- TAB 2: INGRESS ROUTING RULES                             -->
     <!-- ======================================================== -->
     <div v-if="activeTab === 'ingress'" class="space-y-4">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
         <div>
-          <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
-            <Layers class="h-4 w-4 text-cyan-400" />
+          <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
+            <Layers class="h-4 w-4 text-cyan-600" />
             <span>Cloudflare Ingress Rules</span>
           </h2>
-          <p class="text-xs text-slate-400">
+          <p class="text-xs text-slate-600">
             Maps public domain hostnames to local Docker containers or internal network targets.
           </p>
         </div>
@@ -967,7 +967,7 @@ onUnmounted(() => {
           <button
             @click="syncAllDnsRoutes"
             :disabled="syncLoading"
-            class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-cyan-300 border-cyan-800 bg-cyan-950/30 hover:bg-cyan-900/50"
+            class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-800 bg-cyan-50/30 hover:bg-cyan-100/50"
             title="Automatically create or verify DNS CNAME records in Cloudflare for all hostnames above"
           >
             <RefreshCw class="h-3.5 w-3.5" :class="syncLoading ? 'animate-spin' : ''" />
@@ -976,7 +976,7 @@ onUnmounted(() => {
           <button
             @click="save(true)"
             :disabled="saving"
-            class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-300 border-emerald-600 bg-emerald-950/40 hover:bg-emerald-900/50 font-medium"
+            class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-700 border-emerald-600 bg-emerald-50/40 hover:bg-emerald-100/50 font-medium"
             title="Save config and restart tunnel container so changes are active immediately"
           >
             <RotateCcw class="h-3.5 w-3.5" :class="saving ? 'animate-spin' : ''" />
@@ -985,7 +985,7 @@ onUnmounted(() => {
           <button
             @click="save(false)"
             :disabled="saving"
-            class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-slate-400"
+            class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-slate-600"
             title="Save YAML config without restarting the tunnel"
           >
             <span>Save Only</span>
@@ -999,22 +999,22 @@ onUnmounted(() => {
           v-model="rawYaml"
           rows="18"
           spellcheck="false"
-          class="w-full rounded-xl border border-slate-800 bg-slate-950 p-4 font-mono text-xs text-slate-200 focus:border-cyan-500 focus:outline-none leading-relaxed"
+          class="w-full rounded-xl border border-slate-200 bg-slate-50 p-4 font-mono text-xs text-slate-800 focus:border-cyan-500 focus:outline-none leading-relaxed"
         ></textarea>
       </div>
 
       <!-- Visual Rules Cards View -->
       <div v-else class="space-y-3">
         <!-- Security & Cloudflare Access Advice -->
-        <div class="rounded-xl border border-cyan-800/40 bg-slate-950 p-4 flex flex-col sm:flex-row items-start gap-3.5">
-          <ShieldCheck class="h-5 w-5 text-cyan-400 mt-0.5 flex-shrink-0" />
+        <div class="rounded-xl border border-cyan-800/40 bg-slate-50 p-4 flex flex-col sm:flex-row items-start gap-3.5">
+          <ShieldCheck class="h-5 w-5 text-cyan-600 mt-0.5 flex-shrink-0" />
           <div class="space-y-1 text-xs">
-            <div class="font-bold text-slate-200">Exposing Admin Panels & Security Hardening</div>
-            <p class="text-slate-400 leading-relaxed">
+            <div class="font-bold text-slate-800">Exposing Admin Panels & Security Hardening</div>
+            <p class="text-slate-600 leading-relaxed">
               If you expose the DockTun management dashboard publicly, we strongly recommend placing it behind
-              <strong class="text-cyan-300">Cloudflare Zero Trust (Access)</strong> in your Cloudflare dashboard (Applications &rarr; Add an Application).
+              <strong class="text-cyan-700">Cloudflare Zero Trust (Access)</strong> in your Cloudflare dashboard (Applications &rarr; Add an Application).
               Access requires One-Time PIN email verification or Google/GitHub SSO at the Cloudflare edge before any traffic reaches your server.
-              Alternatively, you can safely <strong class="text-amber-300">delete the DockTun rule below</strong> to keep DockTun internal-only and access it via your local network (<code class="text-slate-300 font-mono">http://&lt;lan-ip&gt;:8080</code> or <code class="text-slate-300 font-mono">http://docktun.local</code>).
+              Alternatively, you can safely <strong class="text-amber-700">delete the DockTun rule below</strong> to keep DockTun internal-only and access it via your local network (<code class="text-slate-700 font-mono">http://&lt;lan-ip&gt;:8080</code> or <code class="text-slate-700 font-mono">http://docktun.local</code>).
             </p>
           </div>
         </div>
@@ -1022,12 +1022,12 @@ onUnmounted(() => {
           v-for="(rule, i) in rules"
           :key="i"
           class="cyber-card p-4 flex flex-col md:flex-row md:items-center justify-between gap-4"
-          :class="isDocktunRule(rule) ? 'border-cyan-500/30 bg-slate-950/90' : ''"
+          :class="isDocktunRule(rule) ? 'border-cyan-500/30 bg-slate-50/90' : ''"
         >
           <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
             <!-- Hostname Input -->
             <div>
-              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
                 Public Hostname (FQDN)
               </label>
               <div class="flex items-center gap-2">
@@ -1042,7 +1042,7 @@ onUnmounted(() => {
                   :href="`https://${rule.hostname}`"
                   target="_blank"
                   rel="noopener"
-                  class="rounded-lg p-2 text-slate-400 hover:text-cyan-300 hover:bg-slate-800 transition"
+                  class="rounded-lg p-2 text-slate-600 hover:text-cyan-700 hover:bg-slate-100 transition"
                   title="Open site in new tab"
                 >
                   <ExternalLink class="h-4 w-4" />
@@ -1053,16 +1053,16 @@ onUnmounted(() => {
             <!-- Service Target Input -->
             <div>
               <div class="flex items-center justify-between mb-1">
-                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
                   Local Service Target
                 </label>
                 <router-link
                   v-if="extractTargetHost(rule.service)"
                   :to="'/containers?name=' + encodeURIComponent(extractTargetHost(rule.service))"
-                  class="text-[10px] text-cyan-400 hover:underline font-mono flex items-center gap-1"
+                  class="text-[10px] text-cyan-600 hover:underline font-mono flex items-center gap-1"
                   :title="`Inspect container '${extractTargetHost(rule.service)}'`"
                 >
-                  <Server class="w-3 h-3 text-cyan-400" />
+                  <Server class="w-3 h-3 text-cyan-600" />
                   <span>Inspect Container &rarr;</span>
                 </router-link>
               </div>
@@ -1075,13 +1075,13 @@ onUnmounted(() => {
             </div>
 
             <!-- Options Row -->
-            <div class="col-span-full flex flex-wrap items-center justify-between text-xs text-slate-400 pt-1 gap-2">
+            <div class="col-span-full flex flex-wrap items-center justify-between text-xs text-slate-600 pt-1 gap-2">
               <div class="flex flex-wrap items-center gap-3">
                 <label class="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
                     v-model="rule.noTLSVerify"
-                    class="rounded bg-slate-950"
+                    class="rounded bg-slate-50"
                   />
                   <span class="text-[11px] font-mono">noTLSVerify (Disable TLS origin check)</span>
                 </label>
@@ -1092,11 +1092,11 @@ onUnmounted(() => {
                   type="button"
                   @click="probeOriginRule(rule)"
                   :disabled="probingHost === rule.hostname"
-                  class="cyber-btn-secondary text-[11px] font-mono py-0.5 px-2 flex items-center gap-1.5 hover:text-cyan-300"
+                  class="cyber-btn-secondary text-[11px] font-mono py-0.5 px-2 flex items-center gap-1.5 hover:text-cyan-700"
                   title="Test HTTP connectivity to origin container"
                 >
-                  <RotateCcw v-if="probingHost === rule.hostname" class="h-3 w-3 animate-spin text-cyan-400" />
-                  <Activity v-else class="h-3 w-3 text-cyan-400" />
+                  <RotateCcw v-if="probingHost === rule.hostname" class="h-3 w-3 animate-spin text-cyan-600" />
+                  <Activity v-else class="h-3 w-3 text-cyan-600" />
                   <span>{{ probingHost === rule.hostname ? 'Testing...' : 'Test Origin' }}</span>
                 </button>
 
@@ -1104,7 +1104,7 @@ onUnmounted(() => {
                 <span
                   v-if="probeResults[rule.hostname]"
                   class="rounded px-2 py-0.5 text-[10px] font-mono font-bold"
-                  :class="probeResults[rule.hostname].reachable ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/50' : 'bg-red-950/80 text-red-400 border border-red-800/50'"
+                  :class="probeResults[rule.hostname].reachable ? 'bg-emerald-50/80 text-emerald-600 border border-emerald-800/50' : 'bg-red-50/80 text-red-600 border border-red-800/50'"
                 >
                   {{ probeResults[rule.hostname].reachable ? `UP ${probeResults[rule.hostname].latency_ms}ms • HTTP ${probeResults[rule.hostname].status_code}` : (probeResults[rule.hostname].error || 'TIMEOUT') }}
                 </span>
@@ -1116,7 +1116,7 @@ onUnmounted(() => {
                   type="button"
                   @click="toggleRulePause(rule)"
                   class="rounded px-2 py-0.5 text-[10px] font-mono font-semibold transition"
-                  :class="rule.service.startsWith('http_status:') ? 'bg-amber-950 text-amber-300 border border-amber-800 hover:bg-amber-900/60' : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'"
+                  :class="rule.service.startsWith('http_status:') ? 'bg-amber-50 text-amber-700 border border-amber-800 hover:bg-amber-100/60' : 'bg-white text-slate-600 border border-slate-200 hover:text-slate-800'"
                   :title="rule.service.startsWith('http_status:') ? 'Resume routing to container' : 'Temporarily pause rule with HTTP 503 maintenance mode'"
                 >
                   {{ rule.service.startsWith('http_status:') ? '⚠ MAINTENANCE (503) • CLICK TO RESUME' : 'Pause (503 Mode)' }}
@@ -1124,7 +1124,7 @@ onUnmounted(() => {
 
                 <span
                   v-if="isDocktunRule(rule)"
-                  class="inline-flex items-center gap-1 rounded bg-cyan-950/60 border border-cyan-800/40 px-2 py-0.5 text-[10px] font-mono text-cyan-300 font-semibold"
+                  class="inline-flex items-center gap-1 rounded bg-cyan-50/60 border border-cyan-800/40 px-2 py-0.5 text-[10px] font-mono text-cyan-700 font-semibold"
                 >
                   <Sliders class="h-3 w-3" />
                   DockTun Dashboard
@@ -1154,50 +1154,50 @@ onUnmounted(() => {
       <!-- Architectural Note: Free Tier TCP/UDP Reality, Workarounds & Playit.gg -->
       <div class="cyber-card p-5 border-amber-500/30 bg-gradient-to-br from-slate-900/90 via-slate-950 to-amber-950/20 max-w-3xl space-y-3">
         <div class="flex items-start gap-3">
-          <div class="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 mt-0.5 shrink-0">
+          <div class="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-600 mt-0.5 shrink-0">
             <Info class="h-5 w-5" />
           </div>
           <div class="space-y-2 text-xs flex-1">
             <div class="flex items-center gap-2">
-              <h3 class="font-bold text-white text-sm">Protocol Architecture: Free Tier Limitations & Workarounds</h3>
-              <span class="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              <h3 class="font-bold text-slate-900 text-sm">Protocol Architecture: Free Tier Limitations & Workarounds</h3>
+              <span class="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-700 border border-amber-500/30">
                 Architectural Note
               </span>
             </div>
-            <p class="text-slate-300 leading-relaxed">
-              Does arbitrary <strong class="text-white">TCP/UDP</strong> work natively on Cloudflare's Free Tier? 
-              <strong class="text-amber-300">No, the command below is a WebSocket encapsulation workaround.</strong>
+            <p class="text-slate-700 leading-relaxed">
+              Does arbitrary <strong class="text-slate-900">TCP/UDP</strong> work natively on Cloudflare's Free Tier? 
+              <strong class="text-amber-700">No, the command below is a WebSocket encapsulation workaround.</strong>
               Cloudflare edge public proxies listen only on HTTP/HTTPS ports (80/443).
             </p>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-              <div class="p-3 rounded-lg bg-slate-950/70 border border-slate-800 space-y-1.5">
-                <div class="text-[11px] font-semibold text-cyan-300 flex items-center gap-1.5">
+              <div class="p-3 rounded-lg bg-slate-50/70 border border-slate-200 space-y-1.5">
+                <div class="text-[11px] font-semibold text-cyan-700 flex items-center gap-1.5">
                   <Terminal class="h-3.5 w-3.5" />
                   <span>The `cloudflared access tcp` Workaround</span>
                 </div>
-                <p class="text-[11px] text-slate-400 leading-normal">
+                <p class="text-[11px] text-slate-600 leading-normal">
                   Wraps raw TCP into a WebSocket stream over port 443 through Cloudflare edge.
-                  <strong class="text-slate-300 block mt-1">Requirement:</strong> The client machine must run <code class="text-cyan-400 font-mono">cloudflared access tcp</code> locally. Excellent for personal SSH, RDP, and DB admin.
+                  <strong class="text-slate-700 block mt-1">Requirement:</strong> The client machine must run <code class="text-cyan-600 font-mono">cloudflared access tcp</code> locally. Excellent for personal SSH, RDP, and DB admin.
                 </p>
               </div>
 
-              <div class="p-3 rounded-lg bg-slate-950/70 border border-slate-800 space-y-1.5">
-                <div class="text-[11px] font-semibold text-rose-300 flex items-center gap-1.5">
+              <div class="p-3 rounded-lg bg-slate-50/70 border border-slate-200 space-y-1.5">
+                <div class="text-[11px] font-semibold text-rose-700 flex items-center gap-1.5">
                   <Gamepad2 class="h-3.5 w-3.5" />
                   <span>Gaming & Raw UDP (Minecraft, Rust, Palworld)</span>
                 </div>
-                <p class="text-[11px] text-slate-400 leading-normal">
-                  Standard game clients cannot connect to Cloudflare Free tunnels without client-side software. Raw public TCP/UDP requires <strong class="text-slate-300">Cloudflare Spectrum</strong> (Enterprise/paid).
+                <p class="text-[11px] text-slate-600 leading-normal">
+                  Standard game clients cannot connect to Cloudflare Free tunnels without client-side software. Raw public TCP/UDP requires <strong class="text-slate-700">Cloudflare Spectrum</strong> (Enterprise/paid).
                 </p>
               </div>
             </div>
 
-            <div class="p-3 rounded-lg bg-indigo-950/40 border border-indigo-500/30 text-[11px] text-slate-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2 mt-1">
+            <div class="p-3 rounded-lg bg-indigo-50/40 border border-indigo-500/30 text-[11px] text-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2 mt-1">
               <div class="flex items-center gap-2">
-                <Gamepad2 class="h-4 w-4 text-indigo-400 shrink-0" />
+                <Gamepad2 class="h-4 w-4 text-indigo-600 shrink-0" />
                 <span>
                   <strong>Need public game hosting without player software?</strong>
-                  Use <strong class="text-indigo-300">Playit.gg</strong> (Anycast public TCP/UDP) or invite friends to your private <strong class="text-purple-300">Tailscale</strong> network.
+                  Use <strong class="text-indigo-700">Playit.gg</strong> (Anycast public TCP/UDP) or invite friends to your private <strong class="text-purple-700">Tailscale</strong> network.
                 </span>
               </div>
             </div>
@@ -1206,20 +1206,20 @@ onUnmounted(() => {
       </div>
 
       <div class="cyber-card p-5 space-y-4 max-w-3xl">
-        <div class="border-b border-slate-800 pb-3">
-          <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
-            <Terminal class="h-4 w-4 text-cyan-400" />
+        <div class="border-b border-slate-200 pb-3">
+          <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
+            <Terminal class="h-4 w-4 text-cyan-600" />
             <span>TCP Client Access Helper (SSH, RDP, Databases)</span>
           </h2>
-          <p class="text-xs text-slate-400 mt-1">
+          <p class="text-xs text-slate-600 mt-1">
             To connect to non-HTTP services routed through Cloudflare Access, run the generated
-            <code class="text-cyan-300">cloudflared access tcp</code> command on your local client computer (laptop or desktop).
+            <code class="text-cyan-700">cloudflared access tcp</code> command on your local client computer (laptop or desktop).
           </p>
         </div>
 
         <div class="grid gap-4 md:grid-cols-2">
           <div>
-            <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
               Cloudflare Hostname (--hostname)
             </label>
             <input
@@ -1231,7 +1231,7 @@ onUnmounted(() => {
           </div>
 
           <div>
-            <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
               Local Client Binding (--url)
             </label>
             <input
@@ -1243,7 +1243,7 @@ onUnmounted(() => {
           </div>
 
           <div class="col-span-full">
-            <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
               Execution Mode
             </label>
             <div class="flex gap-4 text-xs font-mono">
@@ -1264,25 +1264,25 @@ onUnmounted(() => {
         </div>
 
         <div class="pt-2">
-          <button @click="generateTcpCommand" class="cyber-btn text-xs text-cyan-300">
+          <button @click="generateTcpCommand" class="cyber-btn text-xs text-cyan-700">
             Generate Client Command
           </button>
         </div>
 
         <!-- Output Code Box -->
-        <div v-if="generatedTcpCmd" class="mt-4 rounded-xl border border-cyan-500/30 bg-slate-950 p-4 relative">
-          <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 text-[11px] text-slate-400 font-mono">
+        <div v-if="generatedTcpCmd" class="mt-4 rounded-xl border border-cyan-500/30 bg-slate-50 p-4 relative">
+          <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-200 text-[11px] text-slate-600 font-mono">
             <span>Run on your client machine:</span>
             <button
               @click="copyText('tcp', generatedTcpCmd)"
               class="cyber-btn-sm text-xs"
             >
-              <Check v-if="copiedKey === 'tcp'" class="h-3 w-3 text-emerald-400 mr-1" />
+              <Check v-if="copiedKey === 'tcp'" class="h-3 w-3 text-emerald-600 mr-1" />
               <Copy v-else class="h-3 w-3 mr-1" />
               <span>Copy</span>
             </button>
           </div>
-          <pre class="font-mono text-xs text-cyan-300 whitespace-pre-wrap leading-relaxed">{{ generatedTcpCmd }}</pre>
+          <pre class="font-mono text-xs text-cyan-700 whitespace-pre-wrap leading-relaxed">{{ generatedTcpCmd }}</pre>
         </div>
       </div>
     </div>
@@ -1292,12 +1292,12 @@ onUnmounted(() => {
     <!-- ======================================================== -->
     <div v-if="activeTab === 'api'" class="space-y-5">
       <div class="cyber-card p-5 space-y-4 max-w-3xl">
-        <div class="border-b border-slate-800 pb-3">
-          <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
-            <KeyRound class="h-4 w-4 text-cyan-400" />
+        <div class="border-b border-slate-200 pb-3">
+          <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
+            <KeyRound class="h-4 w-4 text-cyan-600" />
             <span>Cloudflare v4 REST API Integration</span>
           </h2>
-          <p class="text-xs text-slate-400 mt-1">
+          <p class="text-xs text-slate-600 mt-1">
             Connect your Cloudflare API Token to query remote tunnel edge status, active edge connectors, and verify DNS records.
           </p>
         </div>
@@ -1305,10 +1305,10 @@ onUnmounted(() => {
         <div class="grid gap-4 md:grid-cols-2">
           <div class="col-span-full">
             <div class="flex items-center justify-between mb-1">
-              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
                 Cloudflare API Token
               </label>
-              <span v-if="cfApiHasToken" class="text-[10px] text-emerald-400 font-mono flex items-center gap-1">
+              <span v-if="cfApiHasToken" class="text-[10px] text-emerald-600 font-mono flex items-center gap-1">
                 <CheckCircle2 class="h-3 w-3" />
                 Detected from file/environment ({{ cfApiMaskedToken }})
               </span>
@@ -1322,7 +1322,7 @@ onUnmounted(() => {
           </div>
 
           <div>
-            <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
               Cloudflare Account ID
             </label>
             <input
@@ -1334,7 +1334,7 @@ onUnmounted(() => {
           </div>
 
           <div>
-            <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
               Cloudflare Zone ID (Optional)
             </label>
             <input
@@ -1350,7 +1350,7 @@ onUnmounted(() => {
           <button
             @click="saveCfApiCredentials"
             :disabled="cfApiLoading"
-            class="cyber-btn text-xs text-cyan-300"
+            class="cyber-btn text-xs text-cyan-700"
           >
             <RefreshCw v-if="cfApiLoading" class="h-3 w-3 animate-spin mr-1" />
             <span>Save & Query Cloudflare API</span>
@@ -1359,33 +1359,33 @@ onUnmounted(() => {
             v-if="cfApiHasToken || cfApiToken"
             @click="fetchRemoteTunnelInfo"
             :disabled="cfApiLoading"
-            class="cyber-btn-secondary text-xs text-slate-300 flex items-center gap-1.5"
+            class="cyber-btn-secondary text-xs text-slate-700 flex items-center gap-1.5"
           >
             <RefreshCw class="h-3 w-3" :class="cfApiLoading ? 'animate-spin' : ''" />
             <span>Query Remote Status</span>
           </button>
-          <span v-if="cfApiSuccess" class="text-xs text-emerald-400 font-medium">Credentials saved!</span>
+          <span v-if="cfApiSuccess" class="text-xs text-emerald-600 font-medium">Credentials saved!</span>
         </div>
 
-        <div v-if="cfApiError" class="rounded-lg border border-red-500/40 bg-red-950/20 p-3 text-xs text-red-300 font-mono">
+        <div v-if="cfApiError" class="rounded-lg border border-red-500/40 bg-red-50/20 p-3 text-xs text-red-700 font-mono">
           {{ cfApiError }}
         </div>
 
         <!-- Automated DNS Management Actions Card -->
-        <div class="rounded-xl border border-cyan-900/40 bg-cyan-950/20 p-4 space-y-3">
+        <div class="rounded-xl border border-cyan-900/40 bg-cyan-50/20 p-4 space-y-3">
           <div class="flex items-center gap-2">
-            <Zap class="h-4 w-4 text-cyan-400" />
-            <h3 class="text-xs font-bold uppercase tracking-wider text-cyan-300">Automated DNS Route Management</h3>
+            <Zap class="h-4 w-4 text-cyan-600" />
+            <h3 class="text-xs font-bold uppercase tracking-wider text-cyan-700">Automated DNS Route Management</h3>
           </div>
-          <p class="text-xs text-slate-400">
-            DockTun automatically uses your API Token to create or update Cloudflare CNAME records (<code class="text-cyan-300 font-mono">{{ tunnelId || 'tunnel-id' }}.cfargotunnel.com</code>) whenever you expose containers or save ingress routes.
+          <p class="text-xs text-slate-600">
+            DockTun automatically uses your API Token to create or update Cloudflare CNAME records (<code class="text-cyan-700 font-mono">{{ tunnelId || 'tunnel-id' }}.cfargotunnel.com</code>) whenever you expose containers or save ingress routes.
           </p>
 
           <div class="flex flex-wrap items-center gap-3 pt-1">
             <button
               @click="syncAllDnsRoutes"
               :disabled="syncLoading || (!cfApiToken && !cfApiHasToken)"
-              class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-300 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/60 disabled:opacity-50"
+              class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/60 disabled:opacity-50"
             >
               <RefreshCw class="h-3.5 w-3.5" :class="syncLoading ? 'animate-spin' : ''" />
               <span>{{ syncLoading ? 'Syncing DNS…' : 'Sync All Ingress Routes to Cloudflare DNS' }}</span>
@@ -1394,10 +1394,10 @@ onUnmounted(() => {
 
           <!-- Wildcard Route Creator -->
           <div class="pt-3 border-t border-cyan-900/30 space-y-2">
-            <div class="text-[11px] font-semibold text-slate-300">
+            <div class="text-[11px] font-semibold text-slate-700">
               1-Click Wildcard Route (*.yourdomain.com):
             </div>
-            <p class="text-[11px] text-slate-400">
+            <p class="text-[11px] text-slate-600">
               Creates a wildcard CNAME in Cloudflare DNS so any subdomain you ever add routes to this tunnel automatically with zero configuration.
             </p>
             <div class="flex flex-col sm:flex-row sm:items-center gap-2.5">
@@ -1410,7 +1410,7 @@ onUnmounted(() => {
               <button
                 @click="createWildcardRoute"
                 :disabled="wildcardLoading || (!cfApiToken && !cfApiHasToken) || !wildcardDomainInput"
-                class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-300 border-emerald-600 bg-emerald-950/40 hover:bg-emerald-900/60 disabled:opacity-50"
+                class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-700 border-emerald-600 bg-emerald-50/40 hover:bg-emerald-100/60 disabled:opacity-50"
               >
                 <CheckCircle2 class="h-3.5 w-3.5" :class="wildcardLoading ? 'animate-spin' : ''" />
                 <span>{{ wildcardLoading ? 'Creating…' : 'Create Wildcard DNS (*.domain)' }}</span>
@@ -1420,78 +1420,78 @@ onUnmounted(() => {
         </div>
 
         <!-- Remote Tunnel Details from Cloudflare API -->
-        <div v-if="cfRemoteTunnel" class="rounded-xl border border-slate-800 bg-slate-950 p-4 space-y-3 font-mono text-xs">
-          <div class="flex items-center justify-between border-b border-slate-800 pb-2">
-            <span class="text-slate-400 font-bold uppercase text-[10px]">Cloudflare Edge Status:</span>
-            <span class="rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-bold">
+        <div v-if="cfRemoteTunnel" class="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3 font-mono text-xs">
+          <div class="flex items-center justify-between border-b border-slate-200 pb-2">
+            <span class="text-slate-600 font-bold uppercase text-[10px]">Cloudflare Edge Status:</span>
+            <span class="rounded bg-emerald-500/20 text-emerald-700 border border-emerald-500/40 px-2 py-0.5 text-[10px] font-bold">
               {{ cfRemoteTunnel.status || 'HEALTHY' }}
             </span>
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-            <div><span class="text-slate-500">Name:</span> <span class="text-slate-200">{{ cfRemoteTunnel.name }}</span></div>
-            <div><span class="text-slate-500">Created:</span> <span class="text-slate-200">{{ cfRemoteTunnel.created_at?.slice(0, 10) }}</span></div>
-            <div><span class="text-slate-500">Remote Connections:</span> <span class="text-cyan-400 font-bold">{{ cfRemoteTunnel.connections?.length || 0 }}</span></div>
-            <div><span class="text-slate-500">Remote Client:</span> <span class="text-slate-300">{{ cfRemoteTunnel.remote_config ? 'Remote Managed' : 'Local Config Managed' }}</span></div>
+            <div><span class="text-slate-500">Name:</span> <span class="text-slate-800">{{ cfRemoteTunnel.name }}</span></div>
+            <div><span class="text-slate-500">Created:</span> <span class="text-slate-800">{{ cfRemoteTunnel.created_at?.slice(0, 10) }}</span></div>
+            <div><span class="text-slate-500">Remote Connections:</span> <span class="text-cyan-600 font-bold">{{ cfRemoteTunnel.connections?.length || 0 }}</span></div>
+            <div><span class="text-slate-500">Remote Client:</span> <span class="text-slate-700">{{ cfRemoteTunnel.remote_config ? 'Remote Managed' : 'Local Config Managed' }}</span></div>
           </div>
 
           <!-- Active Remote Edge Connectors Table -->
           <div v-if="cfRemoteTunnel.connections && cfRemoteTunnel.connections.length" class="space-y-1.5 pt-2">
-            <div class="text-[10px] uppercase font-bold text-slate-400">Active Edge Colo Nodes:</div>
+            <div class="text-[10px] uppercase font-bold text-slate-600">Active Edge Colo Nodes:</div>
             <div
               v-for="(conn, idx) in cfRemoteTunnel.connections"
               :key="idx"
-              class="flex items-center justify-between rounded bg-slate-900/60 p-2 text-[11px]"
+              class="flex items-center justify-between rounded bg-white/60 p-2 text-[11px]"
             >
               <div class="flex items-center gap-2">
                 <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
-                <span class="text-slate-300 font-bold">{{ conn.colo_name }}</span>
+                <span class="text-slate-700 font-bold">{{ conn.colo_name }}</span>
                 <span class="text-slate-500 font-mono">({{ conn.origin_ip }})</span>
               </div>
-              <span class="text-slate-400 text-[10px]">{{ conn.client_version || 'cloudflared' }}</span>
+              <span class="text-slate-600 text-[10px]">{{ conn.client_version || 'cloudflared' }}</span>
             </div>
           </div>
         </div>
 
         <!-- Zero Trust Access Applications Card -->
-        <div class="rounded-xl border border-indigo-900/40 bg-indigo-950/20 p-4 space-y-3">
+        <div class="rounded-xl border border-indigo-900/40 bg-indigo-50/20 p-4 space-y-3">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
-              <ShieldCheck class="h-4 w-4 text-indigo-400" />
-              <h3 class="text-xs font-bold uppercase tracking-wider text-indigo-300">
+              <ShieldCheck class="h-4 w-4 text-indigo-600" />
+              <h3 class="text-xs font-bold uppercase tracking-wider text-indigo-700">
                 Cloudflare Zero Trust Access (Optional Protection Wall)
               </h3>
             </div>
             <button
               @click="fetchAccessApps"
               :disabled="loadingAccessApps || (!cfApiToken && !cfApiHasToken)"
-              class="cyber-btn-secondary text-[11px] py-1 px-2 text-slate-300 flex items-center gap-1"
+              class="cyber-btn-secondary text-[11px] py-1 px-2 text-slate-700 flex items-center gap-1"
             >
               <RefreshCw class="h-3 w-3" :class="loadingAccessApps ? 'animate-spin' : ''" />
               <span>Refresh Apps</span>
             </button>
           </div>
-          <p class="text-xs text-slate-400">
-            Zero Trust Access intercepts requests at Cloudflare edge with an authentication wall (Email PIN / SSO) before allowing traffic to your containers. It is entirely <strong class="text-slate-300">optional per route</strong> and disabled by default.
+          <p class="text-xs text-slate-600">
+            Zero Trust Access intercepts requests at Cloudflare edge with an authentication wall (Email PIN / SSO) before allowing traffic to your containers. It is entirely <strong class="text-slate-700">optional per route</strong> and disabled by default.
           </p>
 
           <!-- Active Zero Trust Applications List -->
           <div v-if="accessApps.length" class="space-y-2 pt-1">
-            <div class="text-[10px] uppercase font-bold text-slate-400">Protected Hostnames:</div>
+            <div class="text-[10px] uppercase font-bold text-slate-600">Protected Hostnames:</div>
             <div
               v-for="app in accessApps"
               :key="app.id"
-              class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900/60 p-2.5 text-xs font-mono"
+              class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white/60 p-2.5 text-xs font-mono"
             >
               <div class="flex items-center gap-2">
-                <ShieldCheck class="h-4 w-4 text-emerald-400 shrink-0" />
+                <ShieldCheck class="h-4 w-4 text-emerald-600 shrink-0" />
                 <div>
-                  <div class="text-slate-200 font-semibold">{{ app.domain }}</div>
+                  <div class="text-slate-800 font-semibold">{{ app.domain }}</div>
                   <div class="text-[10px] text-slate-500">{{ app.name }} &bull; Session: {{ app.session_duration }}</div>
                 </div>
               </div>
               <div class="flex items-center gap-2">
-                <span class="rounded bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 px-2 py-0.5 text-[10px]">
+                <span class="rounded bg-indigo-500/10 border border-indigo-500/30 text-indigo-700 px-2 py-0.5 text-[10px]">
                   ACTIVE
                 </span>
                 <button
@@ -1510,14 +1510,14 @@ onUnmounted(() => {
 
           <!-- Add / Protect New Hostname Form -->
           <div class="pt-3 border-t border-indigo-900/30 space-y-3">
-            <div class="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
+            <div class="text-[11px] font-semibold text-slate-700 flex items-center justify-between">
               <span>Protect Route with Zero Trust Wall:</span>
-              <span class="text-[10px] text-indigo-400 font-mono">Edge Authentication Policy</span>
+              <span class="text-[10px] text-indigo-600 font-mono">Edge Authentication Policy</span>
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
               <div>
-                <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Target Hostname</label>
+                <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Target Hostname</label>
                 <input
                   v-model="newAccessAppHost"
                   type="text"
@@ -1527,7 +1527,7 @@ onUnmounted(() => {
               </div>
 
               <div>
-                <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Authentication Method</label>
+                <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Authentication Method</label>
                 <select v-model="newAccessAppAuthType" class="cyber-input text-xs w-full">
                   <option value="email">Email OTP PIN (Specific Users)</option>
                   <option value="domain">Corporate / Domain Whitelist</option>
@@ -1538,7 +1538,7 @@ onUnmounted(() => {
               </div>
 
               <div>
-                <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">Session Timeout</label>
+                <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Session Timeout</label>
                 <select v-model="newAccessAppSession" class="cyber-input text-xs w-full">
                   <option value="15m">15 Minutes</option>
                   <option value="1h">1 Hour</option>
@@ -1551,7 +1551,7 @@ onUnmounted(() => {
 
             <!-- Dynamic Input based on Auth Type -->
             <div v-if="newAccessAppAuthType !== 'everyone'">
-              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
                 <span v-if="newAccessAppAuthType === 'email'">Allowed Email Addresses (Comma-separated)</span>
                 <span v-else-if="newAccessAppAuthType === 'domain'">Allowed Email Domains (e.g. mycompany.com)</span>
                 <span v-else-if="newAccessAppAuthType === 'ip'">Allowed Client IP / CIDRs</span>
@@ -1569,14 +1569,14 @@ onUnmounted(() => {
                 class="cyber-input text-xs font-mono w-full"
               />
             </div>
-            <div v-else class="text-[11px] text-indigo-300/80 bg-indigo-950/30 border border-indigo-900/40 rounded p-2">
+            <div v-else class="text-[11px] text-indigo-700/80 bg-indigo-50/30 border border-indigo-900/40 rounded p-2">
               All users who successfully log in using any Identity Provider (IdP) configured in your Cloudflare Zero Trust dashboard will be granted access.
             </div>
 
             <button
               @click="createAccessApp"
               :disabled="creatingAccessApp || !newAccessAppHost || (!cfApiToken && !cfApiHasToken)"
-              class="cyber-btn text-xs flex items-center gap-1.5 text-indigo-300 border-indigo-600 bg-indigo-950/40 hover:bg-indigo-900/60 disabled:opacity-50"
+              class="cyber-btn text-xs flex items-center gap-1.5 text-indigo-700 border-indigo-600 bg-indigo-50/40 hover:bg-indigo-100/60 disabled:opacity-50"
             >
               <ShieldCheck class="h-3.5 w-3.5" :class="creatingAccessApp ? 'animate-spin' : ''" />
               <span>{{ creatingAccessApp ? 'Applying Zero Trust…' : 'Apply Zero Trust Wall' }}</span>
@@ -1590,14 +1590,14 @@ onUnmounted(() => {
     <!-- TAB 5: CONFIG BACKUPS                                    -->
     <!-- ======================================================== -->
     <div v-if="activeTab === 'backups'" class="space-y-4">
-      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+      <div class="flex items-center justify-between border-b border-slate-200 pb-3">
         <div>
-          <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
-            <Archive class="h-4 w-4 text-cyan-400" />
+          <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
+            <Archive class="h-4 w-4 text-cyan-600" />
             <span>Config Snapshots & Backups</span>
           </h2>
-          <p class="text-xs text-slate-400">
-            DockTun automatically creates timestamped backups before each write to <code class="text-slate-300">config.yml</code>.
+          <p class="text-xs text-slate-600">
+            DockTun automatically creates timestamped backups before each write to <code class="text-slate-700">config.yml</code>.
           </p>
         </div>
 
@@ -1613,7 +1613,7 @@ onUnmounted(() => {
           <button
             @click="createManualBackup"
             :disabled="backupsLoading"
-            class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-300 border-cyan-700 bg-cyan-950/40 hover:bg-cyan-900/50"
+            class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-700 bg-cyan-50/40 hover:bg-cyan-100/50"
           >
             <Plus class="h-3 w-3" />
             <span>Create Snapshot</span>
@@ -1634,7 +1634,7 @@ onUnmounted(() => {
           <div class="flex items-center gap-3">
             <Archive class="h-4 w-4 text-slate-500" />
             <div>
-              <div class="font-bold text-slate-200">Backup #{{ b.id }}</div>
+              <div class="font-bold text-slate-800">Backup #{{ b.id }}</div>
               <div class="text-[11px] text-slate-500">{{ b.created_at }}</div>
             </div>
           </div>
@@ -1642,7 +1642,7 @@ onUnmounted(() => {
           <div class="flex items-center gap-2">
             <button
               @click="restoreBackup(b)"
-              class="cyber-btn-sm text-xs text-cyan-300 hover:border-cyan-500"
+              class="cyber-btn-sm text-xs text-cyan-700 hover:border-cyan-500"
             >
               Restore Snapshot
             </button>

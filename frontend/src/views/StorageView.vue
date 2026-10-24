@@ -366,17 +366,6 @@ async function executeCreateItem() {
   }
 }
 
-// Delete Item
-async function deleteStorageFile(file: any) {
-  const confirmed = confirm(
-    `Are you sure you want to permanently delete "${file.name}" from ${selectedTarget.value.name}?`
-  )
-  if (!confirmed) return
-
-  try {
-    const params = new URLSearchParams({
-      target_type: selectedTarget.value.type,
-      target_id: selectedTarget.value.id,
 // ---------------------------------------------------------------------------
 // PRE-DELETION INFORMATION & CONFIRMATION MODAL STATE
 // ---------------------------------------------------------------------------
@@ -763,8 +752,8 @@ onMounted(async () => {
       class="toast"
       :class="toastMessage.type === 'error' ? 'toast-error' : (toastMessage.type === 'info' ? 'toast-info' : 'toast-success')"
     >
-      <CheckCircle2 v-if="toastMessage.type === 'success'" class="h-4 w-4 shrink-0 text-emerald-400" />
-      <AlertCircle v-else class="h-4 w-4 shrink-0 text-rose-400" />
+      <CheckCircle2 v-if="toastMessage.type === 'success'" class="h-4 w-4 shrink-0 text-emerald-600" />
+      <AlertCircle v-else class="h-4 w-4 shrink-0 text-rose-600" />
       <span>{{ toastMessage.text }}</span>
       <button @click="toastMessage = null" class="ml-2 hover:opacity-75">
         <X class="h-3.5 w-3.5" />
@@ -772,14 +761,14 @@ onMounted(async () => {
     </div>
 
     <!-- Header Section -->
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-800/80 pb-4">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200/80 pb-4">
       <div>
         <div class="flex items-center gap-2">
-          <p class="text-[11px] font-semibold uppercase tracking-wider text-indigo-400">Host & Docker Infrastructure</p>
-          <span class="rounded bg-slate-800 px-1.5 py-0.2 text-[10px] font-mono text-slate-300">File & Storage Center</span>
+          <p class="text-[11px] font-semibold uppercase tracking-wider text-indigo-600">Host & Docker Infrastructure</p>
+          <span class="rounded bg-slate-100 px-1.5 py-0.2 text-[10px] font-mono text-slate-700">File & Storage Center</span>
         </div>
-        <h1 class="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5 mt-1">
-          <HardDrive class="h-6 w-6 text-indigo-400" />
+        <h1 class="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2.5 mt-1">
+          <HardDrive class="h-6 w-6 text-indigo-600" />
           <span>Storage & File Manager</span>
         </h1>
       </div>
@@ -790,7 +779,7 @@ onMounted(async () => {
           @click="showReclaimModal = true"
           class="cyber-btn flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shadow-lg shadow-indigo-600/20"
         >
-          <Sparkles class="h-4 w-4 text-amber-300" />
+          <Sparkles class="h-4 w-4 text-amber-700" />
           <span>Smart Reclaim</span>
         </button>
 
@@ -800,7 +789,7 @@ onMounted(async () => {
           class="cyber-btn-secondary text-xs flex items-center gap-1.5"
           title="Vacuum SQLite Database to reclaim free pages"
         >
-          <Database class="h-3.5 w-3.5 text-cyan-400" :class="vacuumLoading ? 'animate-spin' : ''" />
+          <Database class="h-3.5 w-3.5 text-cyan-600" :class="vacuumLoading ? 'animate-spin' : ''" />
           <span>{{ vacuumLoading ? 'Vacuuming…' : 'Vacuum DB' }}</span>
         </button>
 
@@ -817,60 +806,60 @@ onMounted(async () => {
     </div>
 
     <!-- Reclaimable Space Hero Banner -->
-    <div class="cyber-card bg-slate-900/80 border-slate-800/90 relative overflow-hidden">
+    <div class="cyber-card bg-white/80 border-slate-200/90 relative overflow-hidden">
       <div class="absolute -right-20 -top-20 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
 
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-center">
         <!-- Reclaimable Metric & Breakdown -->
         <div class="lg:col-span-7 space-y-2.5">
           <div class="flex items-center gap-2">
-            <span class="text-[10px] font-bold font-mono tracking-widest uppercase text-amber-400/90">
+            <span class="text-[10px] font-bold font-mono tracking-widest uppercase text-amber-600/90">
               RESOURCES &bull; RECLAIMABLE SPACE
             </span>
           </div>
 
           <div class="flex items-baseline gap-3">
-            <span class="text-3xl sm:text-4xl font-extrabold font-mono text-amber-300 tracking-tight">
+            <span class="text-3xl sm:text-4xl font-extrabold font-mono text-amber-700 tracking-tight">
               {{ overview?.reclaimable_str || '0 B' }}
             </span>
-            <span class="text-xs text-slate-400 font-medium">potential recovery</span>
+            <span class="text-xs text-slate-600 font-medium">potential recovery</span>
           </div>
 
           <!-- Breakdown Tags -->
           <div class="flex flex-wrap items-center gap-2 pt-1 text-xs font-mono">
-            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-950 border border-slate-800 text-slate-300">
-              <Layers class="h-3 w-3 text-cyan-400" />
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-50 border border-slate-200 text-slate-700">
+              <Layers class="h-3 w-3 text-cyan-600" />
               <span>{{ overview?.counts?.unused_images || 0 }} unused images</span>
             </span>
 
-            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-950 border border-slate-800 text-slate-300">
-              <Box class="h-3 w-3 text-indigo-400" />
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-50 border border-slate-200 text-slate-700">
+              <Box class="h-3 w-3 text-indigo-600" />
               <span>{{ overview?.counts?.stopped_containers || 0 }} stopped containers</span>
             </span>
 
-            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-950 border border-slate-800 text-slate-300">
-              <HardDrive class="h-3 w-3 text-amber-400" />
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-50 border border-slate-200 text-slate-700">
+              <HardDrive class="h-3 w-3 text-amber-600" />
               <span>{{ overview?.counts?.dangling_volumes || 0 }} dangling volumes</span>
             </span>
 
-            <span v-if="overview?.counts?.build_cache_count" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-950 border border-slate-800 text-slate-300">
-              <Sparkles class="h-3 w-3 text-purple-400" />
+            <span v-if="overview?.counts?.build_cache_count" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-50 border border-slate-200 text-slate-700">
+              <Sparkles class="h-3 w-3 text-purple-600" />
               <span>{{ overview?.counts?.build_cache_count }} build cache objects</span>
             </span>
           </div>
         </div>
 
         <!-- Host Disk Space Gauge -->
-        <div class="lg:col-span-5 rounded-xl bg-slate-950/70 border border-slate-800/90 p-4 space-y-2.5">
+        <div class="lg:col-span-5 rounded-xl bg-slate-50/70 border border-slate-200/90 p-4 space-y-2.5">
           <div class="flex items-center justify-between text-xs">
-            <span class="text-slate-400 font-medium">Host Filesystem Disk</span>
-            <span class="font-mono text-slate-200 font-bold">
+            <span class="text-slate-600 font-medium">Host Filesystem Disk</span>
+            <span class="font-mono text-slate-800 font-bold">
               {{ overview?.host_disk?.used_str || '—' }} / {{ overview?.host_disk?.total_str || '—' }}
             </span>
           </div>
 
           <!-- Bar -->
-          <div class="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+          <div class="h-2 w-full overflow-hidden rounded-full bg-slate-100">
             <div
               class="h-full rounded-full transition-all duration-300"
               :class="
@@ -884,68 +873,68 @@ onMounted(async () => {
             ></div>
           </div>
 
-          <div class="flex items-center justify-between text-[11px] font-mono text-slate-400">
-            <span>Free: <strong class="text-emerald-400">{{ overview?.host_disk?.free_str || '—' }}</strong></span>
-            <span>Usage: <strong class="text-slate-200">{{ (overview?.host_disk?.percent || 0).toFixed(1) }}%</strong></span>
+          <div class="flex items-center justify-between text-[11px] font-mono text-slate-600">
+            <span>Free: <strong class="text-emerald-600">{{ overview?.host_disk?.free_str || '—' }}</strong></span>
+            <span>Usage: <strong class="text-slate-800">{{ (overview?.host_disk?.percent || 0).toFixed(1) }}%</strong></span>
           </div>
         </div>
       </div>
     </div>
 
     <!-- Navigation Tabs -->
-    <div class="flex items-center justify-between border-b border-slate-800 pb-2 flex-wrap gap-2">
-      <div class="flex items-center gap-1 rounded-xl bg-slate-900/80 p-1 border border-slate-800 text-xs flex-wrap">
+    <div class="flex items-center justify-between border-b border-slate-200 pb-2 flex-wrap gap-2">
+      <div class="flex items-center gap-1 rounded-xl bg-white/80 p-1 border border-slate-200 text-xs flex-wrap">
         <!-- 1. File Explorer Tab (Primary) -->
         <button
           @click="activeTab = 'files'"
           class="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg font-semibold transition"
-          :class="activeTab === 'files' ? 'bg-indigo-600 text-white shadow-sm ring-1 ring-indigo-500/40' : 'text-slate-400 hover:text-slate-200'"
+          :class="activeTab === 'files' ? 'bg-indigo-600 text-white shadow-sm ring-1 ring-indigo-500/40' : 'text-slate-600 hover:text-slate-800'"
         >
-          <FolderOpen class="h-3.5 w-3.5 text-cyan-300" />
+          <FolderOpen class="h-3.5 w-3.5 text-cyan-700" />
           <span>File Explorer</span>
-          <span class="rounded bg-indigo-950/80 px-1.5 py-0.2 text-[10px] font-mono text-cyan-300">Live</span>
+          <span class="rounded bg-indigo-50/80 px-1.5 py-0.2 text-[10px] font-mono text-cyan-700">Live</span>
         </button>
 
         <!-- 2. Volumes Tab -->
         <button
           @click="activeTab = 'volumes'"
           class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition"
-          :class="activeTab === 'volumes' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+          :class="activeTab === 'volumes' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'"
         >
-          <HardDrive class="h-3.5 w-3.5 text-amber-400" />
+          <HardDrive class="h-3.5 w-3.5 text-amber-600" />
           <span>Volumes</span>
-          <span class="rounded bg-slate-950 px-1.5 py-0.2 text-[10px] font-mono">{{ volumes.length }}</span>
+          <span class="rounded bg-slate-50 px-1.5 py-0.2 text-[10px] font-mono">{{ volumes.length }}</span>
         </button>
 
         <!-- 3. Images Tab -->
         <button
           @click="activeTab = 'images'"
           class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition"
-          :class="activeTab === 'images' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+          :class="activeTab === 'images' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'"
         >
-          <Layers class="h-3.5 w-3.5 text-cyan-400" />
+          <Layers class="h-3.5 w-3.5 text-cyan-600" />
           <span>Images</span>
-          <span class="rounded bg-slate-950 px-1.5 py-0.2 text-[10px] font-mono">{{ images.length }}</span>
+          <span class="rounded bg-slate-50 px-1.5 py-0.2 text-[10px] font-mono">{{ images.length }}</span>
         </button>
 
         <!-- 4. Containers Tab -->
         <button
           @click="activeTab = 'containers'"
           class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition"
-          :class="activeTab === 'containers' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+          :class="activeTab === 'containers' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'"
         >
-          <Box class="h-3.5 w-3.5 text-indigo-400" />
+          <Box class="h-3.5 w-3.5 text-indigo-600" />
           <span>Containers</span>
-          <span class="rounded bg-slate-950 px-1.5 py-0.2 text-[10px] font-mono">{{ containers.length }}</span>
+          <span class="rounded bg-slate-50 px-1.5 py-0.2 text-[10px] font-mono">{{ containers.length }}</span>
         </button>
 
         <!-- 5. Build Cache Tab -->
         <button
           @click="activeTab = 'system'"
           class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition"
-          :class="activeTab === 'system' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+          :class="activeTab === 'system' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'"
         >
-          <Sparkles class="h-3.5 w-3.5 text-purple-400" />
+          <Sparkles class="h-3.5 w-3.5 text-purple-600" />
           <span>Build Cache & DF</span>
         </button>
 
@@ -953,9 +942,9 @@ onMounted(async () => {
         <button
           @click="activeTab = 'docktun'"
           class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition"
-          :class="activeTab === 'docktun' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+          :class="activeTab === 'docktun' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'"
         >
-          <Database class="h-3.5 w-3.5 text-emerald-400" />
+          <Database class="h-3.5 w-3.5 text-emerald-600" />
           <span>DockTun DB</span>
         </button>
       </div>
@@ -969,19 +958,19 @@ onMounted(async () => {
         <!-- Left Column: Storage Target Picker (Volumes, Containers, Projects, Host) -->
         <div class="lg:col-span-4 space-y-3">
           <div class="cyber-card !p-3.5 space-y-3">
-            <div class="flex items-center justify-between border-b border-slate-800 pb-2">
-              <span class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                <HardDrive class="h-3.5 w-3.5 text-indigo-400" />
+            <div class="flex items-center justify-between border-b border-slate-200 pb-2">
+              <span class="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                <HardDrive class="h-3.5 w-3.5 text-indigo-600" />
                 <span>Storage Target</span>
               </span>
-              <span class="text-[10px] text-slate-400 font-mono">{{ storageTargets.length }} targets</span>
+              <span class="text-[10px] text-slate-600 font-mono">{{ storageTargets.length }} targets</span>
             </div>
 
             <!-- Target Selector List -->
             <div class="space-y-1 max-h-[580px] overflow-y-auto pr-1">
               <!-- Group 1: Docker Volumes -->
               <div class="pt-1 pb-1">
-                <span class="text-[10px] font-bold font-mono uppercase tracking-wider text-amber-400 px-2 block mb-1">
+                <span class="text-[10px] font-bold font-mono uppercase tracking-wider text-amber-600 px-2 block mb-1">
                   Docker Volumes
                 </span>
                 <div
@@ -989,11 +978,11 @@ onMounted(async () => {
                   :key="t.id"
                   @click="selectTarget(t)"
                   class="flex items-center justify-between px-2.5 py-2 rounded-lg cursor-pointer transition text-xs font-mono group"
-                  :class="selectedTarget?.type === t.type && selectedTarget?.id === t.id ? 'bg-indigo-600 text-white shadow-sm' : 'hover:bg-slate-800/80 text-slate-300'"
+                  :class="selectedTarget?.type === t.type && selectedTarget?.id === t.id ? 'bg-indigo-600 text-white shadow-sm' : 'hover:bg-slate-100/80 text-slate-700'"
                 >
                   <div class="truncate pr-2">
                     <div class="font-bold truncate flex items-center gap-1.5">
-                      <HardDrive class="h-3 w-3 shrink-0" :class="selectedTarget?.id === t.id ? 'text-white' : 'text-amber-400'" />
+                      <HardDrive class="h-3 w-3 shrink-0" :class="selectedTarget?.id === t.id ? 'text-slate-900' : 'text-amber-600'" />
                       <span class="truncate">{{ t.name }}</span>
                     </div>
                     <span class="text-[10px] opacity-75 truncate block">{{ t.description }}</span>
@@ -1003,8 +992,8 @@ onMounted(async () => {
               </div>
 
               <!-- Group 2: Docker Containers -->
-              <div class="pt-2 pb-1 border-t border-slate-800/60">
-                <span class="text-[10px] font-bold font-mono uppercase tracking-wider text-cyan-400 px-2 block mb-1">
+              <div class="pt-2 pb-1 border-t border-slate-200/60">
+                <span class="text-[10px] font-bold font-mono uppercase tracking-wider text-cyan-600 px-2 block mb-1">
                   Containers Filesystem
                 </span>
                 <div
@@ -1012,11 +1001,11 @@ onMounted(async () => {
                   :key="t.id"
                   @click="selectTarget(t)"
                   class="flex items-center justify-between px-2.5 py-2 rounded-lg cursor-pointer transition text-xs font-mono group"
-                  :class="selectedTarget?.type === t.type && selectedTarget?.id === t.id ? 'bg-indigo-600 text-white shadow-sm' : 'hover:bg-slate-800/80 text-slate-300'"
+                  :class="selectedTarget?.type === t.type && selectedTarget?.id === t.id ? 'bg-indigo-600 text-white shadow-sm' : 'hover:bg-slate-100/80 text-slate-700'"
                 >
                   <div class="truncate pr-2">
                     <div class="font-bold truncate flex items-center gap-1.5">
-                      <Box class="h-3 w-3 shrink-0" :class="selectedTarget?.id === t.id ? 'text-white' : 'text-cyan-400'" />
+                      <Box class="h-3 w-3 shrink-0" :class="selectedTarget?.id === t.id ? 'text-slate-900' : 'text-cyan-600'" />
                       <span class="truncate">{{ t.name }}</span>
                     </div>
                     <span class="text-[10px] opacity-75 truncate block">{{ t.description }}</span>
@@ -1026,8 +1015,8 @@ onMounted(async () => {
               </div>
 
               <!-- Group 3: Host & Projects -->
-              <div class="pt-2 pb-1 border-t border-slate-800/60">
-                <span class="text-[10px] font-bold font-mono uppercase tracking-wider text-emerald-400 px-2 block mb-1">
+              <div class="pt-2 pb-1 border-t border-slate-200/60">
+                <span class="text-[10px] font-bold font-mono uppercase tracking-wider text-emerald-600 px-2 block mb-1">
                   Host & Project Dirs
                 </span>
                 <div
@@ -1035,11 +1024,11 @@ onMounted(async () => {
                   :key="t.id"
                   @click="selectTarget(t)"
                   class="flex items-center justify-between px-2.5 py-2 rounded-lg cursor-pointer transition text-xs font-mono group"
-                  :class="selectedTarget?.type === t.type && selectedTarget?.id === t.id ? 'bg-indigo-600 text-white shadow-sm' : 'hover:bg-slate-800/80 text-slate-300'"
+                  :class="selectedTarget?.type === t.type && selectedTarget?.id === t.id ? 'bg-indigo-600 text-white shadow-sm' : 'hover:bg-slate-100/80 text-slate-700'"
                 >
                   <div class="truncate pr-2">
                     <div class="font-bold truncate flex items-center gap-1.5">
-                      <Folder class="h-3 w-3 shrink-0" :class="selectedTarget?.id === t.id ? 'text-white' : 'text-emerald-400'" />
+                      <Folder class="h-3 w-3 shrink-0" :class="selectedTarget?.id === t.id ? 'text-slate-900' : 'text-emerald-600'" />
                       <span class="truncate">{{ t.name }}</span>
                     </div>
                     <span class="text-[10px] opacity-75 truncate block">{{ t.description }}</span>
@@ -1053,47 +1042,47 @@ onMounted(async () => {
 
         <!-- Right Column: Interactive File Browser & Breadcrumbs -->
         <div class="lg:col-span-8 space-y-3">
-          <div class="cyber-card !p-4 space-y-3 bg-slate-950">
+          <div class="cyber-card !p-4 space-y-3 bg-slate-50">
             <!-- Active Target Info & Action Toolbar -->
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
               <div>
                 <div class="flex items-center gap-2">
                   <span
                     class="rounded px-1.5 py-0.2 text-[10px] font-mono font-bold uppercase"
-                    :class="selectedTarget?.type === 'volume' ? 'bg-amber-500/10 text-amber-300 border border-amber-500/30' : (selectedTarget?.type === 'container' ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-500/30' : 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30')"
+                    :class="selectedTarget?.type === 'volume' ? 'bg-amber-500/10 text-amber-700 border border-amber-500/30' : (selectedTarget?.type === 'container' ? 'bg-cyan-500/10 text-cyan-700 border border-cyan-500/30' : 'bg-emerald-500/10 text-emerald-700 border border-emerald-500/30')"
                   >
                     {{ selectedTarget?.type || 'Target' }}
                   </span>
-                  <h2 class="text-sm font-bold text-white font-mono truncate max-w-sm" :title="selectedTarget?.name">
+                  <h2 class="text-sm font-bold text-slate-900 font-mono truncate max-w-sm" :title="selectedTarget?.name">
                     {{ selectedTarget?.name || 'Select a Storage Target' }}
                   </h2>
                 </div>
-                <p class="text-[11px] text-slate-400 font-mono mt-0.5 truncate">{{ selectedTarget?.description }}</p>
+                <p class="text-[11px] text-slate-600 font-mono mt-0.5 truncate">{{ selectedTarget?.description }}</p>
               </div>
 
               <!-- File Action Buttons -->
               <div class="flex items-center gap-2 flex-wrap">
                 <button
                   @click="newItemIsDir = false; newItemName = ''; showNewItemModal = true"
-                  class="cyber-btn-secondary !py-1.5 !px-2.5 text-xs flex items-center gap-1.5 text-slate-200"
+                  class="cyber-btn-secondary !py-1.5 !px-2.5 text-xs flex items-center gap-1.5 text-slate-800"
                   title="Create new file in current directory"
                 >
-                  <FilePlus class="h-3.5 w-3.5 text-indigo-400" />
+                  <FilePlus class="h-3.5 w-3.5 text-indigo-600" />
                   <span>New File</span>
                 </button>
 
                 <button
                   @click="newItemIsDir = true; newItemName = ''; showNewItemModal = true"
-                  class="cyber-btn-secondary !py-1.5 !px-2.5 text-xs flex items-center gap-1.5 text-slate-200"
+                  class="cyber-btn-secondary !py-1.5 !px-2.5 text-xs flex items-center gap-1.5 text-slate-800"
                   title="Create new folder in current directory"
                 >
-                  <FolderPlus class="h-3.5 w-3.5 text-amber-400" />
+                  <FolderPlus class="h-3.5 w-3.5 text-amber-600" />
                   <span>New Folder</span>
                 </button>
 
                 <button
                   @click="showUploadModal = true"
-                  class="cyber-btn-secondary !py-1.5 !px-2.5 text-xs flex items-center gap-1.5 text-cyan-300"
+                  class="cyber-btn-secondary !py-1.5 !px-2.5 text-xs flex items-center gap-1.5 text-cyan-700"
                   title="Upload a file to this directory"
                 >
                   <Upload class="h-3.5 w-3.5" />
@@ -1112,13 +1101,13 @@ onMounted(async () => {
             </div>
 
             <!-- Path Breadcrumb Bar & Quick Search -->
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800 text-xs font-mono">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white/60 p-2.5 rounded-lg border border-slate-200 text-xs font-mono">
               <!-- Breadcrumbs -->
               <div class="flex items-center gap-1.5 flex-wrap min-w-0">
                 <button
                   @click="navigateUp"
                   :disabled="!currentPath"
-                  class="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                  class="p-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-30 disabled:cursor-not-allowed"
                   title="Go up one level"
                 >
                   <ChevronLeft class="h-3.5 w-3.5" />
@@ -1132,8 +1121,8 @@ onMounted(async () => {
                   >
                     <button
                       @click="loadDirectory(crumb.path)"
-                      class="hover:text-indigo-400 transition"
-                      :class="idx === breadcrumbs.length - 1 ? 'text-white font-bold' : 'text-slate-400'"
+                      class="hover:text-indigo-600 transition"
+                      :class="idx === breadcrumbs.length - 1 ? 'text-slate-900 font-bold' : 'text-slate-600'"
                     >
                       {{ crumb.name }}
                     </button>
@@ -1149,31 +1138,31 @@ onMounted(async () => {
                   v-model="fileSearch"
                   type="text"
                   placeholder="Filter files…"
-                  class="w-full pl-8 pr-2.5 py-1 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder:text-slate-500 font-mono"
+                  class="w-full pl-8 pr-2.5 py-1 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-800 placeholder:text-slate-500 font-mono"
                 />
               </div>
             </div>
 
             <!-- File Explorer Table -->
-            <div class="overflow-x-auto border border-slate-800 rounded-lg bg-slate-950 min-h-[380px]">
+            <div class="overflow-x-auto border border-slate-200 rounded-lg bg-slate-50 min-h-[380px]">
               <table class="w-full text-xs font-mono">
                 <thead>
-                  <tr class="border-b border-slate-800 bg-slate-900/80 text-left text-slate-400">
+                  <tr class="border-b border-slate-200 bg-white/80 text-left text-slate-600">
                     <th class="px-4 py-2.5 font-semibold uppercase tracking-wider">Name</th>
                     <th class="px-4 py-2.5 font-semibold uppercase tracking-wider">Size</th>
                     <th class="px-4 py-2.5 font-semibold uppercase tracking-wider">Modified</th>
                     <th class="px-4 py-2.5 font-semibold uppercase tracking-wider text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody class="divide-y divide-slate-800/60">
+                <tbody class="divide-y divide-slate-200/60">
                   <!-- Up Dir Row -->
                   <tr
                     v-if="currentPath"
                     @click="navigateUp"
-                    class="hover:bg-slate-900/60 cursor-pointer transition text-indigo-300"
+                    class="hover:bg-white/60 cursor-pointer transition text-indigo-700"
                   >
                     <td colspan="4" class="px-4 py-2 flex items-center gap-2 font-bold">
-                      <Folder class="h-4 w-4 text-amber-400" />
+                      <Folder class="h-4 w-4 text-amber-600" />
                       <span>.. (Up one level)</span>
                     </td>
                   </tr>
@@ -1182,31 +1171,31 @@ onMounted(async () => {
                   <tr
                     v-for="file in filteredFiles"
                     :key="file.path"
-                    class="hover:bg-slate-900/50 transition-colors group"
+                    class="hover:bg-white/50 transition-colors group"
                   >
                     <!-- Name & Icon -->
                     <td class="px-4 py-2.5">
                       <div
                         @click="openFile(file)"
-                        class="flex items-center gap-2 cursor-pointer font-medium hover:text-indigo-400 max-w-sm truncate"
-                        :class="file.is_dir ? 'text-white font-bold' : 'text-slate-200'"
+                        class="flex items-center gap-2 cursor-pointer font-medium hover:text-indigo-600 max-w-sm truncate"
+                        :class="file.is_dir ? 'text-slate-900 font-bold' : 'text-slate-800'"
                       >
                         <component
                           :is="getFileIcon(file)"
                           class="h-4 w-4 shrink-0"
-                          :class="file.is_dir ? 'text-amber-400 fill-amber-400/20' : 'text-slate-400'"
+                          :class="file.is_dir ? 'text-amber-600 fill-amber-400/20' : 'text-slate-600'"
                         />
                         <span class="truncate">{{ file.name }}</span>
                       </div>
                     </td>
 
                     <!-- Size -->
-                    <td class="px-4 py-2.5 whitespace-nowrap text-slate-400">
+                    <td class="px-4 py-2.5 whitespace-nowrap text-slate-600">
                       {{ file.is_dir ? '—' : file.size_str }}
                     </td>
 
                     <!-- Modified Date -->
-                    <td class="px-4 py-2.5 whitespace-nowrap text-slate-400 text-[11px]">
+                    <td class="px-4 py-2.5 whitespace-nowrap text-slate-600 text-[11px]">
                       {{ file.mod_time || '—' }}
                     </td>
 
@@ -1216,7 +1205,7 @@ onMounted(async () => {
                         <button
                           v-if="!file.is_dir"
                           @click="openFile(file)"
-                          class="cyber-btn-secondary !px-2 !py-0.5 !text-[11px] text-cyan-300"
+                          class="cyber-btn-secondary !px-2 !py-0.5 !text-[11px] text-cyan-700"
                           title="View / Edit file"
                         >
                           Edit
@@ -1225,7 +1214,7 @@ onMounted(async () => {
                         <button
                           v-if="!file.is_dir"
                           @click="downloadStorageFile(file)"
-                          class="p-1 rounded text-slate-400 hover:text-indigo-300 hover:bg-slate-800"
+                          class="p-1 rounded text-slate-600 hover:text-indigo-700 hover:bg-slate-100"
                           title="Download file"
                         >
                           <Download class="h-3.5 w-3.5" />
@@ -1233,7 +1222,7 @@ onMounted(async () => {
 
                         <button
                           @click="deleteStorageFile(file)"
-                          class="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-rose-500/10"
+                          class="p-1 rounded text-slate-600 hover:text-rose-600 hover:bg-rose-500/10"
                           title="Delete file or directory"
                         >
                           <Trash2 class="h-3.5 w-3.5" />
@@ -1251,8 +1240,8 @@ onMounted(async () => {
 
                   <!-- Loading state -->
                   <tr v-if="filesLoading">
-                    <td colspan="4" class="px-4 py-12 text-center text-slate-400">
-                      <RotateCcw class="h-5 w-5 animate-spin mx-auto mb-2 text-indigo-400" />
+                    <td colspan="4" class="px-4 py-12 text-center text-slate-600">
+                      <RotateCcw class="h-5 w-5 animate-spin mx-auto mb-2 text-indigo-600" />
                       <span>Browsing storage...</span>
                     </td>
                   </tr>
@@ -1268,7 +1257,7 @@ onMounted(async () => {
     <!-- TAB 2: VOLUMES                                                        -->
     <!-- ===================================================================== -->
     <div v-if="activeTab === 'volumes'" class="space-y-4">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 rounded-xl p-3 text-xs">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white/60 border border-slate-200 rounded-xl p-3 text-xs">
         <div class="flex flex-wrap items-center gap-2">
           <div class="relative w-48 sm:w-64">
             <Search class="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -1276,13 +1265,13 @@ onMounted(async () => {
               v-model="volumeSearch"
               type="text"
               placeholder="Search volume name or container…"
-              class="w-full pl-8 pr-2.5 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder:text-slate-500 font-mono"
+              class="w-full pl-8 pr-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-800 placeholder:text-slate-500 font-mono"
             />
           </div>
 
           <select
             v-model="volumeFilter"
-            class="text-xs bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-slate-300 font-mono"
+            class="text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-slate-700 font-mono"
           >
             <option value="all">All Volumes ({{ volumes.length }})</option>
             <option value="dangling">Dangling / Unused ({{ overview?.counts?.dangling_volumes || 0 }})</option>
@@ -1303,10 +1292,10 @@ onMounted(async () => {
       </div>
 
       <!-- Volume Table -->
-      <div class="cyber-card !p-0 overflow-x-auto border border-slate-800 bg-slate-950">
+      <div class="cyber-card !p-0 overflow-x-auto border border-slate-200 bg-slate-50">
         <table class="w-full text-xs font-mono">
           <thead>
-            <tr class="border-b border-slate-800 bg-slate-900/80 text-left text-slate-400">
+            <tr class="border-b border-slate-200 bg-white/80 text-left text-slate-600">
               <th class="px-4 py-3 font-semibold uppercase tracking-wider">Volume Name</th>
               <th class="px-4 py-3 font-semibold uppercase tracking-wider">Status</th>
               <th class="px-4 py-3 font-semibold uppercase tracking-wider">Size</th>
@@ -1315,49 +1304,49 @@ onMounted(async () => {
               <th class="px-4 py-3 font-semibold uppercase tracking-wider text-right">Actions</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-800/60">
+          <tbody class="divide-y divide-slate-200/60">
             <tr
               v-for="v in filteredVolumes"
               :key="v.name"
-              class="hover:bg-slate-900/50 transition-colors"
+              class="hover:bg-white/50 transition-colors"
             >
-              <td class="px-4 py-3 text-slate-200 max-w-xs truncate" :title="v.name">
+              <td class="px-4 py-3 text-slate-800 max-w-xs truncate" :title="v.name">
                 <div class="flex items-center gap-2">
                   <span
                     v-if="v.is_anonymous"
-                    class="px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[9px] uppercase shrink-0"
+                    class="px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-600 border border-amber-500/30 text-[9px] uppercase shrink-0"
                     title="Anonymous hash volume"
                   >
                     Anon Hash
                   </span>
-                  <span class="font-bold text-white truncate">{{ v.name }}</span>
+                  <span class="font-bold text-slate-900 truncate">{{ v.name }}</span>
                 </div>
               </td>
 
               <td class="px-4 py-3 whitespace-nowrap">
                 <span
                   class="rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                  :class="v.in_use ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/10 text-amber-300 border border-amber-500/30'"
+                  :class="v.in_use ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30' : 'bg-amber-500/10 text-amber-700 border border-amber-500/30'"
                 >
                   {{ v.in_use ? 'In-Use' : 'Dangling (Unused)' }}
                 </span>
               </td>
 
-              <td class="px-4 py-3 whitespace-nowrap text-slate-300 font-bold">
+              <td class="px-4 py-3 whitespace-nowrap text-slate-700 font-bold">
                 {{ v.size || 'N/A' }}
               </td>
 
-              <td class="px-4 py-3 whitespace-nowrap text-slate-400 text-[11px]">
+              <td class="px-4 py-3 whitespace-nowrap text-slate-600 text-[11px]">
                 {{ v.driver }} &bull; {{ v.scope }}
               </td>
 
-              <td class="px-4 py-3 text-slate-300">
+              <td class="px-4 py-3 text-slate-700">
                 <div v-if="v.containers && v.containers.length" class="flex flex-wrap gap-1">
                   <router-link
                     v-for="c in v.containers"
                     :key="c"
                     :to="'/containers?name=' + encodeURIComponent(c)"
-                    class="rounded bg-slate-900 border border-slate-800 px-1.5 py-0.2 text-[10px] text-indigo-300 hover:text-white"
+                    class="rounded bg-white border border-slate-200 px-1.5 py-0.2 text-[10px] text-indigo-700 hover:text-slate-900"
                   >
                     {{ c }}
                   </router-link>
@@ -1370,7 +1359,7 @@ onMounted(async () => {
                   <!-- Browse Files Button (Direct link to File Explorer!) -->
                   <button
                     @click="browseTargetFromOutside('volume', v.name)"
-                    class="cyber-btn-secondary !px-2.5 !py-1 text-[11px] text-cyan-300 flex items-center gap-1"
+                    class="cyber-btn-secondary !px-2.5 !py-1 text-[11px] text-cyan-700 flex items-center gap-1"
                     title="Browse and edit files inside this Docker volume"
                   >
                     <FolderOpen class="h-3 w-3" />
@@ -1379,7 +1368,7 @@ onMounted(async () => {
 
                   <button
                     @click="selectedItemInspect = v; inspectType = 'volume'"
-                    class="cyber-btn-secondary !px-2 !py-1 text-[11px] text-slate-300"
+                    class="cyber-btn-secondary !px-2 !py-1 text-[11px] text-slate-700"
                     title="Inspect mountpoint"
                   >
                     Inspect
@@ -1411,7 +1400,7 @@ onMounted(async () => {
     <!-- TAB 3: IMAGES                                                         -->
     <!-- ===================================================================== -->
     <div v-if="activeTab === 'images'" class="space-y-4">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 rounded-xl p-3 text-xs">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white/60 border border-slate-200 rounded-xl p-3 text-xs">
         <div class="flex flex-wrap items-center gap-2">
           <div class="relative w-48 sm:w-64">
             <Search class="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -1419,13 +1408,13 @@ onMounted(async () => {
               v-model="imageSearch"
               type="text"
               placeholder="Search repository, tag, or ID…"
-              class="w-full pl-8 pr-2.5 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder:text-slate-500 font-mono"
+              class="w-full pl-8 pr-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-800 placeholder:text-slate-500 font-mono"
             />
           </div>
 
           <select
             v-model="imageFilter"
-            class="text-xs bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-slate-300 font-mono"
+            class="text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-slate-700 font-mono"
           >
             <option value="all">All Images ({{ images.length }})</option>
             <option value="unused">Unused Images ({{ overview?.counts?.unused_images || 0 }})</option>
@@ -1440,7 +1429,7 @@ onMounted(async () => {
             class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-3"
             title="Remove dangling images (<none>:<none>)"
           >
-            <Trash2 class="h-3.5 w-3.5 text-amber-400" />
+            <Trash2 class="h-3.5 w-3.5 text-amber-600" />
             <span>Prune Dangling</span>
           </button>
 
@@ -1456,10 +1445,10 @@ onMounted(async () => {
       </div>
 
       <!-- Images Table -->
-      <div class="cyber-card !p-0 overflow-x-auto border border-slate-800 bg-slate-950">
+      <div class="cyber-card !p-0 overflow-x-auto border border-slate-200 bg-slate-50">
         <table class="w-full text-xs font-mono">
           <thead>
-            <tr class="border-b border-slate-800 bg-slate-900/80 text-left text-slate-400">
+            <tr class="border-b border-slate-200 bg-white/80 text-left text-slate-600">
               <th class="px-4 py-3 font-semibold uppercase tracking-wider">Repository:Tag</th>
               <th class="px-4 py-3 font-semibold uppercase tracking-wider">Image ID</th>
               <th class="px-4 py-3 font-semibold uppercase tracking-wider">Size</th>
@@ -1469,54 +1458,54 @@ onMounted(async () => {
               <th class="px-4 py-3 font-semibold uppercase tracking-wider text-right">Actions</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-800/60">
+          <tbody class="divide-y divide-slate-200/60">
             <tr
               v-for="img in filteredImages"
               :key="img.id + img.repository"
-              class="hover:bg-slate-900/50 transition-colors"
+              class="hover:bg-white/50 transition-colors"
             >
-              <td class="px-4 py-3 text-slate-200">
+              <td class="px-4 py-3 text-slate-800">
                 <div class="flex items-center gap-2">
                   <span
                     v-if="img.is_dangling"
-                    class="px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[9px] uppercase shrink-0"
+                    class="px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-600 border border-amber-500/30 text-[9px] uppercase shrink-0"
                   >
                     Dangling
                   </span>
-                  <span class="font-bold text-white truncate max-w-xs" :title="`${img.repository}:${img.tag}`">
-                    {{ img.repository }}:<span class="text-cyan-400">{{ img.tag }}</span>
+                  <span class="font-bold text-slate-900 truncate max-w-xs" :title="`${img.repository}:${img.tag}`">
+                    {{ img.repository }}:<span class="text-cyan-600">{{ img.tag }}</span>
                   </span>
                 </div>
               </td>
 
-              <td class="px-4 py-3 whitespace-nowrap text-slate-400 text-[11px]">
+              <td class="px-4 py-3 whitespace-nowrap text-slate-600 text-[11px]">
                 {{ img.id.slice(0, 12) }}
               </td>
 
-              <td class="px-4 py-3 whitespace-nowrap text-slate-300 font-bold">
+              <td class="px-4 py-3 whitespace-nowrap text-slate-700 font-bold">
                 {{ img.size }}
               </td>
 
-              <td class="px-4 py-3 whitespace-nowrap text-slate-400 text-[11px]">
+              <td class="px-4 py-3 whitespace-nowrap text-slate-600 text-[11px]">
                 {{ img.created_since || img.created_at }}
               </td>
 
               <td class="px-4 py-3 whitespace-nowrap">
                 <span
                   class="rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                  :class="img.in_use ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-400 border border-slate-700'"
+                  :class="img.in_use ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30' : 'bg-slate-100 text-slate-600 border border-slate-300'"
                 >
                   {{ img.in_use ? 'In-Use' : 'Unused' }}
                 </span>
               </td>
 
-              <td class="px-4 py-3 text-slate-300">
+              <td class="px-4 py-3 text-slate-700">
                 <div v-if="img.containers && img.containers.length" class="flex flex-wrap gap-1">
                   <router-link
                     v-for="c in img.containers"
                     :key="c"
                     :to="'/containers?name=' + encodeURIComponent(c)"
-                    class="rounded bg-slate-900 border border-slate-800 px-1.5 py-0.2 text-[10px] text-indigo-300 hover:text-white"
+                    class="rounded bg-white border border-slate-200 px-1.5 py-0.2 text-[10px] text-indigo-700 hover:text-slate-900"
                   >
                     {{ c }}
                   </router-link>
@@ -1528,10 +1517,10 @@ onMounted(async () => {
                 <div class="flex items-center justify-end gap-1.5">
                   <button
                     @click="copyText(img.id, img.id)"
-                    class="p-1.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                    class="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-800"
                     title="Copy Image ID"
                   >
-                    <Check v-if="copiedKey === img.id" class="h-3.5 w-3.5 text-emerald-400" />
+                    <Check v-if="copiedKey === img.id" class="h-3.5 w-3.5 text-emerald-600" />
                     <Copy v-else class="h-3.5 w-3.5" />
                   </button>
 
@@ -1561,7 +1550,7 @@ onMounted(async () => {
     <!-- TAB 4: CONTAINERS STORAGE                                             -->
     <!-- ===================================================================== -->
     <div v-if="activeTab === 'containers'" class="space-y-4">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 rounded-xl p-3 text-xs">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white/60 border border-slate-200 rounded-xl p-3 text-xs">
         <div class="flex flex-wrap items-center gap-2">
           <div class="relative w-48 sm:w-64">
             <Search class="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -1569,13 +1558,13 @@ onMounted(async () => {
               v-model="containerSearch"
               type="text"
               placeholder="Search container or image…"
-              class="w-full pl-8 pr-2.5 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder:text-slate-500 font-mono"
+              class="w-full pl-8 pr-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-800 placeholder:text-slate-500 font-mono"
             />
           </div>
 
           <select
             v-model="containerFilter"
-            class="text-xs bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-slate-300 font-mono"
+            class="text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-slate-700 font-mono"
           >
             <option value="all">All Containers ({{ containers.length }})</option>
             <option value="stopped">Stopped / Exited Only ({{ overview?.counts?.stopped_containers || 0 }})</option>
@@ -1594,10 +1583,10 @@ onMounted(async () => {
       </div>
 
       <!-- Containers Table -->
-      <div class="cyber-card !p-0 overflow-x-auto border border-slate-800 bg-slate-950">
+      <div class="cyber-card !p-0 overflow-x-auto border border-slate-200 bg-slate-50">
         <table class="w-full text-xs font-mono">
           <thead>
-            <tr class="border-b border-slate-800 bg-slate-900/80 text-left text-slate-400">
+            <tr class="border-b border-slate-200 bg-white/80 text-left text-slate-600">
               <th class="px-4 py-3 font-semibold uppercase tracking-wider">Container Name</th>
               <th class="px-4 py-3 font-semibold uppercase tracking-wider">Image</th>
               <th class="px-4 py-3 font-semibold uppercase tracking-wider">State</th>
@@ -1606,39 +1595,39 @@ onMounted(async () => {
               <th class="px-4 py-3 font-semibold uppercase tracking-wider text-right">Actions</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-800/60">
+          <tbody class="divide-y divide-slate-200/60">
             <tr
               v-for="c in filteredContainers"
               :key="c.id"
-              class="hover:bg-slate-900/50 transition-colors"
+              class="hover:bg-white/50 transition-colors"
             >
-              <td class="px-4 py-3 text-slate-200">
+              <td class="px-4 py-3 text-slate-800">
                 <router-link
                   :to="'/containers?id=' + encodeURIComponent(c.id)"
-                  class="font-bold text-white hover:text-indigo-400 hover:underline"
+                  class="font-bold text-slate-900 hover:text-indigo-600 hover:underline"
                 >
                   {{ c.name }}
                 </router-link>
               </td>
 
-              <td class="px-4 py-3 text-slate-400 max-w-xs truncate" :title="c.image">
+              <td class="px-4 py-3 text-slate-600 max-w-xs truncate" :title="c.image">
                 {{ c.image }}
               </td>
 
               <td class="px-4 py-3 whitespace-nowrap">
                 <span
                   class="rounded-full px-2 py-0.5 text-[10px] font-semibold"
-                  :class="stringsEqual(c.state, 'running') ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-400 border border-slate-700'"
+                  :class="stringsEqual(c.state, 'running') ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30' : 'bg-slate-100 text-slate-600 border border-slate-300'"
                 >
                   {{ c.state }}
                 </span>
               </td>
 
-              <td class="px-4 py-3 whitespace-nowrap text-amber-300 font-bold">
+              <td class="px-4 py-3 whitespace-nowrap text-amber-700 font-bold">
                 {{ c.size_rw }}
               </td>
 
-              <td class="px-4 py-3 whitespace-nowrap text-slate-300">
+              <td class="px-4 py-3 whitespace-nowrap text-slate-700">
                 {{ c.size_rootfs }}
               </td>
 
@@ -1646,7 +1635,7 @@ onMounted(async () => {
                 <div class="flex items-center justify-end gap-1.5">
                   <button
                     @click="browseTargetFromOutside('container', c.name)"
-                    class="cyber-btn-secondary !px-2.5 !py-1 text-[11px] text-cyan-300 flex items-center gap-1"
+                    class="cyber-btn-secondary !px-2.5 !py-1 text-[11px] text-cyan-700 flex items-center gap-1"
                     title="Browse inside container filesystem"
                   >
                     <FolderOpen class="h-3 w-3" />
@@ -1655,7 +1644,7 @@ onMounted(async () => {
 
                   <router-link
                     :to="'/containers?id=' + encodeURIComponent(c.id)"
-                    class="cyber-btn-secondary !px-2.5 !py-1 text-[11px] text-indigo-300"
+                    class="cyber-btn-secondary !px-2.5 !py-1 text-[11px] text-indigo-700"
                   >
                     Control Center &rarr;
                   </router-link>
@@ -1680,9 +1669,9 @@ onMounted(async () => {
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <!-- Structured Docker DF -->
         <div class="cyber-card space-y-3">
-          <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
-            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
-              <Layers class="h-4 w-4 text-cyan-400" />
+          <div class="flex items-center justify-between border-b border-slate-200 pb-2.5">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-2">
+              <Layers class="h-4 w-4 text-cyan-600" />
               <span>Docker System Disk Usage (DF)</span>
             </h3>
           </div>
@@ -1691,15 +1680,15 @@ onMounted(async () => {
             <div
               v-for="df in (overview?.docker_df || [])"
               :key="df.type"
-              class="flex items-center justify-between p-3 rounded-lg border border-slate-800 bg-slate-950 font-mono text-xs"
+              class="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-slate-50 font-mono text-xs"
             >
               <div>
-                <span class="text-white font-bold block">{{ df.type }}</span>
-                <span class="text-slate-400 text-[11px]">{{ df.total_count }} total ({{ df.active_count }} active)</span>
+                <span class="text-slate-900 font-bold block">{{ df.type }}</span>
+                <span class="text-slate-600 text-[11px]">{{ df.total_count }} total ({{ df.active_count }} active)</span>
               </div>
               <div class="text-right">
-                <span class="text-slate-200 font-bold block">{{ df.size }}</span>
-                <span class="text-amber-400 text-[11px] font-semibold">Reclaimable: {{ df.reclaimable }}</span>
+                <span class="text-slate-800 font-bold block">{{ df.size }}</span>
+                <span class="text-amber-600 text-[11px] font-semibold">Reclaimable: {{ df.reclaimable }}</span>
               </div>
             </div>
           </div>
@@ -1707,20 +1696,20 @@ onMounted(async () => {
 
         <!-- Build Cache Actions -->
         <div class="cyber-card space-y-4">
-          <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
-            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
-              <Sparkles class="h-4 w-4 text-purple-400" />
+          <div class="flex items-center justify-between border-b border-slate-200 pb-2.5">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-2">
+              <Sparkles class="h-4 w-4 text-purple-600" />
               <span>Build Cache Maintenance</span>
             </h3>
           </div>
 
-          <p class="text-xs text-slate-400 leading-relaxed">
+          <p class="text-xs text-slate-600 leading-relaxed">
             Docker caches layers created during image builds. Pruning build cache frees disk space safely without affecting running containers.
           </p>
 
-          <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono flex items-center justify-between">
-            <span class="text-slate-400">Build Cache Entries:</span>
-            <span class="text-purple-300 font-bold">{{ overview?.counts?.build_cache_count || 0 }} items</span>
+          <div class="p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono flex items-center justify-between">
+            <span class="text-slate-600">Build Cache Entries:</span>
+            <span class="text-purple-700 font-bold">{{ overview?.counts?.build_cache_count || 0 }} items</span>
           </div>
 
           <div class="flex flex-col sm:flex-row gap-2 pt-2">
@@ -1740,10 +1729,10 @@ onMounted(async () => {
         </div>
 
         <!-- Complete System Prune Card (Moved from Settings) -->
-        <div class="cyber-card space-y-4 md:col-span-2 border-amber-900/40 bg-slate-900/60">
-          <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
-            <h3 class="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-2">
-              <Trash2 class="h-4 w-4 text-amber-400" />
+        <div class="cyber-card space-y-4 md:col-span-2 border-amber-900/40 bg-white/60">
+          <div class="flex items-center justify-between border-b border-slate-200 pb-2.5">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-amber-700 flex items-center gap-2">
+              <Trash2 class="h-4 w-4 text-amber-600" />
               <span>Full Host Resource Prune (System-Wide Cleanup)</span>
             </h3>
 
@@ -1759,7 +1748,7 @@ onMounted(async () => {
             </button>
           </div>
 
-          <p class="text-xs text-slate-400 leading-relaxed">
+          <p class="text-xs text-slate-600 leading-relaxed">
             Quickly frees up host disk space by removing all stopped containers, unused networks, and dangling image layers in a single pass. Active running containers and named volumes are safely preserved.
           </p>
         </div>
@@ -1773,35 +1762,35 @@ onMounted(async () => {
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <!-- SQLite Database -->
         <div class="cyber-card space-y-4">
-          <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
-            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
-              <Database class="h-4 w-4 text-emerald-400" />
+          <div class="flex items-center justify-between border-b border-slate-200 pb-2.5">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-2">
+              <Database class="h-4 w-4 text-emerald-600" />
               <span>SQLite App Database</span>
             </h3>
           </div>
 
           <div class="space-y-2.5 text-xs font-mono">
-            <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-950 border border-slate-800">
-              <span class="text-slate-400">Database File Path:</span>
-              <span class="text-slate-200 truncate max-w-xs">{{ overview?.docktun_storage?.db_path }}</span>
+            <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+              <span class="text-slate-600">Database File Path:</span>
+              <span class="text-slate-800 truncate max-w-xs">{{ overview?.docktun_storage?.db_path }}</span>
             </div>
 
-            <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-950 border border-slate-800">
-              <span class="text-slate-400">Database Size on Disk:</span>
-              <span class="text-emerald-400 font-bold">{{ overview?.docktun_storage?.db_size_str }}</span>
+            <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+              <span class="text-slate-600">Database Size on Disk:</span>
+              <span class="text-emerald-600 font-bold">{{ overview?.docktun_storage?.db_size_str }}</span>
             </div>
 
-            <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-950 border border-slate-800">
-              <span class="text-slate-400">Audit Trail Records:</span>
-              <span class="text-indigo-400 font-bold">{{ overview?.docktun_storage?.audit_count }} records</span>
+            <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+              <span class="text-slate-600">Audit Trail Records:</span>
+              <span class="text-indigo-600 font-bold">{{ overview?.docktun_storage?.audit_count }} records</span>
             </div>
           </div>
 
-          <div v-if="vacuumMessage" class="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-xs font-mono">
+          <div v-if="vacuumMessage" class="p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 text-xs font-mono">
             {{ vacuumMessage }}
           </div>
 
-          <div class="pt-2 border-t border-slate-800">
+          <div class="pt-2 border-t border-slate-200">
             <button
               @click="vacuumDatabase"
               :disabled="vacuumLoading"
@@ -1816,30 +1805,30 @@ onMounted(async () => {
 
         <!-- Backups & Cloudflare -->
         <div class="cyber-card space-y-4">
-          <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
-            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
-              <FolderOpen class="h-4 w-4 text-cyan-400" />
+          <div class="flex items-center justify-between border-b border-slate-200 pb-2.5">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-2">
+              <FolderOpen class="h-4 w-4 text-cyan-600" />
               <span>Tunnel Backups & Configs</span>
             </h3>
           </div>
 
-          <p class="text-xs text-slate-400 leading-relaxed">
+          <p class="text-xs text-slate-600 leading-relaxed">
             DockTun automatically creates timestamped YAML backups every time an ingress route is modified.
           </p>
 
           <div class="space-y-2.5 text-xs font-mono">
-            <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-950 border border-slate-800">
-              <span class="text-slate-400">Total Backups Count:</span>
-              <span class="text-cyan-400 font-bold">{{ overview?.docktun_storage?.backups_count || 0 }} files</span>
+            <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+              <span class="text-slate-600">Total Backups Count:</span>
+              <span class="text-cyan-600 font-bold">{{ overview?.docktun_storage?.backups_count || 0 }} files</span>
             </div>
 
-            <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-950 border border-slate-800">
-              <span class="text-slate-400">Total Backups Disk Size:</span>
-              <span class="text-slate-200 font-bold">{{ overview?.docktun_storage?.backups_str || '0 B' }}</span>
+            <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+              <span class="text-slate-600">Total Backups Disk Size:</span>
+              <span class="text-slate-800 font-bold">{{ overview?.docktun_storage?.backups_str || '0 B' }}</span>
             </div>
           </div>
 
-          <div class="pt-2 border-t border-slate-800">
+          <div class="pt-2 border-t border-slate-200">
             <router-link
               to="/access?tab=cloudflare"
               class="cyber-btn-secondary w-full text-center text-xs flex items-center justify-center gap-1.5 py-2"
@@ -1858,16 +1847,16 @@ onMounted(async () => {
       v-if="activeEditorFile"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-3 sm:p-5"
     >
-      <div class="cyber-card max-w-4xl w-full h-[85vh] flex flex-col p-4 sm:p-5 space-y-3 border-indigo-500/50 bg-slate-950">
+      <div class="cyber-card max-w-4xl w-full h-[85vh] flex flex-col p-4 sm:p-5 space-y-3 border-indigo-500/50 bg-slate-50">
         <!-- Editor Header -->
-        <div class="flex items-center justify-between border-b border-slate-800 pb-3 shrink-0">
+        <div class="flex items-center justify-between border-b border-slate-200 pb-3 shrink-0">
           <div class="flex items-center gap-2 truncate pr-2">
-            <FileCode class="h-5 w-5 text-indigo-400 shrink-0" />
+            <FileCode class="h-5 w-5 text-indigo-600 shrink-0" />
             <div class="truncate">
-              <h3 class="text-sm font-bold text-white font-mono truncate">
+              <h3 class="text-sm font-bold text-slate-900 font-mono truncate">
                 {{ activeEditorFile.name }}
               </h3>
-              <p class="text-[11px] text-slate-400 font-mono truncate">
+              <p class="text-[11px] text-slate-600 font-mono truncate">
                 {{ selectedTarget?.name }} : {{ activeEditorFile.path }} ({{ activeEditorFile.size_str }})
               </p>
             </div>
@@ -1876,7 +1865,7 @@ onMounted(async () => {
           <div class="flex items-center gap-2 shrink-0">
             <button
               @click="downloadStorageFile(activeEditorFile)"
-              class="cyber-btn-secondary !py-1 !px-2.5 text-xs flex items-center gap-1 text-slate-300"
+              class="cyber-btn-secondary !py-1 !px-2.5 text-xs flex items-center gap-1 text-slate-700"
               title="Download file"
             >
               <Download class="h-3.5 w-3.5" />
@@ -1895,7 +1884,7 @@ onMounted(async () => {
 
             <button
               @click="activeEditorFile = null"
-              class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+              class="p-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100"
             >
               <X class="h-4 w-4" />
             </button>
@@ -1903,16 +1892,16 @@ onMounted(async () => {
         </div>
 
         <!-- Editor Code Textarea -->
-        <div class="flex-1 min-h-0 relative rounded-lg border border-slate-800 bg-slate-950 overflow-hidden">
+        <div class="flex-1 min-h-0 relative rounded-lg border border-slate-200 bg-slate-50 overflow-hidden">
           <textarea
             v-model="editorContent"
             spellcheck="false"
-            class="w-full h-full p-4 font-mono text-xs bg-slate-950 text-slate-100 resize-none focus:outline-none focus:ring-1 focus:ring-indigo-500/40 leading-relaxed selection:bg-indigo-600/40"
+            class="w-full h-full p-4 font-mono text-xs bg-slate-50 text-slate-900 resize-none focus:outline-none focus:ring-1 focus:ring-indigo-500/40 leading-relaxed selection:bg-indigo-600/40"
           ></textarea>
         </div>
 
         <!-- Editor Footer -->
-        <div class="flex items-center justify-between text-[11px] font-mono text-slate-400 shrink-0 pt-1">
+        <div class="flex items-center justify-between text-[11px] font-mono text-slate-600 shrink-0 pt-1">
           <span>Target: {{ selectedTarget?.type }} / {{ selectedTarget?.name }}</span>
           <span>{{ editorContent.split('\n').length }} lines &bull; {{ editorContent.length }} characters</span>
         </div>
@@ -1928,38 +1917,38 @@ onMounted(async () => {
       @click.self="showNewItemModal = false"
     >
       <div class="cyber-card max-w-md w-full p-5 space-y-4">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center justify-between border-b border-slate-200 pb-3">
           <div class="flex items-center gap-2">
-            <component :is="newItemIsDir ? FolderPlus : FilePlus" class="h-5 w-5 text-indigo-400" />
-            <h3 class="text-sm font-bold text-white font-mono">
+            <component :is="newItemIsDir ? FolderPlus : FilePlus" class="h-5 w-5 text-indigo-600" />
+            <h3 class="text-sm font-bold text-slate-900 font-mono">
               Create New {{ newItemIsDir ? 'Directory' : 'File' }}
             </h3>
           </div>
-          <button @click="showNewItemModal = false" class="text-slate-400 hover:text-white">
+          <button @click="showNewItemModal = false" class="text-slate-600 hover:text-slate-900">
             <X class="h-4 w-4" />
           </button>
         </div>
 
         <div class="space-y-3 text-xs font-mono">
-          <div class="p-2.5 rounded bg-slate-950 border border-slate-800 text-slate-400">
+          <div class="p-2.5 rounded bg-slate-50 border border-slate-200 text-slate-600">
             <span>Location: </span>
-            <span class="text-white">{{ selectedTarget?.name }}/{{ currentPath || '(root)' }}</span>
+            <span class="text-slate-900">{{ selectedTarget?.name }}/{{ currentPath || '(root)' }}</span>
           </div>
 
           <div class="space-y-1">
-            <label class="text-[11px] text-slate-300 font-semibold">{{ newItemIsDir ? 'Folder Name' : 'File Name (e.g. config.json, script.sh)' }}</label>
+            <label class="text-[11px] text-slate-700 font-semibold">{{ newItemIsDir ? 'Folder Name' : 'File Name (e.g. config.json, script.sh)' }}</label>
             <input
               v-model="newItemName"
               @keydown.enter="executeCreateItem"
               type="text"
               autofocus
               :placeholder="newItemIsDir ? 'my-folder' : 'config.yml'"
-              class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-mono text-xs"
+              class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-mono text-xs"
             />
           </div>
         </div>
 
-        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
           <button @click="showNewItemModal = false" class="cyber-btn-secondary text-xs">
             Cancel
           </button>
@@ -1983,39 +1972,39 @@ onMounted(async () => {
       @click.self="showUploadModal = false"
     >
       <div class="cyber-card max-w-md w-full p-5 space-y-4">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center justify-between border-b border-slate-200 pb-3">
           <div class="flex items-center gap-2">
-            <Upload class="h-5 w-5 text-cyan-400" />
-            <h3 class="text-sm font-bold text-white font-mono">
+            <Upload class="h-5 w-5 text-cyan-600" />
+            <h3 class="text-sm font-bold text-slate-900 font-mono">
               Upload File to Storage
             </h3>
           </div>
-          <button @click="showUploadModal = false" class="text-slate-400 hover:text-white">
+          <button @click="showUploadModal = false" class="text-slate-600 hover:text-slate-900">
             <X class="h-4 w-4" />
           </button>
         </div>
 
         <div class="space-y-3 text-xs font-mono">
-          <div class="p-2.5 rounded bg-slate-950 border border-slate-800 text-slate-400">
+          <div class="p-2.5 rounded bg-slate-50 border border-slate-200 text-slate-600">
             <span>Destination: </span>
-            <span class="text-white">{{ selectedTarget?.name }}/{{ currentPath || '(root)' }}</span>
+            <span class="text-slate-900">{{ selectedTarget?.name }}/{{ currentPath || '(root)' }}</span>
           </div>
 
           <div class="space-y-1">
-            <label class="text-[11px] text-slate-300 font-semibold">Select File from Computer</label>
+            <label class="text-[11px] text-slate-700 font-semibold">Select File from Computer</label>
             <input
               type="file"
               @change="onFileSelected"
-              class="w-full text-xs text-slate-300 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer"
+              class="w-full text-xs text-slate-700 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-slate-900 hover:file:bg-indigo-500 cursor-pointer"
             />
           </div>
 
-          <div v-if="selectedUploadFile" class="text-[11px] text-emerald-400">
+          <div v-if="selectedUploadFile" class="text-[11px] text-emerald-600">
             Ready to upload: {{ selectedUploadFile.name }} ({{ Math.round(selectedUploadFile.size / 1024) }} KB)
           </div>
         </div>
 
-        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
           <button @click="showUploadModal = false" class="cyber-btn-secondary text-xs">
             Cancel
           </button>
@@ -2039,62 +2028,62 @@ onMounted(async () => {
       @click.self="showReclaimModal = false"
     >
       <div class="cyber-card max-w-lg w-full border-amber-500/40 p-5 space-y-4">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center justify-between border-b border-slate-200 pb-3">
           <div class="flex items-center gap-2">
-            <Sparkles class="h-5 w-5 text-amber-400" />
+            <Sparkles class="h-5 w-5 text-amber-600" />
             <div>
-              <h3 class="text-sm font-bold text-white font-mono">Smart Disk Reclaim</h3>
-              <p class="text-[11px] text-slate-400">Select resources to safely clean up</p>
+              <h3 class="text-sm font-bold text-slate-900 font-mono">Smart Disk Reclaim</h3>
+              <p class="text-[11px] text-slate-600">Select resources to safely clean up</p>
             </div>
           </div>
-          <button @click="showReclaimModal = false" class="text-slate-400 hover:text-white">
+          <button @click="showReclaimModal = false" class="text-slate-600 hover:text-slate-900">
             <X class="h-4 w-4" />
           </button>
         </div>
 
         <div class="space-y-3 text-xs">
           <!-- Option 1: Dangling Images -->
-          <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-800 bg-slate-950 hover:bg-slate-900 cursor-pointer">
-            <input type="checkbox" v-model="reclaimOptions.prune_images_dangling" class="mt-0.5 rounded bg-slate-800 text-indigo-600" />
+          <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-white cursor-pointer">
+            <input type="checkbox" v-model="reclaimOptions.prune_images_dangling" class="mt-0.5 rounded bg-slate-100 text-indigo-600" />
             <div>
-              <span class="font-bold text-white block">Prune Dangling Images (&lt;none&gt;)</span>
-              <span class="text-slate-400 text-[11px]">Removes untagged image layers left over from builds. Completely safe.</span>
+              <span class="font-bold text-slate-900 block">Prune Dangling Images (&lt;none&gt;)</span>
+              <span class="text-slate-600 text-[11px]">Removes untagged image layers left over from builds. Completely safe.</span>
             </div>
           </label>
 
           <!-- Option 2: All Unused Images -->
-          <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-800 bg-slate-950 hover:bg-slate-900 cursor-pointer">
-            <input type="checkbox" v-model="reclaimOptions.prune_images_all" class="mt-0.5 rounded bg-slate-800 text-indigo-600" />
+          <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-white cursor-pointer">
+            <input type="checkbox" v-model="reclaimOptions.prune_images_all" class="mt-0.5 rounded bg-slate-100 text-indigo-600" />
             <div>
-              <span class="font-bold text-white block">Prune All Unused Images</span>
-              <span class="text-slate-400 text-[11px]">Removes any image that does not have an active container currently running.</span>
+              <span class="font-bold text-slate-900 block">Prune All Unused Images</span>
+              <span class="text-slate-600 text-[11px]">Removes any image that does not have an active container currently running.</span>
             </div>
           </label>
 
           <!-- Option 3: Stopped Containers -->
-          <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-800 bg-slate-950 hover:bg-slate-900 cursor-pointer">
-            <input type="checkbox" v-model="reclaimOptions.prune_containers" class="mt-0.5 rounded bg-slate-800 text-indigo-600" />
+          <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-white cursor-pointer">
+            <input type="checkbox" v-model="reclaimOptions.prune_containers" class="mt-0.5 rounded bg-slate-100 text-indigo-600" />
             <div>
-              <span class="font-bold text-white block">Prune Stopped & Exited Containers</span>
-              <span class="text-slate-400 text-[11px]">Cleans up old container execution instances that are stopped.</span>
+              <span class="font-bold text-slate-900 block">Prune Stopped & Exited Containers</span>
+              <span class="text-slate-600 text-[11px]">Cleans up old container execution instances that are stopped.</span>
             </div>
           </label>
 
           <!-- Option 4: Build Cache -->
-          <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-800 bg-slate-950 hover:bg-slate-900 cursor-pointer">
-            <input type="checkbox" v-model="reclaimOptions.prune_build_cache" class="mt-0.5 rounded bg-slate-800 text-indigo-600" />
+          <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-white cursor-pointer">
+            <input type="checkbox" v-model="reclaimOptions.prune_build_cache" class="mt-0.5 rounded bg-slate-100 text-indigo-600" />
             <div>
-              <span class="font-bold text-white block">Prune Docker Build Cache</span>
-              <span class="text-slate-400 text-[11px]">Cleans up cached build steps and layers. Completely safe.</span>
+              <span class="font-bold text-slate-900 block">Prune Docker Build Cache</span>
+              <span class="text-slate-600 text-[11px]">Cleans up cached build steps and layers. Completely safe.</span>
             </div>
           </label>
 
           <!-- Option 5: Dangling Volumes (With Warning) -->
-          <label class="flex items-start gap-3 p-3 rounded-lg border border-amber-900/50 bg-amber-950/20 hover:bg-amber-950/30 cursor-pointer">
-            <input type="checkbox" v-model="reclaimOptions.prune_volumes" class="mt-0.5 rounded bg-slate-800 text-amber-500" />
+          <label class="flex items-start gap-3 p-3 rounded-lg border border-amber-900/50 bg-amber-50/20 hover:bg-amber-50/30 cursor-pointer">
+            <input type="checkbox" v-model="reclaimOptions.prune_volumes" class="mt-0.5 rounded bg-slate-100 text-amber-500" />
             <div>
-              <span class="font-bold text-amber-300 block flex items-center gap-1.5">
-                <AlertTriangle class="h-3.5 w-3.5 text-amber-400" />
+              <span class="font-bold text-amber-700 block flex items-center gap-1.5">
+                <AlertTriangle class="h-3.5 w-3.5 text-amber-600" />
                 Prune Dangling Volumes (CAUTION)
               </span>
               <span class="text-amber-200/80 text-[11px] block mt-0.5">
@@ -2106,11 +2095,11 @@ onMounted(async () => {
 
         <!-- Output Log if run -->
         <div v-if="reclaimResults.length" class="space-y-1">
-          <label class="text-[10px] uppercase font-mono text-slate-400">Execution Output</label>
-          <pre class="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-300 max-h-40 overflow-y-auto whitespace-pre-wrap">{{ reclaimResults.join('\n\n') }}</pre>
+          <label class="text-[10px] uppercase font-mono text-slate-600">Execution Output</label>
+          <pre class="p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-[11px] font-mono text-slate-700 max-h-40 overflow-y-auto whitespace-pre-wrap">{{ reclaimResults.join('\n\n') }}</pre>
         </div>
 
-        <div class="flex items-center justify-between pt-3 border-t border-slate-800">
+        <div class="flex items-center justify-between pt-3 border-t border-slate-200">
           <button @click="showReclaimModal = false" class="cyber-btn-secondary text-xs">
             Close
           </button>
@@ -2118,7 +2107,7 @@ onMounted(async () => {
           <button
             @click="executeBatchReclaim"
             :disabled="reclaimLoading"
-            class="cyber-btn flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-white font-semibold"
+            class="cyber-btn flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-slate-900 font-semibold"
           >
             <RotateCcw v-if="reclaimLoading" class="h-3.5 w-3.5 animate-spin" />
             <Sparkles v-else class="h-3.5 w-3.5" />
@@ -2137,51 +2126,51 @@ onMounted(async () => {
       @click.self="selectedItemInspect = null"
     >
       <div class="cyber-card max-w-lg w-full p-5 space-y-4">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center justify-between border-b border-slate-200 pb-3">
           <div class="flex items-center gap-2">
-            <component :is="inspectType === 'volume' ? HardDrive : Layers" class="h-5 w-5 text-indigo-400" />
-            <h3 class="text-sm font-bold text-white font-mono">
+            <component :is="inspectType === 'volume' ? HardDrive : Layers" class="h-5 w-5 text-indigo-600" />
+            <h3 class="text-sm font-bold text-slate-900 font-mono">
               {{ inspectType === 'volume' ? 'Volume Details' : 'Image Details' }}
             </h3>
           </div>
-          <button @click="selectedItemInspect = null" class="text-slate-400 hover:text-white">
+          <button @click="selectedItemInspect = null" class="text-slate-600 hover:text-slate-900">
             <X class="h-4 w-4" />
           </button>
         </div>
 
         <!-- Volume Inspector -->
         <div v-if="inspectType === 'volume'" class="space-y-2 text-xs font-mono">
-          <div class="p-2.5 rounded bg-slate-950 border border-slate-800">
-            <span class="text-slate-400 block text-[10px] uppercase">Name</span>
-            <span class="text-white font-bold break-all">{{ selectedItemInspect.name }}</span>
+          <div class="p-2.5 rounded bg-slate-50 border border-slate-200">
+            <span class="text-slate-600 block text-[10px] uppercase">Name</span>
+            <span class="text-slate-900 font-bold break-all">{{ selectedItemInspect.name }}</span>
           </div>
 
-          <div class="p-2.5 rounded bg-slate-950 border border-slate-800">
-            <span class="text-slate-400 block text-[10px] uppercase">Mountpoint on Host</span>
-            <span class="text-cyan-300 break-all">{{ selectedItemInspect.mountpoint }}</span>
+          <div class="p-2.5 rounded bg-slate-50 border border-slate-200">
+            <span class="text-slate-600 block text-[10px] uppercase">Mountpoint on Host</span>
+            <span class="text-cyan-700 break-all">{{ selectedItemInspect.mountpoint }}</span>
           </div>
 
           <div class="grid grid-cols-2 gap-2">
-            <div class="p-2.5 rounded bg-slate-950 border border-slate-800">
-              <span class="text-slate-400 block text-[10px] uppercase">Driver</span>
-              <span class="text-slate-200">{{ selectedItemInspect.driver }}</span>
+            <div class="p-2.5 rounded bg-slate-50 border border-slate-200">
+              <span class="text-slate-600 block text-[10px] uppercase">Driver</span>
+              <span class="text-slate-800">{{ selectedItemInspect.driver }}</span>
             </div>
-            <div class="p-2.5 rounded bg-slate-950 border border-slate-800">
-              <span class="text-slate-400 block text-[10px] uppercase">Scope</span>
-              <span class="text-slate-200">{{ selectedItemInspect.scope }}</span>
+            <div class="p-2.5 rounded bg-slate-50 border border-slate-200">
+              <span class="text-slate-600 block text-[10px] uppercase">Scope</span>
+              <span class="text-slate-800">{{ selectedItemInspect.scope }}</span>
             </div>
           </div>
 
-          <div class="p-2.5 rounded bg-slate-950 border border-slate-800">
-            <span class="text-slate-400 block text-[10px] uppercase">Attached Containers</span>
-            <span v-if="selectedItemInspect.containers && selectedItemInspect.containers.length" class="text-emerald-400">
+          <div class="p-2.5 rounded bg-slate-50 border border-slate-200">
+            <span class="text-slate-600 block text-[10px] uppercase">Attached Containers</span>
+            <span v-if="selectedItemInspect.containers && selectedItemInspect.containers.length" class="text-emerald-600">
               {{ selectedItemInspect.containers.join(', ') }}
             </span>
-            <span v-else class="text-amber-400 font-semibold">None (Dangling / Unmounted)</span>
+            <span v-else class="text-amber-600 font-semibold">None (Dangling / Unmounted)</span>
           </div>
         </div>
 
-        <div class="flex justify-end pt-2 border-t border-slate-800">
+        <div class="flex justify-end pt-2 border-t border-slate-200">
           <button @click="selectedItemInspect = null" class="cyber-btn-secondary text-xs">
             Close
           </button>
@@ -2197,19 +2186,19 @@ onMounted(async () => {
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4"
       @click.self="pendingDelete = null"
     >
-      <div class="cyber-card max-w-xl w-full border-rose-500/50 bg-slate-950 p-5 space-y-4 shadow-2xl">
+      <div class="cyber-card max-w-xl w-full border-rose-500/50 bg-slate-50 p-5 space-y-4 shadow-sm">
         <!-- Header -->
-        <div class="flex items-start justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-start justify-between border-b border-slate-200 pb-3">
           <div class="flex items-center gap-2.5">
-            <div class="p-2 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400">
+            <div class="p-2 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-600">
               <AlertTriangle class="h-5 w-5" />
             </div>
             <div>
-              <h3 class="text-sm font-bold text-white font-mono">{{ pendingDelete.title }}</h3>
-              <p class="text-[11px] text-slate-400 font-mono">{{ pendingDelete.subtitle || 'Review before final deletion' }}</p>
+              <h3 class="text-sm font-bold text-slate-900 font-mono">{{ pendingDelete.title }}</h3>
+              <p class="text-[11px] text-slate-600 font-mono">{{ pendingDelete.subtitle || 'Review before final deletion' }}</p>
             </div>
           </div>
-          <button @click="pendingDelete = null" class="text-slate-400 hover:text-white">
+          <button @click="pendingDelete = null" class="text-slate-600 hover:text-slate-900">
             <X class="h-4 w-4" />
           </button>
         </div>
@@ -2219,12 +2208,12 @@ onMounted(async () => {
           <div
             v-for="(det, idx) in pendingDelete.details"
             :key="idx"
-            class="flex items-start justify-between p-2 rounded bg-slate-900/60 border border-slate-800/80 gap-2"
+            class="flex items-start justify-between p-2 rounded bg-white/60 border border-slate-200/80 gap-2"
           >
-            <span class="text-slate-400 shrink-0">{{ det.label }}:</span>
+            <span class="text-slate-600 shrink-0">{{ det.label }}:</span>
             <span
               class="text-right break-all font-semibold"
-              :class="det.highlight ? 'text-amber-300' : 'text-slate-200'"
+              :class="det.highlight ? 'text-amber-700' : 'text-slate-800'"
             >
               {{ det.value }}
             </span>
@@ -2233,34 +2222,34 @@ onMounted(async () => {
 
         <!-- Scrollable List of Affected Items (if pruning bulk items) -->
         <div v-if="pendingDelete.itemsList && pendingDelete.itemsList.length" class="space-y-1.5">
-          <div class="flex items-center justify-between text-[11px] font-mono text-slate-400">
+          <div class="flex items-center justify-between text-[11px] font-mono text-slate-600">
             <span>Items to be Permanently Removed ({{ pendingDelete.itemsList.length }}):</span>
           </div>
-          <div class="max-h-44 overflow-y-auto space-y-1 border border-slate-800 rounded-lg p-2 bg-slate-900/40 text-xs font-mono">
+          <div class="max-h-44 overflow-y-auto space-y-1 border border-slate-200 rounded-lg p-2 bg-white/40 text-xs font-mono">
             <div
               v-for="(it, i) in pendingDelete.itemsList"
               :key="i"
-              class="flex items-center justify-between py-1 px-1.5 rounded hover:bg-slate-800/50"
+              class="flex items-center justify-between py-1 px-1.5 rounded hover:bg-slate-100/50"
             >
-              <span class="text-slate-200 truncate pr-2" :title="it.name">{{ it.name }}</span>
+              <span class="text-slate-800 truncate pr-2" :title="it.name">{{ it.name }}</span>
               <div class="flex items-center gap-2 shrink-0">
                 <span v-if="it.info" class="text-[10px] text-slate-500">{{ it.info }}</span>
-                <span class="text-amber-400 font-bold text-[11px]">{{ it.size }}</span>
+                <span class="text-amber-600 font-bold text-[11px]">{{ it.size }}</span>
               </div>
             </div>
           </div>
         </div>
 
         <!-- High-Impact Danger Callout -->
-        <div class="p-3 rounded-lg border border-rose-500/30 bg-rose-950/20 text-xs font-mono flex items-start gap-2.5 text-rose-300">
-          <ShieldAlert class="h-4 w-4 shrink-0 text-rose-400 mt-0.5" />
+        <div class="p-3 rounded-lg border border-rose-500/30 bg-rose-50/20 text-xs font-mono flex items-start gap-2.5 text-rose-700">
+          <ShieldAlert class="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
           <div class="leading-relaxed">
             {{ pendingDelete.warning }}
           </div>
         </div>
 
         <!-- Footer Actions -->
-        <div class="flex items-center justify-between pt-3 border-t border-slate-800">
+        <div class="flex items-center justify-between pt-3 border-t border-slate-200">
           <button
             @click="pendingDelete = null"
             :disabled="deletingInProgress"

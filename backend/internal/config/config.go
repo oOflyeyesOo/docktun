@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 )
 
 type Config struct {
+	SetupToken           string `envconfig:"SETUP_TOKEN" default:""`
 	ListenAddr           string `envconfig:"LISTEN_ADDR" default:"0.0.0.0:3001"`
 	JWTSecret            string `envconfig:"JWT_SECRET" default:""`
 	AdminUsername        string `envconfig:"ADMIN_USERNAME" default:"admin"`
@@ -31,20 +33,74 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
-	// Auto-generate or restore persistent JWTSecret if not explicitly passed
+	// Refuse to start with an ephemeral or unreadable signing secret.
 	if strings.TrimSpace(cfg.JWTSecret) == "" {
-		dataDir := filepath.Dir(cfg.DBPath)
-		secretFile := filepath.Join(dataDir, "jwt.secret")
-		if data, err := os.ReadFile(secretFile); err == nil && len(strings.TrimSpace(string(data))) >= 16 {
-			cfg.JWTSecret = strings.TrimSpace(string(data))
-		} else {
+		secretFile := filepath.Join(filepath.Dir(cfg.DBPath), "jwt.secret")
+		token, err := os.ReadFile(secretFile)
+		if os.IsNotExist(err) {
 			buf := make([]byte, 32)
-			_, _ = rand.Read(buf)
-			cfg.JWTSecret = hex.EncodeToString(buf)
-			_ = os.MkdirAll(dataDir, 0755)
-			_ = os.WriteFile(secretFile, []byte(cfg.JWTSecret), 0600)
+			if _, err := rand.Read(buf); err != nil {
+				return nil, err
+			}
+			if err := os.MkdirAll(filepath.Dir(secretFile), 0700); err != nil {
+				return nil, err
+			}
+			f, openErr := os.OpenFile(secretFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			if openErr != nil {
+				return nil, openErr
+			}
+			_, writeErr := f.WriteString(hex.EncodeToString(buf))
+			closeErr := f.Close()
+			if writeErr != nil {
+				return nil, writeErr
+			}
+			if closeErr != nil {
+				return nil, closeErr
+			}
+			token, err = os.ReadFile(secretFile)
 		}
+		if err != nil {
+			return nil, fmt.Errorf("read JWT secret: %w", err)
+		}
+		cfg.JWTSecret = strings.TrimSpace(string(token))
+	}
+	if len(cfg.JWTSecret) < 32 {
+		return nil, fmt.Errorf("JWT_SECRET must contain at least 32 bytes")
 	}
 
+	// Bootstrap ownership must require a secret available on the host.
+	if strings.TrimSpace(cfg.SetupToken) == "" {
+		secretFile := filepath.Join(filepath.Dir(cfg.DBPath), "setup.token")
+		token, err := os.ReadFile(secretFile)
+		if os.IsNotExist(err) {
+			buf := make([]byte, 32)
+			if _, err := rand.Read(buf); err != nil {
+				return nil, err
+			}
+			if err := os.MkdirAll(filepath.Dir(secretFile), 0700); err != nil {
+				return nil, err
+			}
+			f, openErr := os.OpenFile(secretFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			if openErr != nil {
+				return nil, openErr
+			}
+			_, writeErr := f.WriteString(hex.EncodeToString(buf))
+			closeErr := f.Close()
+			if writeErr != nil {
+				return nil, writeErr
+			}
+			if closeErr != nil {
+				return nil, closeErr
+			}
+			token, err = os.ReadFile(secretFile)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read setup token: %w", err)
+		}
+		cfg.SetupToken = strings.TrimSpace(string(token))
+	}
+	if len(cfg.SetupToken) < 32 {
+		return nil, fmt.Errorf("SETUP_TOKEN must contain at least 32 bytes")
+	}
 	return &cfg, nil
 }

@@ -512,14 +512,14 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
     <!-- Header -->
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
       <div class="flex items-center gap-3">
-        <div class="rounded-xl border border-indigo-500/20 bg-indigo-500/10 p-2.5 text-indigo-400">
+        <div class="rounded-xl border border-indigo-500/20 bg-indigo-500/10 p-2.5 text-indigo-600">
           <Globe class="h-6 w-6" />
         </div>
         <div>
-          <h1 class="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+          <h1 class="text-xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
             Remote Access & Ingress
           </h1>
-          <p class="text-xs text-slate-400">
+          <p class="text-xs text-slate-600">
             Unified management for Cloudflare edge tunnels, Tailscale zero-trust mesh, and WireGuard VPN
           </p>
         </div>
@@ -544,32 +544,32 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
       <button
         @click="switchTab('cloudflare')"
         class="cyber-card p-4 text-left transition relative flex flex-col justify-between"
-        :class="activeTab === 'cloudflare' ? 'ring-2 ring-orange-500/50 border-orange-500/70 bg-slate-900/90 shadow-md' : 'bg-slate-950/70 hover:border-slate-700'"
+        :class="activeTab === 'cloudflare' ? 'ring-2 ring-orange-500/50 border-orange-500/70 bg-white/90 shadow-md' : 'bg-slate-50/70 hover:border-slate-300'"
       >
         <div class="flex items-start justify-between w-full mb-3">
           <div class="flex items-center gap-2">
-            <div class="p-1.5 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400">
+            <div class="p-1.5 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-600">
               <Globe class="h-4 w-4" />
             </div>
-            <span class="text-xs font-semibold text-slate-200">Cloudflare Tunnel</span>
+            <span class="text-xs font-semibold text-slate-800">Cloudflare Tunnel</span>
           </div>
           <span
             v-if="overview?.cloudflare?.running"
-            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30"
           >
             <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             ACTIVE
           </span>
           <span
             v-else
-            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700"
+            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-300"
           >
             OFFLINE
           </span>
         </div>
         <div>
-          <div class="text-xl font-bold text-white font-mono">
-            {{ overview?.cloudflare?.ingress_count ?? 0 }} <span class="text-xs text-slate-400 font-normal">public routes</span>
+          <div class="text-xl font-bold text-slate-900 font-mono">
+            {{ overview?.cloudflare?.ingress_count ?? 0 }} <span class="text-xs text-slate-600 font-normal">public routes</span>
           </div>
           <div class="text-[11px] text-slate-500 truncate mt-0.5" :title="overview?.cloudflare?.tunnel_id">
             Tunnel: {{ overview?.cloudflare?.tunnel_id ? overview.cloudflare.tunnel_id.substring(0, 8) + '…' : 'Configured' }}
@@ -582,37 +582,37 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
       <button
         @click="switchTab('tailscale')"
         class="cyber-card p-4 text-left transition relative flex flex-col justify-between"
-        :class="activeTab === 'tailscale' ? 'ring-2 ring-purple-500/50 border-purple-500/70 bg-slate-900/90 shadow-md' : 'bg-slate-950/70 hover:border-slate-700'"
+        :class="activeTab === 'tailscale' ? 'ring-2 ring-purple-500/50 border-purple-500/70 bg-white/90 shadow-md' : 'bg-slate-50/70 hover:border-slate-300'"
       >
         <div class="flex items-start justify-between w-full mb-3">
           <div class="flex items-center gap-2">
-            <div class="p-1.5 rounded-lg bg-purple-500/10 border border-purple-500/30 text-purple-400">
+            <div class="p-1.5 rounded-lg bg-purple-500/10 border border-purple-500/30 text-purple-600">
               <Radio class="h-4 w-4" />
             </div>
-            <span class="text-xs font-semibold text-slate-200">Tailscale Mesh</span>
+            <span class="text-xs font-semibold text-slate-800">Tailscale Mesh</span>
           </div>
           <span
             v-if="overview?.tailscale?.backend_state === 'Running'"
-            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30"
           >
             <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             CONNECTED
           </span>
           <span
             v-else-if="overview?.tailscale?.backend_state === 'NeedsLogin'"
-            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 animate-pulse"
+            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/30 animate-pulse"
           >
             AUTH REQUIRED
           </span>
           <span
             v-else
-            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700"
+            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-300"
           >
             {{ overview?.tailscale?.installed ? 'STOPPED' : 'NOT INSTALLED' }}
           </span>
         </div>
         <div>
-          <div class="text-base font-bold text-purple-300 font-mono truncate">
+          <div class="text-base font-bold text-purple-700 font-mono truncate">
             {{ overview?.tailscale?.tailscale_ips?.[0] || '100.x.y.z' }}
           </div>
           <div class="text-[11px] text-slate-500 truncate mt-0.5">
@@ -626,31 +626,31 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
       <button
         @click="switchTab('wireguard')"
         class="cyber-card p-4 text-left transition relative flex flex-col justify-between"
-        :class="activeTab === 'wireguard' ? 'ring-2 ring-emerald-500/50 border-emerald-500/70 bg-slate-900/90 shadow-md' : 'bg-slate-950/70 hover:border-slate-700'"
+        :class="activeTab === 'wireguard' ? 'ring-2 ring-emerald-500/50 border-emerald-500/70 bg-white/90 shadow-md' : 'bg-slate-50/70 hover:border-slate-300'"
       >
         <div class="flex items-start justify-between w-full mb-3">
           <div class="flex items-center gap-2">
-            <div class="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+            <div class="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-600">
               <Shield class="h-4 w-4" />
             </div>
-            <span class="text-xs font-semibold text-slate-200">WireGuard Peer VPN</span>
+            <span class="text-xs font-semibold text-slate-800">WireGuard Peer VPN</span>
           </div>
           <span
             v-if="overview?.wireguard?.running"
-            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30"
           >
             <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
             ACTIVE
           </span>
           <span
             v-else
-            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700"
+            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-300"
           >
             {{ overview?.wireguard?.installed ? 'STOPPED' : 'NOT INSTALLED' }}
           </span>
         </div>
         <div>
-          <div class="text-base font-bold text-white font-mono">
+          <div class="text-base font-bold text-slate-900 font-mono">
             Port {{ overview?.wireguard?.port || 51820 }}/UDP
           </div>
           <div class="text-[11px] text-slate-500 truncate mt-0.5">
@@ -676,32 +676,32 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
       <div class="cyber-card space-y-4">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div class="flex items-center gap-3">
-            <div class="rounded-xl border border-purple-500/30 bg-purple-950/40 p-3 text-purple-400">
+            <div class="rounded-xl border border-purple-500/30 bg-purple-50/40 p-3 text-purple-600">
               <Radio class="h-6 w-6" />
             </div>
             <div>
-              <h2 class="text-base font-bold text-white flex items-center gap-2">
+              <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
                 Tailscale Mesh Network
                 <span
                   v-if="tailscale?.backend_state === 'Running'"
-                  class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                  class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30"
                 >
                   ONLINE
                 </span>
                 <span
                   v-else-if="tailscale?.backend_state === 'NeedsLogin'"
-                  class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 animate-pulse"
+                  class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/30 animate-pulse"
                 >
                   AUTH REQUIRED
                 </span>
                 <span
                   v-else
-                  class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700"
+                  class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-300"
                 >
                   {{ tailscale?.installed ? 'STOPPED' : 'NOT INSTALLED' }}
                 </span>
               </h2>
-              <p class="text-xs text-slate-400">
+              <p class="text-xs text-slate-600">
                 Encrypted WireGuard-based zero-trust mesh connecting your containers and devices anywhere without open ports.
               </p>
             </div>
@@ -721,7 +721,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
               v-else
               @click="controlTailscale('stop')"
               :disabled="tailscaleActionLoading"
-              class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-rose-300 hover:border-rose-500/50"
+              class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-rose-700 hover:border-rose-500/50"
             >
               <Square class="h-3.5 w-3.5" />
               <span>Stop Container</span>
@@ -730,7 +730,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
               v-if="tailscale?.running"
               @click="controlTailscale('restart')"
               :disabled="tailscaleActionLoading"
-              class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-slate-300"
+              class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-slate-700"
               title="Restart container"
             >
               <RotateCcw class="h-3.5 w-3.5" />
@@ -742,7 +742,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
         <div
           v-if="tailscaleMsg"
           class="p-3 rounded-lg text-xs font-mono flex items-center gap-2"
-          :class="tailscaleMsg.type === 'success' ? 'bg-emerald-950/60 border border-emerald-500/40 text-emerald-300' : 'bg-rose-950/60 border border-rose-500/40 text-rose-300'"
+          :class="tailscaleMsg.type === 'success' ? 'bg-emerald-50/60 border border-emerald-500/40 text-emerald-700' : 'bg-rose-50/60 border border-rose-500/40 text-rose-700'"
         >
           <CheckCircle2 v-if="tailscaleMsg.type === 'success'" class="h-4 w-4 shrink-0" />
           <AlertCircle v-else class="h-4 w-4 shrink-0" />
@@ -752,12 +752,12 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
         <!-- Needs Login Auth URL Banner -->
         <div
           v-if="tailscale?.backend_state === 'NeedsLogin' && tailscale.auth_url"
-          class="p-4 rounded-xl border border-amber-500/40 bg-amber-950/40 space-y-3"
+          class="p-4 rounded-xl border border-amber-500/40 bg-amber-50/40 space-y-3"
         >
-          <div class="flex items-center gap-2 text-amber-300 font-semibold text-xs">
-            <KeyRound class="h-4 w-4 text-amber-400" /> Complete Node Authentication
+          <div class="flex items-center gap-2 text-amber-700 font-semibold text-xs">
+            <KeyRound class="h-4 w-4 text-amber-600" /> Complete Node Authentication
           </div>
-          <p class="text-xs text-slate-300">
+          <p class="text-xs text-slate-700">
             Click the button below to authorize this DockTun node into your Tailscale tailnet:
           </p>
           <div class="flex items-center gap-3">
@@ -781,17 +781,17 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
         </div>
 
         <!-- Live Node Identity Specifications -->
-        <div v-if="tailscale?.running" class="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 rounded-xl bg-slate-950/80 border border-slate-800 text-xs font-mono">
+        <div v-if="tailscale?.running" class="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 rounded-xl bg-slate-50/80 border border-slate-200 text-xs font-mono">
           <div>
             <span class="text-slate-500 block text-[10px] uppercase font-semibold">Tailscale IPv4</span>
             <div class="flex items-center gap-2 mt-1">
-              <span class="text-purple-300 font-bold text-sm">{{ tailscale.tailscale_ips?.[0] || 'Pending' }}</span>
+              <span class="text-purple-700 font-bold text-sm">{{ tailscale.tailscale_ips?.[0] || 'Pending' }}</span>
               <button
                 v-if="tailscale.tailscale_ips?.[0]"
                 @click="copyText('ts_ip', tailscale.tailscale_ips[0])"
-                class="text-slate-500 hover:text-purple-300 transition"
+                class="text-slate-500 hover:text-purple-700 transition"
               >
-                <Check v-if="copied['ts_ip']" class="h-3.5 w-3.5 text-emerald-400" />
+                <Check v-if="copied['ts_ip']" class="h-3.5 w-3.5 text-emerald-600" />
                 <Copy v-else class="h-3.5 w-3.5" />
               </button>
             </div>
@@ -799,59 +799,59 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
 
           <div>
             <span class="text-slate-500 block text-[10px] uppercase font-semibold">MagicDNS Domain</span>
-            <span class="text-slate-300 block mt-1 truncate" :title="tailscale.dns_name">
+            <span class="text-slate-700 block mt-1 truncate" :title="tailscale.dns_name">
               {{ tailscale.dns_name || 'None' }}
             </span>
           </div>
 
           <div>
             <span class="text-slate-500 block text-[10px] uppercase font-semibold">Node Hostname</span>
-            <span class="text-slate-300 block mt-1">{{ tailscale.hostname || 'docktun' }}</span>
+            <span class="text-slate-700 block mt-1">{{ tailscale.hostname || 'docktun' }}</span>
           </div>
         </div>
 
         <!-- Subnet Routing & Exit Node Toggles -->
-        <div v-if="tailscale?.running" class="border-t border-slate-800/80 pt-4 space-y-3">
-          <h3 class="text-xs font-semibold text-slate-200 flex items-center gap-2">
-            <Network class="h-4 w-4 text-purple-400" /> Subnet Routing & Exit Node Features
+        <div v-if="tailscale?.running" class="border-t border-slate-200/80 pt-4 space-y-3">
+          <h3 class="text-xs font-semibold text-slate-800 flex items-center gap-2">
+            <Network class="h-4 w-4 text-purple-600" /> Subnet Routing & Exit Node Features
           </h3>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div class="p-3.5 rounded-xl border border-slate-800 bg-slate-950/60 flex items-center justify-between">
+            <div class="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 flex items-center justify-between">
               <div>
-                <div class="text-xs font-medium text-slate-200">Advertise Docker Container Subnets</div>
-                <div class="text-[11px] text-slate-400">Routes 172.18.0.0/16 and 172.17.0.0/16 directly to your tailnet</div>
+                <div class="text-xs font-medium text-slate-800">Advertise Docker Container Subnets</div>
+                <div class="text-[11px] text-slate-600">Routes 172.18.0.0/16 and 172.17.0.0/16 directly to your tailnet</div>
               </div>
               <input
                 type="checkbox"
                 v-model="tsAdvertiseRoutes"
                 @change="saveTailscaleOptions"
-                class="h-4 w-4 rounded border-slate-700 bg-slate-900 text-purple-600 focus:ring-purple-500"
+                class="h-4 w-4 rounded border-slate-300 bg-white text-purple-600 focus:ring-purple-500"
               />
             </div>
 
-            <div class="p-3.5 rounded-xl border border-slate-800 bg-slate-950/60 flex items-center justify-between">
+            <div class="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 flex items-center justify-between">
               <div>
-                <div class="text-xs font-medium text-slate-200">Advertise as Exit Node</div>
-                <div class="text-[11px] text-slate-400">Allows tailnet devices to route all internet traffic through DockTun</div>
+                <div class="text-xs font-medium text-slate-800">Advertise as Exit Node</div>
+                <div class="text-[11px] text-slate-600">Allows tailnet devices to route all internet traffic through DockTun</div>
               </div>
               <input
                 type="checkbox"
                 v-model="tsAdvertiseExitNode"
                 @change="saveTailscaleOptions"
-                class="h-4 w-4 rounded border-slate-700 bg-slate-900 text-purple-600 focus:ring-purple-500"
+                class="h-4 w-4 rounded border-slate-300 bg-white text-purple-600 focus:ring-purple-500"
               />
             </div>
           </div>
         </div>
 
         <!-- Auth Key Form -->
-        <div class="border-t border-slate-800/80 pt-4 space-y-3">
-          <h3 class="text-xs font-semibold text-slate-200 flex items-center gap-2">
-            <KeyRound class="h-3.5 w-3.5 text-purple-400" /> Connect or Re-authenticate with Auth Key
+        <div class="border-t border-slate-200/80 pt-4 space-y-3">
+          <h3 class="text-xs font-semibold text-slate-800 flex items-center gap-2">
+            <KeyRound class="h-3.5 w-3.5 text-purple-600" /> Connect or Re-authenticate with Auth Key
           </h3>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div class="md:col-span-2">
-              <label class="block text-[11px] font-medium text-slate-400 mb-1">Tailscale Auth Key (tskey-auth-...)</label>
+              <label class="block text-[11px] font-medium text-slate-600 mb-1">Tailscale Auth Key (tskey-auth-...)</label>
               <input
                 v-model="tailscaleAuthKey"
                 type="password"
@@ -860,7 +860,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
               />
             </div>
             <div>
-              <label class="block text-[11px] font-medium text-slate-400 mb-1">Node Hostname</label>
+              <label class="block text-[11px] font-medium text-slate-600 mb-1">Node Hostname</label>
               <input
                 v-model="tailscaleHostname"
                 type="text"
@@ -885,9 +885,9 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
       <div class="cyber-card space-y-3">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <Box class="h-4 w-4 text-purple-400" />
-            <h3 class="text-xs font-semibold text-slate-200">Exposed Containers on Tailscale</h3>
-            <span class="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-300 font-mono">
+            <Box class="h-4 w-4 text-purple-600" />
+            <h3 class="text-xs font-semibold text-slate-800">Exposed Containers on Tailscale</h3>
+            <span class="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-700 font-mono">
               {{ tailscaleContainers.length }} routed
             </span>
           </div>
@@ -900,12 +900,12 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           </button>
         </div>
 
-        <div v-if="tailscaleContainers.length === 0" class="py-8 text-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl bg-slate-950/40 space-y-2">
+        <div v-if="tailscaleContainers.length === 0" class="py-8 text-center text-xs text-slate-500 border border-dashed border-slate-200 rounded-xl bg-slate-50/40 space-y-2">
           <Box class="h-6 w-6 text-slate-600 mx-auto" />
           <p>No containers currently routed directly through Tailscale mesh.</p>
           <button
             @click="openExposeModal(null, 'private', 'tailscale')"
-            class="cyber-btn-secondary text-xs text-purple-300 hover:border-purple-500/50 inline-flex items-center gap-1.5"
+            class="cyber-btn-secondary text-xs text-purple-700 hover:border-purple-500/50 inline-flex items-center gap-1.5"
           >
             <Plus class="h-3 w-3" />
             <span>Expose a Container</span>
@@ -915,7 +915,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
         <div v-else class="overflow-x-auto">
           <table class="w-full text-left text-xs font-mono">
             <thead>
-              <tr class="border-b border-slate-800 text-[11px] text-slate-400 font-medium">
+              <tr class="border-b border-slate-200 text-[11px] text-slate-600 font-medium">
                 <th class="py-2.5 px-3">Container</th>
                 <th class="py-2.5 px-3">Status</th>
                 <th class="py-2.5 px-3">Internal Port</th>
@@ -923,30 +923,30 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 <th class="py-2.5 px-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-slate-800/60">
-              <tr v-for="c in tailscaleContainers" :key="c.id" class="hover:bg-slate-900/50 transition">
-                <td class="py-2.5 px-3 font-semibold text-white">
+            <tbody class="divide-y divide-slate-200/60">
+              <tr v-for="c in tailscaleContainers" :key="c.id" class="hover:bg-white/50 transition">
+                <td class="py-2.5 px-3 font-semibold text-slate-900">
                   {{ c.name }}
                   <span class="block text-[10px] text-slate-500 font-normal truncate max-w-xs">{{ c.image }}</span>
                 </td>
                 <td class="py-2.5 px-3">
-                  <span v-if="c.running" class="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-400">
+                  <span v-if="c.running" class="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600">
                     <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span> Running
                   </span>
                   <span v-else class="text-slate-500 text-[10px]">Stopped</span>
                 </td>
-                <td class="py-2.5 px-3 text-slate-300">
+                <td class="py-2.5 px-3 text-slate-700">
                   {{ c.private_port || (c.ports && c.ports.length ? c.ports[0] : 80) }}
                 </td>
                 <td class="py-2.5 px-3">
                   <div class="flex items-center gap-2">
-                    <span class="text-purple-300 font-bold truncate max-w-xs">{{ c.tailscale_url || `http://${tailscale?.hostname || 'docktun'}:${c.private_port || 80}` }}</span>
+                    <span class="text-purple-700 font-bold truncate max-w-xs">{{ c.tailscale_url || `http://${tailscale?.hostname || 'docktun'}:${c.private_port || 80}` }}</span>
                     <button
                       v-if="c.tailscale_url"
                       @click="copyText('ts_url_' + c.name, c.tailscale_url)"
-                      class="text-slate-500 hover:text-purple-300"
+                      class="text-slate-500 hover:text-purple-700"
                     >
-                      <Check v-if="copied['ts_url_' + c.name]" class="h-3.5 w-3.5 text-emerald-400" />
+                      <Check v-if="copied['ts_url_' + c.name]" class="h-3.5 w-3.5 text-emerald-600" />
                       <Copy v-else class="h-3.5 w-3.5" />
                     </button>
                   </div>
@@ -954,7 +954,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 <td class="py-2.5 px-3 text-right">
                   <button
                     @click="removeExposure(c)"
-                    class="cyber-btn-sm text-rose-300 border-rose-500/30 hover:bg-rose-950/60"
+                    class="cyber-btn-sm text-rose-700 border-rose-500/30 hover:bg-rose-50/60"
                   >
                     Unexpose
                   </button>
@@ -967,13 +967,13 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
 
       <!-- Tailnet Peers Table -->
       <div v-if="tailscale?.running && tailscale.peers && tailscale.peers.length > 0" class="cyber-card space-y-3">
-        <h3 class="text-xs font-semibold text-slate-200 flex items-center gap-2">
-          <Users class="h-4 w-4 text-purple-400" /> Tailnet Connected Devices ({{ tailscale.peers.length }})
+        <h3 class="text-xs font-semibold text-slate-800 flex items-center gap-2">
+          <Users class="h-4 w-4 text-purple-600" /> Tailnet Connected Devices ({{ tailscale.peers.length }})
         </h3>
         <div class="overflow-x-auto">
           <table class="w-full text-left text-xs font-mono">
             <thead>
-              <tr class="border-b border-slate-800 text-[11px] text-slate-400 font-medium">
+              <tr class="border-b border-slate-200 text-[11px] text-slate-600 font-medium">
                 <th class="py-2.5 px-3">Device / Hostname</th>
                 <th class="py-2.5 px-3">OS</th>
                 <th class="py-2.5 px-3">Tailscale IP</th>
@@ -981,19 +981,19 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 <th class="py-2.5 px-3">Status</th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-slate-800/60">
-              <tr v-for="peer in tailscale.peers" :key="peer.id" class="hover:bg-slate-900/50 transition">
-                <td class="py-2.5 px-3 text-white font-semibold flex items-center gap-2">
-                  <Smartphone v-if="peer.os === 'iOS' || peer.os === 'android'" class="h-3.5 w-3.5 text-slate-400" />
-                  <Laptop v-else-if="peer.os === 'macOS' || peer.os === 'windows'" class="h-3.5 w-3.5 text-slate-400" />
-                  <Server v-else class="h-3.5 w-3.5 text-slate-400" />
+            <tbody class="divide-y divide-slate-200/60">
+              <tr v-for="peer in tailscale.peers" :key="peer.id" class="hover:bg-white/50 transition">
+                <td class="py-2.5 px-3 text-slate-900 font-semibold flex items-center gap-2">
+                  <Smartphone v-if="peer.os === 'iOS' || peer.os === 'android'" class="h-3.5 w-3.5 text-slate-600" />
+                  <Laptop v-else-if="peer.os === 'macOS' || peer.os === 'windows'" class="h-3.5 w-3.5 text-slate-600" />
+                  <Server v-else class="h-3.5 w-3.5 text-slate-600" />
                   {{ peer.hostname }}
                 </td>
-                <td class="py-2.5 px-3 text-slate-400">{{ peer.os }}</td>
-                <td class="py-2.5 px-3 text-purple-300 font-bold">{{ peer.tailscale_ips?.[0] }}</td>
-                <td class="py-2.5 px-3 text-slate-400 truncate max-w-xs">{{ peer.dns_name }}</td>
+                <td class="py-2.5 px-3 text-slate-600">{{ peer.os }}</td>
+                <td class="py-2.5 px-3 text-purple-700 font-bold">{{ peer.tailscale_ips?.[0] }}</td>
+                <td class="py-2.5 px-3 text-slate-600 truncate max-w-xs">{{ peer.dns_name }}</td>
                 <td class="py-2.5 px-3">
-                  <span v-if="peer.online" class="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-400">
+                  <span v-if="peer.online" class="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600">
                     <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span> Online
                   </span>
                   <span v-else class="text-slate-500 text-[10px]">Offline</span>
@@ -1013,26 +1013,26 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
       <div class="cyber-card space-y-4">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div class="flex items-center gap-3">
-            <div class="rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-3 text-emerald-400">
+            <div class="rounded-xl border border-emerald-500/30 bg-emerald-50/40 p-3 text-emerald-600">
               <Shield class="h-6 w-6" />
             </div>
             <div>
-              <h2 class="text-base font-bold text-white flex items-center gap-2">
+              <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
                 WireGuard VPN Interface
                 <span
                   v-if="wireguard?.running"
-                  class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                  class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30"
                 >
                   ACTIVE
                 </span>
                 <span
                   v-else
-                  class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700"
+                  class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-300"
                 >
                   {{ wireguard?.installed ? 'STOPPED' : 'NOT INSTALLED' }}
                 </span>
               </h2>
-              <p class="text-xs text-slate-400">
+              <p class="text-xs text-slate-600">
                 Point-to-point VPN tunnel with automatic peer key generation, mobile QR codes, and container gateway routing.
               </p>
             </div>
@@ -1052,7 +1052,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
               v-else
               @click="controlWireguard('stop')"
               :disabled="wireguardActionLoading"
-              class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-rose-300 hover:border-rose-500/50"
+              class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-rose-700 hover:border-rose-500/50"
             >
               <Square class="h-3.5 w-3.5" />
               <span>Stop Container</span>
@@ -1061,7 +1061,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
               v-if="wireguard?.running"
               @click="controlWireguard('restart')"
               :disabled="wireguardActionLoading"
-              class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-slate-300"
+              class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-slate-700"
               title="Restart WireGuard"
             >
               <RotateCcw class="h-3.5 w-3.5" />
@@ -1077,18 +1077,18 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
         </div>
 
         <!-- WireGuard Interface Status -->
-        <div v-if="wireguard?.running" class="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 rounded-xl bg-slate-950/80 border border-slate-800 text-xs font-mono">
+        <div v-if="wireguard?.running" class="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 rounded-xl bg-slate-50/80 border border-slate-200 text-xs font-mono">
           <div>
             <span class="text-slate-500 block text-[10px] uppercase font-semibold">Interface</span>
-            <span class="text-emerald-300 font-bold block mt-1">{{ wireguard.interface || 'wg0' }}</span>
+            <span class="text-emerald-700 font-bold block mt-1">{{ wireguard.interface || 'wg0' }}</span>
           </div>
           <div>
             <span class="text-slate-500 block text-[10px] uppercase font-semibold">Listening Port</span>
-            <span class="text-slate-200 block mt-1">{{ wireguard.port || 51820 }} / UDP</span>
+            <span class="text-slate-800 block mt-1">{{ wireguard.port || 51820 }} / UDP</span>
           </div>
           <div>
             <span class="text-slate-500 block text-[10px] uppercase font-semibold">Server Public Key</span>
-            <span class="text-slate-400 block mt-1 truncate" :title="wireguard.public_key">
+            <span class="text-slate-600 block mt-1 truncate" :title="wireguard.public_key">
               {{ wireguard.public_key ? wireguard.public_key.substring(0, 16) + '…' : 'Server Active' }}
             </span>
           </div>
@@ -1099,9 +1099,9 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
       <div class="cyber-card space-y-3">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <Box class="h-4 w-4 text-emerald-400" />
-            <h3 class="text-xs font-semibold text-slate-200">Exposed Containers on WireGuard VPN</h3>
-            <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 font-mono">
+            <Box class="h-4 w-4 text-emerald-600" />
+            <h3 class="text-xs font-semibold text-slate-800">Exposed Containers on WireGuard VPN</h3>
+            <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-700 font-mono">
               {{ wireguardContainers.length }} routed
             </span>
           </div>
@@ -1114,12 +1114,12 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           </button>
         </div>
 
-        <div v-if="wireguardContainers.length === 0" class="py-8 text-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl bg-slate-950/40 space-y-2">
+        <div v-if="wireguardContainers.length === 0" class="py-8 text-center text-xs text-slate-500 border border-dashed border-slate-200 rounded-xl bg-slate-50/40 space-y-2">
           <Shield class="h-6 w-6 text-slate-600 mx-auto" />
           <p>No containers currently routed directly through WireGuard VPN gateway.</p>
           <button
             @click="openExposeModal(null, 'private', 'wireguard')"
-            class="cyber-btn-secondary text-xs text-emerald-300 hover:border-emerald-500/50 inline-flex items-center gap-1.5"
+            class="cyber-btn-secondary text-xs text-emerald-700 hover:border-emerald-500/50 inline-flex items-center gap-1.5"
           >
             <Plus class="h-3 w-3" />
             <span>Expose a Container</span>
@@ -1129,7 +1129,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
         <div v-else class="overflow-x-auto">
           <table class="w-full text-left text-xs font-mono">
             <thead>
-              <tr class="border-b border-slate-800 text-[11px] text-slate-400 font-medium">
+              <tr class="border-b border-slate-200 text-[11px] text-slate-600 font-medium">
                 <th class="py-2.5 px-3">Container</th>
                 <th class="py-2.5 px-3">Status</th>
                 <th class="py-2.5 px-3">Internal Port</th>
@@ -1137,30 +1137,30 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 <th class="py-2.5 px-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-slate-800/60">
-              <tr v-for="c in wireguardContainers" :key="c.id" class="hover:bg-slate-900/50 transition">
-                <td class="py-2.5 px-3 font-semibold text-white">
+            <tbody class="divide-y divide-slate-200/60">
+              <tr v-for="c in wireguardContainers" :key="c.id" class="hover:bg-white/50 transition">
+                <td class="py-2.5 px-3 font-semibold text-slate-900">
                   {{ c.name }}
                   <span class="block text-[10px] text-slate-500 font-normal truncate max-w-xs">{{ c.image }}</span>
                 </td>
                 <td class="py-2.5 px-3">
-                  <span v-if="c.running" class="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-400">
+                  <span v-if="c.running" class="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600">
                     <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span> Running
                   </span>
                   <span v-else class="text-slate-500 text-[10px]">Stopped</span>
                 </td>
-                <td class="py-2.5 px-3 text-slate-300">
+                <td class="py-2.5 px-3 text-slate-700">
                   {{ c.private_port || (c.ports && c.ports.length ? c.ports[0] : 80) }}
                 </td>
                 <td class="py-2.5 px-3">
                   <div class="flex items-center gap-2">
-                    <span class="text-emerald-300 font-bold truncate max-w-xs">{{ c.wireguard_url || `http://10.13.13.1:${c.private_port || 80}` }}</span>
+                    <span class="text-emerald-700 font-bold truncate max-w-xs">{{ c.wireguard_url || `http://10.13.13.1:${c.private_port || 80}` }}</span>
                     <button
                       v-if="c.wireguard_url"
                       @click="copyText('wg_url_' + c.name, c.wireguard_url)"
-                      class="text-slate-500 hover:text-emerald-300"
+                      class="text-slate-500 hover:text-emerald-700"
                     >
-                      <Check v-if="copied['wg_url_' + c.name]" class="h-3.5 w-3.5 text-emerald-400" />
+                      <Check v-if="copied['wg_url_' + c.name]" class="h-3.5 w-3.5 text-emerald-600" />
                       <Copy v-else class="h-3.5 w-3.5" />
                     </button>
                   </div>
@@ -1168,7 +1168,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 <td class="py-2.5 px-3 text-right">
                   <button
                     @click="removeExposure(c)"
-                    class="cyber-btn-sm text-rose-300 border-rose-500/30 hover:bg-rose-950/60"
+                    class="cyber-btn-sm text-rose-700 border-rose-500/30 hover:bg-rose-50/60"
                   >
                     Unexpose
                   </button>
@@ -1181,8 +1181,8 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
 
       <!-- WireGuard Peers Grid -->
       <div v-if="wireguard?.peers && wireguard.peers.length > 0" class="space-y-3">
-        <h3 class="text-xs font-semibold text-slate-200 flex items-center gap-2">
-          <Users class="h-4 w-4 text-emerald-400" /> Configured Peer Tunnels ({{ wireguard.peers.length }})
+        <h3 class="text-xs font-semibold text-slate-800 flex items-center gap-2">
+          <Users class="h-4 w-4 text-emerald-600" /> Configured Peer Tunnels ({{ wireguard.peers.length }})
         </h3>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1193,15 +1193,15 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           >
             <div>
               <div class="flex items-center justify-between mb-2">
-                <span class="text-sm font-bold text-white flex items-center gap-1.5">
-                  <Shield class="h-4 w-4 text-emerald-400" />
+                <span class="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                  <Shield class="h-4 w-4 text-emerald-600" />
                   {{ peer.name }}
                 </span>
-                <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-mono">
+                <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 font-mono">
                   {{ peer.allowed_ips || '10.13.13.x' }}
                 </span>
               </div>
-              <div class="text-[11px] text-slate-400 font-mono space-y-1">
+              <div class="text-[11px] text-slate-600 font-mono space-y-1">
                 <div v-if="peer.latest_handshake" class="truncate">
                   <span class="text-slate-500">Handshake:</span> {{ peer.latest_handshake }}
                 </div>
@@ -1211,11 +1211,11 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
               </div>
             </div>
 
-            <div class="pt-3 border-t border-slate-800 flex items-center justify-between gap-1.5">
+            <div class="pt-3 border-t border-slate-200 flex items-center justify-between gap-1.5">
               <button
                 v-if="peer.qr_code_data_url"
                 @click="openPeerQr(peer)"
-                class="cyber-btn-secondary text-xs flex-1 py-1.5 flex items-center justify-center gap-1 text-emerald-300"
+                class="cyber-btn-secondary text-xs flex-1 py-1.5 flex items-center justify-center gap-1 text-emerald-700"
               >
                 <QrCode class="h-3.5 w-3.5" />
                 <span>QR</span>
@@ -1223,21 +1223,21 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
               <button
                 v-if="peer.config_text"
                 @click="openPeerConfig(peer)"
-                class="cyber-btn-secondary text-xs flex-1 py-1.5 flex items-center justify-center gap-1 text-slate-300"
+                class="cyber-btn-secondary text-xs flex-1 py-1.5 flex items-center justify-center gap-1 text-slate-700"
               >
                 <span>Config</span>
               </button>
               <button
                 v-if="peer.config_text"
                 @click="downloadPeerConfig(peer)"
-                class="cyber-btn-secondary text-xs p-1.5 text-slate-400 hover:text-white"
+                class="cyber-btn-secondary text-xs p-1.5 text-slate-600 hover:text-slate-900"
                 title="Download .conf file"
               >
                 <Download class="h-3.5 w-3.5" />
               </button>
               <button
                 @click="deleteWireguardPeer(peer.name)"
-                class="cyber-btn-secondary text-xs p-1.5 text-rose-400 hover:bg-rose-950/60"
+                class="cyber-btn-secondary text-xs p-1.5 text-rose-600 hover:bg-rose-50/60"
                 title="Delete peer"
               >
                 <Trash2 class="h-3.5 w-3.5" />
@@ -1255,20 +1255,20 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
     <!-- Add WireGuard Peer Modal -->
     <div
       v-if="showAddPeerModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/80 backdrop-blur-sm p-4"
     >
-      <div class="cyber-card w-full max-w-md p-6 space-y-4 border-slate-700">
+      <div class="cyber-card w-full max-w-md p-6 space-y-4 border-slate-300">
         <div class="flex items-center justify-between">
-          <h3 class="text-sm font-bold text-white flex items-center gap-2">
-            <Plus class="h-4 w-4 text-emerald-400" />
+          <h3 class="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <Plus class="h-4 w-4 text-emerald-600" />
             Generate New WireGuard Client Peer
           </h3>
-          <button @click="showAddPeerModal = false" class="text-slate-400 hover:text-white text-xs">✕</button>
+          <button @click="showAddPeerModal = false" class="text-slate-600 hover:text-slate-900 text-xs">✕</button>
         </div>
 
         <div class="space-y-3 text-xs">
           <div>
-            <label class="block text-[11px] font-medium text-slate-300 mb-1">Peer Name</label>
+            <label class="block text-[11px] font-medium text-slate-700 mb-1">Peer Name</label>
             <input
               v-model="newPeerName"
               type="text"
@@ -1279,13 +1279,13 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           </div>
 
           <div>
-            <label class="block text-[11px] font-medium text-slate-300 mb-1">AllowedIPs Routing Mode</label>
+            <label class="block text-[11px] font-medium text-slate-700 mb-1">AllowedIPs Routing Mode</label>
             <div class="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 @click="newPeerAllowedIPs = 'containers'"
                 class="p-2.5 rounded-lg border text-left transition"
-                :class="newPeerAllowedIPs === 'containers' ? 'border-emerald-500 bg-emerald-950/40 text-emerald-300' : 'border-slate-800 bg-slate-900 text-slate-400'"
+                :class="newPeerAllowedIPs === 'containers' ? 'border-emerald-500 bg-emerald-50/40 text-emerald-700' : 'border-slate-200 bg-white text-slate-600'"
               >
                 <div class="font-semibold text-xs">Containers & LAN</div>
                 <div class="text-[10px] text-slate-500">Split tunnel for Docker containers</div>
@@ -1295,7 +1295,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 type="button"
                 @click="newPeerAllowedIPs = 'all'"
                 class="p-2.5 rounded-lg border text-left transition"
-                :class="newPeerAllowedIPs === 'all' ? 'border-emerald-500 bg-emerald-950/40 text-emerald-300' : 'border-slate-800 bg-slate-900 text-slate-400'"
+                :class="newPeerAllowedIPs === 'all' ? 'border-emerald-500 bg-emerald-50/40 text-emerald-700' : 'border-slate-200 bg-white text-slate-600'"
               >
                 <div class="font-semibold text-xs">Full Tunnel</div>
                 <div class="text-[10px] text-slate-500">Routes 0.0.0.0/0 (all traffic)</div>
@@ -1304,7 +1304,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           </div>
         </div>
 
-        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
           <button
             @click="showAddPeerModal = false"
             class="cyber-btn-secondary text-xs py-2 px-3"
@@ -1325,18 +1325,18 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
     <!-- QR Code Modal -->
     <div
       v-if="showQrModal && selectedWgPeer"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/80 backdrop-blur-sm p-4"
     >
-      <div class="cyber-card w-full max-w-sm p-5 space-y-4 border-slate-700 text-center">
-        <h3 class="text-sm font-bold text-white flex items-center justify-center gap-2">
-          <Shield class="h-4 w-4 text-emerald-400" />
+      <div class="cyber-card w-full max-w-sm p-5 space-y-4 border-slate-300 text-center">
+        <h3 class="text-sm font-bold text-slate-900 flex items-center justify-center gap-2">
+          <Shield class="h-4 w-4 text-emerald-600" />
           {{ selectedWgPeer.name }} QR Code
         </h3>
-        <p class="text-[11px] text-slate-400">
+        <p class="text-[11px] text-slate-600">
           Scan this QR code with the WireGuard app on iOS or Android to import instantly.
         </p>
 
-        <div class="bg-white p-3 rounded-2xl inline-block mx-auto border border-slate-700 shadow-xl">
+        <div class="bg-white p-3 rounded-2xl inline-block mx-auto border border-slate-300 shadow-xl">
           <img
             v-if="selectedWgPeer.qr_code_data_url"
             :src="selectedWgPeer.qr_code_data_url"
@@ -1345,7 +1345,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           />
         </div>
 
-        <div class="text-xs font-mono text-emerald-400 font-bold">
+        <div class="text-xs font-mono text-emerald-600 font-bold">
           Assigned IP: {{ selectedWgPeer.allowed_ips }}
         </div>
 
@@ -1370,19 +1370,19 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
     <!-- Config Text Modal -->
     <div
       v-if="showConfigModal && selectedWgPeer"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/80 backdrop-blur-sm p-4"
     >
-      <div class="cyber-card w-full max-w-lg p-5 space-y-4 border-slate-700">
+      <div class="cyber-card w-full max-w-lg p-5 space-y-4 border-slate-300">
         <div class="flex items-center justify-between">
-          <h3 class="text-sm font-bold text-white flex items-center gap-2">
-            <Shield class="h-4 w-4 text-emerald-400" />
+          <h3 class="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <Shield class="h-4 w-4 text-emerald-600" />
             {{ selectedWgPeer.name }} Client Configuration
           </h3>
           <button
             @click="copyText('wg_cfg', selectedWgPeer.config_text || '')"
             class="cyber-btn-secondary text-xs flex items-center gap-1 py-1 px-2.5"
           >
-            <Check v-if="copied['wg_cfg']" class="h-3 w-3 text-emerald-400" />
+            <Check v-if="copied['wg_cfg']" class="h-3 w-3 text-emerald-600" />
             <Copy v-else class="h-3 w-3" />
             <span>{{ copied['wg_cfg'] ? 'Copied' : 'Copy' }}</span>
           </button>
@@ -1392,7 +1392,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           readonly
           :value="selectedWgPeer.config_text"
           rows="11"
-          class="cyber-input font-mono text-xs w-full resize-none p-3 bg-slate-950 text-slate-300"
+          class="cyber-input font-mono text-xs w-full resize-none p-3 bg-slate-50 text-slate-700"
         ></textarea>
 
         <div class="flex items-center justify-end gap-2">
@@ -1416,25 +1416,25 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
     <!-- Expose Container Modal (Tailscale / WireGuard / Cloudflare) -->
     <div
       v-if="showExposeModal && exposeTargetContainer"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/80 backdrop-blur-sm p-4"
     >
-      <div class="cyber-card w-full max-w-md p-6 space-y-4 border-slate-700">
+      <div class="cyber-card w-full max-w-md p-6 space-y-4 border-slate-300">
         <div class="flex items-center justify-between">
-          <h3 class="text-sm font-bold text-white flex items-center gap-2">
-            <Box class="h-4 w-4 text-indigo-400" />
+          <h3 class="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <Box class="h-4 w-4 text-indigo-600" />
             Expose Container: {{ exposeTargetContainer.name }}
           </h3>
-          <button @click="showExposeModal = false" class="text-slate-400 hover:text-white text-xs">✕</button>
+          <button @click="showExposeModal = false" class="text-slate-600 hover:text-slate-900 text-xs">✕</button>
         </div>
 
         <div class="space-y-3.5 text-xs">
           <!-- Target Docker Container -->
           <div>
-            <label class="block text-[11px] font-medium text-slate-300 mb-1">Target Docker Container</label>
+            <label class="block text-[11px] font-medium text-slate-700 mb-1">Target Docker Container</label>
             <select
               :value="exposeTargetContainer.id"
               @change="onExposeTargetChanged"
-              class="cyber-input font-mono text-xs w-full bg-slate-900"
+              class="cyber-input font-mono text-xs w-full bg-white"
             >
               <option v-for="c in containerExposures" :key="c.id" :value="c.id">
                 {{ c.name }} ({{ c.image }})
@@ -1444,13 +1444,13 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
 
           <!-- Exposure Mode Selection -->
           <div>
-            <label class="block text-[11px] font-medium text-slate-300 mb-1.5">Network Route Type</label>
+            <label class="block text-[11px] font-medium text-slate-700 mb-1.5">Network Route Type</label>
             <div class="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 @click="exposeForm.mode = 'private'"
                 class="p-2.5 rounded-lg border text-left transition"
-                :class="exposeForm.mode === 'private' ? 'border-purple-500 bg-purple-950/40 text-purple-300' : 'border-slate-800 bg-slate-900 text-slate-400'"
+                :class="exposeForm.mode === 'private' ? 'border-purple-500 bg-purple-50/40 text-purple-700' : 'border-slate-200 bg-white text-slate-600'"
               >
                 <div class="font-semibold text-xs">Private (VPN / Mesh)</div>
                 <div class="text-[10px] text-slate-500">Tailscale or WireGuard</div>
@@ -1460,7 +1460,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 type="button"
                 @click="exposeForm.mode = 'public'"
                 class="p-2.5 rounded-lg border text-left transition"
-                :class="exposeForm.mode === 'public' ? 'border-orange-500 bg-orange-950/40 text-orange-300' : 'border-slate-800 bg-slate-900 text-slate-400'"
+                :class="exposeForm.mode === 'public' ? 'border-orange-500 bg-orange-50/40 text-orange-700' : 'border-slate-200 bg-white text-slate-600'"
               >
                 <div class="font-semibold text-xs">Public Edge Route</div>
                 <div class="text-[10px] text-slate-500">Cloudflare Tunnel Domain</div>
@@ -1470,22 +1470,22 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
 
           <!-- Private VPN Type (if private) -->
           <div v-if="exposeForm.mode === 'private'">
-            <label class="block text-[11px] font-medium text-slate-300 mb-1.5">VPN Network</label>
+            <label class="block text-[11px] font-medium text-slate-700 mb-1.5">VPN Network</label>
             <div class="grid grid-cols-2 gap-2">
-              <label class="flex items-center gap-2 p-2 rounded-lg bg-slate-900 border border-slate-800 cursor-pointer">
+              <label class="flex items-center gap-2 p-2 rounded-lg bg-white border border-slate-200 cursor-pointer">
                 <input type="radio" value="tailscale" v-model="exposeForm.private_type" class="text-purple-600" />
-                <span class="text-xs text-slate-200">Tailscale Mesh</span>
+                <span class="text-xs text-slate-800">Tailscale Mesh</span>
               </label>
-              <label class="flex items-center gap-2 p-2 rounded-lg bg-slate-900 border border-slate-800 cursor-pointer">
+              <label class="flex items-center gap-2 p-2 rounded-lg bg-white border border-slate-200 cursor-pointer">
                 <input type="radio" value="wireguard" v-model="exposeForm.private_type" class="text-emerald-600" />
-                <span class="text-xs text-slate-200">WireGuard VPN</span>
+                <span class="text-xs text-slate-800">WireGuard VPN</span>
               </label>
             </div>
           </div>
 
           <!-- Container Target Port -->
           <div>
-            <label class="block text-[11px] font-medium text-slate-300 mb-1">Container Port to Expose</label>
+            <label class="block text-[11px] font-medium text-slate-700 mb-1">Container Port to Expose</label>
             <div class="flex items-center gap-2">
               <input
                 v-model.number="exposeForm.private_port"
@@ -1493,7 +1493,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 placeholder="80"
                 class="cyber-input font-mono text-xs w-28"
               />
-              <span class="text-[11px] text-slate-400">
+              <span class="text-[11px] text-slate-600">
                 Detected: {{ exposeTargetContainer.ports?.join(', ') || 'None' }}
               </span>
             </div>
@@ -1502,7 +1502,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           <!-- Public Domain Settings (if public) -->
           <div v-if="exposeForm.mode === 'public'" class="space-y-3">
             <div>
-              <label class="block text-[11px] font-medium text-slate-300 mb-1">Public Domain Hostname</label>
+              <label class="block text-[11px] font-medium text-slate-700 mb-1">Public Domain Hostname</label>
               <div class="flex items-center gap-1 font-mono text-xs">
                 <input
                   v-model="exposeForm.subdomain"
@@ -1510,7 +1510,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                   placeholder="subdomain"
                   class="cyber-input font-mono text-xs flex-1"
                 />
-                <span class="text-slate-400">.</span>
+                <span class="text-slate-600">.</span>
                 <input
                   v-model="exposeForm.domain"
                   type="text"
@@ -1518,26 +1518,26 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                   class="cyber-input font-mono text-xs flex-1"
                 />
               </div>
-              <div class="text-[10px] text-slate-400 mt-1">
-                Will route: <code class="text-orange-400 font-mono">https://{{ exposeForm.subdomain }}.{{ exposeForm.domain }}</code> &rarr; <code class="text-slate-300 font-mono">{{ exposeTargetContainer.name }}:{{ exposeForm.private_port }}</code>
+              <div class="text-[10px] text-slate-600 mt-1">
+                Will route: <code class="text-orange-600 font-mono">https://{{ exposeForm.subdomain }}.{{ exposeForm.domain }}</code> &rarr; <code class="text-slate-700 font-mono">{{ exposeTargetContainer.name }}:{{ exposeForm.private_port }}</code>
               </div>
             </div>
 
             <!-- Optional Zero Trust Access Control -->
-            <div class="pt-2.5 border-t border-slate-800 space-y-2">
-              <label class="flex items-start gap-2.5 cursor-pointer p-2.5 rounded-lg border border-slate-800 bg-slate-900/60 hover:border-slate-700 transition">
+            <div class="pt-2.5 border-t border-slate-200 space-y-2">
+              <label class="flex items-start gap-2.5 cursor-pointer p-2.5 rounded-lg border border-slate-200 bg-white/60 hover:border-slate-300 transition">
                 <input
                   type="checkbox"
                   v-model="exposeForm.zero_trust_enabled"
-                  class="h-4 w-4 mt-0.5 rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-indigo-500"
+                  class="h-4 w-4 mt-0.5 rounded border-slate-300 bg-white text-indigo-500 focus:ring-indigo-500"
                 />
                 <div class="space-y-0.5">
-                  <div class="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-                    <ShieldCheck class="h-3.5 w-3.5 text-indigo-400" />
+                  <div class="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
+                    <ShieldCheck class="h-3.5 w-3.5 text-indigo-600" />
                     <span>Protect with Cloudflare Zero Trust</span>
-                    <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Optional</span>
+                    <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-700 border border-indigo-500/30">Optional</span>
                   </div>
-                  <div class="text-[10px] text-slate-400">
+                  <div class="text-[10px] text-slate-600">
                     Require email OTP PIN or SSO login before users can view this container.
                   </div>
                 </div>
@@ -1547,7 +1547,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
               <div v-if="exposeForm.zero_trust_enabled" class="pl-6 space-y-2.5">
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                   <div>
-                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
                       Authentication Method
                     </label>
                     <select v-model="exposeForm.zero_trust_auth_type" class="cyber-input text-xs w-full">
@@ -1560,7 +1560,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                   </div>
 
                   <div>
-                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
                       Session Timeout
                     </label>
                     <select v-model="exposeForm.zero_trust_session" class="cyber-input text-xs w-full">
@@ -1574,7 +1574,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 </div>
 
                 <div v-if="exposeForm.zero_trust_auth_type !== 'everyone'">
-                  <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                  <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
                     <span v-if="exposeForm.zero_trust_auth_type === 'email'">Allowed Email Addresses (Comma-separated)</span>
                     <span v-else-if="exposeForm.zero_trust_auth_type === 'domain'">Allowed Email Domains (e.g. company.com)</span>
                     <span v-else-if="exposeForm.zero_trust_auth_type === 'ip'">Allowed Client IP / CIDRs</span>
@@ -1591,7 +1591,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                     class="cyber-input text-xs font-mono w-full"
                   />
                 </div>
-                <div v-else class="text-[10px] text-indigo-300/80 bg-indigo-950/30 border border-indigo-900/40 rounded p-2">
+                <div v-else class="text-[10px] text-indigo-700/80 bg-indigo-50/30 border border-indigo-900/40 rounded p-2">
                   All users who successfully authenticate with your Cloudflare Zero Trust Identity Provider will be allowed.
                 </div>
               </div>
@@ -1599,7 +1599,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           </div>
         </div>
 
-        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
           <button
             @click="showExposeModal = false"
             class="cyber-btn-secondary text-xs py-2 px-3"

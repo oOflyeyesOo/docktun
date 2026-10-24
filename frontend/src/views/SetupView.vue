@@ -47,7 +47,7 @@ const systemStatus = ref<any>({
   host_arch: 'amd64',
   num_cpu: 4,
   docker_version: 'Loading...',
-  docker_connected: true,
+  docker_connected: false,
   tunnel_configured: false,
   tunnel_type: 'none',
   discovered_containers: [],
@@ -56,6 +56,7 @@ const systemStatus = ref<any>({
 
 // Wizard Form State
 const form = reactive({
+  setup_token: '',
   admin_username: 'admin',
   admin_password: '',
   confirm_password: '',
@@ -93,7 +94,7 @@ const passwordMismatch = computed(() => {
 
 const passwordValid = computed(() => {
   if (systemStatus.value.has_admin_user && !form.admin_password) return true
-  return form.admin_password.length >= 6 && !passwordMismatch.value
+  return new TextEncoder().encode(form.admin_password).length >= 12 && new TextEncoder().encode(form.admin_password).length <= 72 && !passwordMismatch.value
 })
 
 // Container Selection Helpers
@@ -120,10 +121,16 @@ async function loadSetupStatus() {
   errorMessage.value = null
   try {
     const force = route.query.force === 'true'
-    const res = await fetch(`/api/setup/status?force=${force}`)
+    const res = await fetch(`/api/setup/status`)
     if (res.ok) {
-      const data = await res.json()
+      let data = await res.json()
+      if (data.completed && !authStore.isAuthenticated) {
+        await router.replace('/login')
+        return
+      }
+      if (authStore.isAuthenticated) data = await apiFetch<any>('/api/setup/details')
       systemStatus.value = data
+      if (data.has_admin_user) step.value = 2
       if (data.admin_username) {
         form.admin_username = data.admin_username
       }
@@ -159,8 +166,9 @@ async function finishSetup() {
     const selectedIds = Object.keys(form.selected_container_ids).filter((id) => form.selected_container_ids[id])
 
     const payload = {
+      setup_token: form.setup_token,
       admin_username: form.admin_username,
-      admin_password: form.admin_password,
+      admin_password: systemStatus.value.has_admin_user ? '' : form.admin_password,
       tunnel: {
         type: form.tunnel_type,
         cloudflare_token: form.cloudflare_mode === 'token' ? form.cloudflare_token : '',
@@ -185,9 +193,9 @@ async function finishSetup() {
     }
 
     submitStep.value = 'Applying tunnel routes and connecting container networks...'
-    const res = await fetch('/api/setup/complete', {
+    const res = await fetch(systemStatus.value.has_admin_user ? '/api/setup/reconfigure' : '/api/setup/complete', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(authStore.token ? { Authorization: `Bearer ${authStore.token}` } : {}) },
       body: JSON.stringify(payload),
     })
 
@@ -220,27 +228,27 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between p-4 sm:p-6 lg:p-8 font-sans selection:bg-cyan-500 selection:text-black">
+  <div class="min-h-screen bg-slate-50 text-slate-900 flex flex-col justify-between p-4 sm:p-6 lg:p-8 font-sans selection:bg-cyan-500 selection:text-black">
     <!-- Top Header -->
-    <header class="max-w-4xl mx-auto w-full flex items-center justify-between border-b border-slate-800/80 pb-4">
+    <header class="max-w-4xl mx-auto w-full flex items-center justify-between border-b border-slate-200/80 pb-4">
       <div class="flex items-center gap-3">
-        <div class="p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+        <div class="p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-600">
           <img src="/icon.png" alt="DockTun" class="h-7 w-7 object-contain" />
         </div>
         <div>
-          <div class="text-base font-bold tracking-tight text-white flex items-center gap-2">
+          <div class="text-base font-bold tracking-tight text-slate-900 flex items-center gap-2">
             DockTun
-            <span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 font-mono">
+            <span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-700 border border-cyan-500/30 font-mono">
               Setup Wizard
             </span>
           </div>
-          <div class="text-xs text-slate-400">First-Run Installation & Tunnel Onboarding</div>
+          <div class="text-xs text-slate-600">First-Run Installation & Tunnel Onboarding</div>
         </div>
       </div>
 
       <!-- System Diagnostic Pill -->
-      <div class="hidden sm:flex items-center gap-2 text-xs font-mono text-slate-400 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5">
-        <Cpu class="h-3.5 w-3.5 text-cyan-400" />
+      <div class="hidden sm:flex items-center gap-2 text-xs font-mono text-slate-600 bg-white border border-slate-200 rounded-lg px-3 py-1.5">
+        <Cpu class="h-3.5 w-3.5 text-cyan-600" />
         <span>{{ systemStatus.host_os }}/{{ systemStatus.host_arch }} • {{ systemStatus.num_cpu }} cores</span>
       </div>
     </header>
@@ -249,22 +257,22 @@ onMounted(() => {
     <main class="max-w-4xl mx-auto w-full my-6 flex-1 flex flex-col justify-center">
       <!-- Loading State -->
       <div v-if="loading" class="cyber-card py-24 text-center space-y-3">
-        <RotateCcw class="h-8 w-8 text-cyan-400 animate-spin mx-auto" />
-        <p class="text-sm font-mono text-slate-300">Discovering Docker host environment & containers...</p>
+        <RotateCcw class="h-8 w-8 text-cyan-600 animate-spin mx-auto" />
+        <p class="text-sm font-mono text-slate-700">Discovering Docker host environment & containers...</p>
       </div>
 
-      <div v-else class="cyber-card !p-6 sm:!p-8 space-y-6 relative overflow-hidden border-cyan-800/40 shadow-2xl">
+      <div v-else class="cyber-card !p-6 sm:!p-8 space-y-6 relative overflow-hidden border-cyan-800/40 shadow-sm">
         <!-- Error Banner -->
         <div
           v-if="errorMessage"
-          class="p-3.5 rounded-lg border border-rose-500/50 bg-rose-950/20 text-rose-300 text-xs font-mono flex items-center gap-2"
+          class="p-3.5 rounded-lg border border-rose-500/50 bg-rose-50/20 text-rose-700 text-xs font-mono flex items-center gap-2"
         >
-          <AlertCircle class="h-4 w-4 shrink-0 text-rose-400" />
+          <AlertCircle class="h-4 w-4 shrink-0 text-rose-600" />
           <span>{{ errorMessage }}</span>
         </div>
 
         <!-- Step Indicator Bar -->
-        <div class="grid grid-cols-4 gap-2 border-b border-slate-800 pb-5">
+        <div class="grid grid-cols-4 gap-2 border-b border-slate-200 pb-5">
           <div
             v-for="(st, idx) in [
               { num: 1, title: 'Admin Account', icon: KeyRound },
@@ -274,16 +282,16 @@ onMounted(() => {
             ]"
             :key="st.num"
             class="flex items-center gap-2 text-xs transition-colors"
-            :class="step >= st.num ? 'text-cyan-400 font-semibold' : 'text-slate-600'"
+            :class="step >= st.num ? 'text-cyan-600 font-semibold' : 'text-slate-600'"
           >
             <div
               class="h-6 w-6 rounded-full flex items-center justify-center font-mono text-[11px] border shrink-0 transition-all"
               :class="
                 step === st.num
-                  ? 'border-cyan-400 bg-cyan-950 text-cyan-300 shadow-sm'
+                  ? 'border-cyan-400 bg-cyan-50 text-cyan-700 shadow-sm'
                   : step > st.num
-                  ? 'border-emerald-500 bg-emerald-950 text-emerald-400'
-                  : 'border-slate-800 bg-slate-900 text-slate-600'
+                  ? 'border-emerald-500 bg-emerald-50 text-emerald-600'
+                  : 'border-slate-200 bg-white text-slate-600'
               "
             >
               <CheckCircle2 v-if="step > st.num" class="h-3.5 w-3.5" />
@@ -297,12 +305,16 @@ onMounted(() => {
         <!-- STEP 1: ADMIN ACCOUNT                                             -->
         <!-- ================================================================= -->
         <div v-if="step === 1" class="space-y-5 animate-fade-in">
+          <label class="block text-sm">Setup token
+            <input v-model="form.setup_token" type="password" autocomplete="off" class="cyber-input w-full mt-2" placeholder="Paste the token from data/setup.token on the host" />
+            <span class="block text-xs text-slate-600 mt-2">Retrieve it with: docker compose exec docktun cat /app/data/setup.token</span>
+          </label>
           <div>
-            <h2 class="text-lg font-bold text-slate-100 flex items-center gap-2">
-              <KeyRound class="h-5 w-5 text-cyan-400" />
+            <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <KeyRound class="h-5 w-5 text-cyan-600" />
               <span>Step 1: Administrator Account</span>
             </h2>
-            <p class="text-xs text-slate-400 mt-1">
+            <p class="text-xs text-slate-600 mt-1">
               Configure your primary credentials to secure access to the DockTun management dashboard.
             </p>
           </div>
@@ -310,15 +322,15 @@ onMounted(() => {
           <!-- Notice if admin already set in env -->
           <div
             v-if="systemStatus.has_admin_user"
-            class="p-3 rounded-lg border border-indigo-500/40 bg-indigo-950/20 text-indigo-300 text-xs font-mono flex items-center gap-2"
+            class="p-3 rounded-lg border border-indigo-500/40 bg-indigo-50/20 text-indigo-700 text-xs font-mono flex items-center gap-2"
           >
-            <CheckCircle2 class="h-4 w-4 text-indigo-400 shrink-0" />
-            <span>Admin user already detected from environment variables. You can keep existing credentials or type a new password below.</span>
+            <CheckCircle2 class="h-4 w-4 text-indigo-600 shrink-0" />
+            <span>Account credentials are managed in Settings. This wizard only changes configuration.</span>
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl">
             <div class="space-y-1.5 sm:col-span-2">
-              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 font-mono">
+              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600 font-mono">
                 Administrator Username
               </label>
               <input
@@ -331,13 +343,13 @@ onMounted(() => {
 
             <div class="space-y-1.5">
               <div class="flex items-center justify-between">
-                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 font-mono">
+                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600 font-mono">
                   Password
                 </label>
                 <button
                   type="button"
                   @click="form.show_password = !form.show_password"
-                  class="text-[10px] text-slate-500 hover:text-slate-300 flex items-center gap-1 font-mono"
+                  class="text-[10px] text-slate-500 hover:text-slate-700 flex items-center gap-1 font-mono"
                 >
                   <component :is="form.show_password ? EyeOff : Eye" class="h-3 w-3" />
                   <span>{{ form.show_password ? 'Hide' : 'Show' }}</span>
@@ -352,7 +364,7 @@ onMounted(() => {
             </div>
 
             <div class="space-y-1.5">
-              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 font-mono">
+              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600 font-mono">
                 Confirm Password
               </label>
               <input
@@ -365,7 +377,7 @@ onMounted(() => {
             </div>
           </div>
 
-          <p v-if="passwordMismatch" class="text-rose-400 text-xs font-mono">
+          <p v-if="passwordMismatch" class="text-rose-600 text-xs font-mono">
             ⚠️ Passwords do not match.
           </p>
         </div>
@@ -375,11 +387,11 @@ onMounted(() => {
         <!-- ================================================================= -->
         <div v-else-if="step === 2" class="space-y-5 animate-fade-in">
           <div>
-            <h2 class="text-lg font-bold text-slate-100 flex items-center gap-2">
-              <Globe class="h-5 w-5 text-cyan-400" />
+            <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <Globe class="h-5 w-5 text-cyan-600" />
               <span>Step 2: Tunnel & Remote Access Activation</span>
             </h2>
-            <p class="text-xs text-slate-400 mt-1">
+            <p class="text-xs text-slate-600 mt-1">
               Select how you want to access your containers and expose web apps securely over the internet.
             </p>
           </div>
@@ -392,16 +404,16 @@ onMounted(() => {
               class="flex flex-col text-left p-3.5 rounded-xl border transition-all cursor-pointer relative"
               :class="
                 form.tunnel_type === 'cloudflare'
-                  ? 'border-cyan-500 bg-cyan-950/40 text-cyan-300 shadow-md ring-1 ring-cyan-500'
-                  : 'border-slate-800 bg-slate-900/40 text-slate-400 hover:border-slate-700'
+                  ? 'border-cyan-500 bg-cyan-50/40 text-cyan-700 shadow-md ring-1 ring-cyan-500'
+                  : 'border-slate-200 bg-white/40 text-slate-600 hover:border-slate-300'
               "
             >
               <div class="flex items-center justify-between">
-                <Globe class="h-5 w-5 text-cyan-400" />
-                <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 font-mono font-bold">Recommended</span>
+                <Globe class="h-5 w-5 text-cyan-600" />
+                <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-700 font-mono font-bold">Recommended</span>
               </div>
-              <span class="text-xs font-bold font-mono mt-2 text-slate-100">Cloudflare Tunnel</span>
-              <span class="text-[11px] text-slate-400 mt-1 leading-snug">
+              <span class="text-xs font-bold font-mono mt-2 text-slate-900">Cloudflare Tunnel</span>
+              <span class="text-[11px] text-slate-600 mt-1 leading-snug">
                 Zero Trust edge tunnel. Public ingress, custom domains, and access policies with no port forwarding.
               </span>
             </button>
@@ -412,16 +424,16 @@ onMounted(() => {
               class="flex flex-col text-left p-3.5 rounded-xl border transition-all cursor-pointer relative"
               :class="
                 form.tunnel_type === 'wireguard'
-                  ? 'border-indigo-500 bg-indigo-950/40 text-indigo-300 shadow-md ring-1 ring-indigo-500'
-                  : 'border-slate-800 bg-slate-900/40 text-slate-400 hover:border-slate-700'
+                  ? 'border-indigo-500 bg-indigo-50/40 text-indigo-700 shadow-md ring-1 ring-indigo-500'
+                  : 'border-slate-200 bg-white/40 text-slate-600 hover:border-slate-300'
               "
             >
               <div class="flex items-center justify-between">
-                <ShieldCheck class="h-5 w-5 text-indigo-400" />
-                <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono">P2P VPN</span>
+                <ShieldCheck class="h-5 w-5 text-indigo-600" />
+                <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-700 font-mono">P2P VPN</span>
               </div>
-              <span class="text-xs font-bold font-mono mt-2 text-slate-100">WireGuard</span>
-              <span class="text-[11px] text-slate-400 mt-1 leading-snug">
+              <span class="text-xs font-bold font-mono mt-2 text-slate-900">WireGuard</span>
+              <span class="text-[11px] text-slate-600 mt-1 leading-snug">
                 High-speed encrypted VPN tunnel for private direct access to host and containers.
               </span>
             </button>
@@ -433,15 +445,15 @@ onMounted(() => {
               :class="
                 form.tunnel_type === 'tailscale'
                   ? 'border-violet-500 bg-violet-950/40 text-violet-300 shadow-md ring-1 ring-violet-500'
-                  : 'border-slate-800 bg-slate-900/40 text-slate-400 hover:border-slate-700'
+                  : 'border-slate-200 bg-white/40 text-slate-600 hover:border-slate-300'
               "
             >
               <div class="flex items-center justify-between">
                 <Radio class="h-5 w-5 text-violet-400" />
                 <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-violet-500/20 text-violet-300 font-mono">Mesh</span>
               </div>
-              <span class="text-xs font-bold font-mono mt-2 text-slate-100">Tailscale</span>
-              <span class="text-[11px] text-slate-400 mt-1 leading-snug">
+              <span class="text-xs font-bold font-mono mt-2 text-slate-900">Tailscale</span>
+              <span class="text-[11px] text-slate-600 mt-1 leading-snug">
                 Zero-config mesh network. Connects your machines securely over WireGuard under your tailnet.
               </span>
             </button>
@@ -452,31 +464,31 @@ onMounted(() => {
               class="flex flex-col text-left p-3.5 rounded-xl border transition-all cursor-pointer relative"
               :class="
                 form.tunnel_type === 'none'
-                  ? 'border-slate-600 bg-slate-900/80 text-slate-200 shadow-md ring-1 ring-slate-600'
-                  : 'border-slate-800 bg-slate-900/40 text-slate-400 hover:border-slate-700'
+                  ? 'border-slate-400 bg-white/80 text-slate-800 shadow-md ring-1 ring-slate-600'
+                  : 'border-slate-200 bg-white/40 text-slate-600 hover:border-slate-300'
               "
             >
               <div class="flex items-center justify-between">
-                <Wifi class="h-5 w-5 text-slate-400" />
-                <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 font-mono">Local</span>
+                <Wifi class="h-5 w-5 text-slate-600" />
+                <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-mono">Local</span>
               </div>
-              <span class="text-xs font-bold font-mono mt-2 text-slate-100">Local Only (mDNS)</span>
-              <span class="text-[11px] text-slate-400 mt-1 leading-snug">
-                No external tunnels. Access containers inside your LAN via <code class="text-slate-300">&lt;name&gt;.local</code>.
+              <span class="text-xs font-bold font-mono mt-2 text-slate-900">Local Only (mDNS)</span>
+              <span class="text-[11px] text-slate-600 mt-1 leading-snug">
+                No external tunnels. Access containers inside your LAN via <code class="text-slate-700">&lt;name&gt;.local</code>.
               </span>
             </button>
           </div>
 
           <!-- Cloudflare Setup Sub-fields -->
-          <div v-if="form.tunnel_type === 'cloudflare'" class="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-4">
-            <div class="flex items-center gap-3 border-b border-slate-800 pb-3 text-xs">
-              <label class="text-slate-400 font-medium">Cloudflare Setup Method:</label>
+          <div v-if="form.tunnel_type === 'cloudflare'" class="p-4 rounded-xl border border-slate-200 bg-white/40 space-y-4">
+            <div class="flex items-center gap-3 border-b border-slate-200 pb-3 text-xs">
+              <label class="text-slate-600 font-medium">Cloudflare Setup Method:</label>
               <div class="flex gap-2">
                 <button
                   type="button"
                   @click="form.cloudflare_mode = 'token'"
                   class="px-2.5 py-1 rounded text-xs font-mono font-semibold"
-                  :class="form.cloudflare_mode === 'token' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'text-slate-400 hover:text-slate-200'"
+                  :class="form.cloudflare_mode === 'token' ? 'bg-cyan-500/20 text-cyan-700 border border-cyan-500/40' : 'text-slate-600 hover:text-slate-800'"
                 >
                   Tunnel Token (Quick)
                 </button>
@@ -484,7 +496,7 @@ onMounted(() => {
                   type="button"
                   @click="form.cloudflare_mode = 'api'"
                   class="px-2.5 py-1 rounded text-xs font-mono font-semibold"
-                  :class="form.cloudflare_mode === 'api' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'text-slate-400 hover:text-slate-200'"
+                  :class="form.cloudflare_mode === 'api' ? 'bg-cyan-500/20 text-cyan-700 border border-cyan-500/40' : 'text-slate-600 hover:text-slate-800'"
                 >
                   API Token & DNS Automation
                 </button>
@@ -492,7 +504,7 @@ onMounted(() => {
                   type="button"
                   @click="form.cloudflare_mode = 'existing'"
                   class="px-2.5 py-1 rounded text-xs font-mono font-semibold"
-                  :class="form.cloudflare_mode === 'existing' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40' : 'text-slate-400 hover:text-slate-200'"
+                  :class="form.cloudflare_mode === 'existing' ? 'bg-cyan-500/20 text-cyan-700 border border-cyan-500/40' : 'text-slate-600 hover:text-slate-800'"
                 >
                   Mounted Credentials
                 </button>
@@ -501,7 +513,7 @@ onMounted(() => {
 
             <!-- Option A: Tunnel Token -->
             <div v-if="form.cloudflare_mode === 'token'" class="space-y-2">
-              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 font-mono">
+              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600 font-mono">
                 Cloudflare Tunnel Run Token
               </label>
               <input
@@ -510,7 +522,7 @@ onMounted(() => {
                 placeholder="eyJhIjoiNj..."
                 class="cyber-input text-xs font-mono"
               />
-              <p class="text-[11px] text-slate-400">
+              <p class="text-[11px] text-slate-600">
                 Obtained from Cloudflare Zero Trust Dashboard → Networks → Tunnels → Copy command token.
               </p>
             </div>
@@ -518,7 +530,7 @@ onMounted(() => {
             <!-- Option B: Cloudflare API Token -->
             <div v-else-if="form.cloudflare_mode === 'api'" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div class="space-y-1 sm:col-span-2">
-                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 font-mono">
+                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600 font-mono">
                   Cloudflare API Token
                 </label>
                 <input
@@ -529,7 +541,7 @@ onMounted(() => {
                 />
               </div>
               <div class="space-y-1">
-                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 font-mono">
+                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600 font-mono">
                   Cloudflare Account ID
                 </label>
                 <input
@@ -540,7 +552,7 @@ onMounted(() => {
                 />
               </div>
               <div class="space-y-1">
-                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 font-mono">
+                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600 font-mono">
                   Tunnel Name
                 </label>
                 <input
@@ -553,15 +565,15 @@ onMounted(() => {
             </div>
 
             <!-- Option C: Mounted Credentials -->
-            <div v-else class="text-xs font-mono text-slate-400 space-y-1">
-              <p class="text-emerald-400 font-semibold">✓ DockTun will use files mounted to <code class="text-slate-200">/etc/cloudflared/config.yml</code> and credentials JSON.</p>
+            <div v-else class="text-xs font-mono text-slate-600 space-y-1">
+              <p class="text-emerald-600 font-semibold">✓ DockTun will use files mounted to <code class="text-slate-800">/etc/cloudflared/config.yml</code> and credentials JSON.</p>
               <p class="text-[11px] text-slate-500">No additional tokens required.</p>
             </div>
           </div>
 
           <!-- Tailscale Setup -->
-          <div v-else-if="form.tunnel_type === 'tailscale'" class="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-2">
-            <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 font-mono">
+          <div v-else-if="form.tunnel_type === 'tailscale'" class="p-4 rounded-xl border border-slate-200 bg-white/40 space-y-2">
+            <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600 font-mono">
               Tailscale Auth Key (Reusable or Ephemeral)
             </label>
             <input
@@ -570,15 +582,15 @@ onMounted(() => {
               placeholder="tskey-auth-..."
               class="cyber-input text-xs font-mono"
             />
-            <p class="text-[11px] text-slate-400">
+            <p class="text-[11px] text-slate-600">
               Generated in Tailscale Admin Console → Settings → Personal Settings → Keys.
             </p>
           </div>
 
           <!-- WireGuard Setup -->
-          <div v-else-if="form.tunnel_type === 'wireguard'" class="p-4 rounded-xl border border-slate-800 bg-slate-900/40 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div v-else-if="form.tunnel_type === 'wireguard'" class="p-4 rounded-xl border border-slate-200 bg-white/40 grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div class="space-y-1">
-              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 font-mono">
+              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600 font-mono">
                 Server URL / Public IP
               </label>
               <input
@@ -589,7 +601,7 @@ onMounted(() => {
               />
             </div>
             <div class="space-y-1">
-              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 font-mono">
+              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600 font-mono">
                 WireGuard Port
               </label>
               <input
@@ -608,11 +620,11 @@ onMounted(() => {
         <div v-else-if="step === 3" class="space-y-5 animate-fade-in">
           <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div>
-              <h2 class="text-lg font-bold text-slate-100 flex items-center gap-2">
-                <Server class="h-5 w-5 text-cyan-400" />
+              <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Server class="h-5 w-5 text-cyan-600" />
                 <span>Step 3: Discover & Import Existing Containers</span>
               </h2>
-              <p class="text-xs text-slate-400 mt-1">
+              <p class="text-xs text-slate-600 mt-1">
                 Found {{ selectableContainers.length }} previous container(s) running on your Docker daemon. Select which to import into DockTun.
               </p>
             </div>
@@ -621,7 +633,7 @@ onMounted(() => {
               <button
                 type="button"
                 @click="selectAllContainers"
-                class="text-xs text-cyan-400 hover:text-cyan-300 underline font-mono"
+                class="text-xs text-cyan-600 hover:text-cyan-700 underline font-mono"
               >
                 Select All
               </button>
@@ -629,7 +641,7 @@ onMounted(() => {
               <button
                 type="button"
                 @click="deselectAllContainers"
-                class="text-xs text-slate-400 hover:text-slate-200 underline font-mono"
+                class="text-xs text-slate-600 hover:text-slate-800 underline font-mono"
               >
                 Clear
               </button>
@@ -637,17 +649,17 @@ onMounted(() => {
           </div>
 
           <!-- Import Toggles -->
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-xl border border-slate-800 bg-slate-900/60">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-xl border border-slate-200 bg-white/60">
             <label class="flex items-start gap-2.5 cursor-pointer">
               <input
                 type="checkbox"
                 v-model="form.connect_network"
-                class="h-4 w-4 mt-0.5 rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-cyan-500"
+                class="h-4 w-4 mt-0.5 rounded border-slate-300 bg-slate-50 text-cyan-500 focus:ring-cyan-500"
               />
               <div class="space-y-0.5">
-                <span class="text-xs font-bold text-slate-200">Connect to Tunnel Network</span>
-                <p class="text-[11px] text-slate-400">
-                  Adds containers to the <code class="text-cyan-300">cloudflared</code> Docker network so they can be exposed and routed cleanly.
+                <span class="text-xs font-bold text-slate-800">Connect to Tunnel Network</span>
+                <p class="text-[11px] text-slate-600">
+                  Adds containers to the <code class="text-cyan-700">cloudflared</code> Docker network so they can be exposed and routed cleanly.
                 </p>
               </div>
             </label>
@@ -656,11 +668,11 @@ onMounted(() => {
               <input
                 type="checkbox"
                 v-model="form.auto_import_stacks"
-                class="h-4 w-4 mt-0.5 rounded border-slate-700 bg-slate-950 text-indigo-500 focus:ring-indigo-500"
+                class="h-4 w-4 mt-0.5 rounded border-slate-300 bg-slate-50 text-indigo-500 focus:ring-indigo-500"
               />
               <div class="space-y-0.5">
-                <span class="text-xs font-bold text-slate-200">Auto-Register Compose Stacks</span>
-                <p class="text-[11px] text-slate-400">
+                <span class="text-xs font-bold text-slate-800">Auto-Register Compose Stacks</span>
+                <p class="text-[11px] text-slate-600">
                   Imports Compose working directories into DockTun so you can edit YAML and restart stacks directly.
                 </p>
               </div>
@@ -675,8 +687,8 @@ onMounted(() => {
               class="flex items-center justify-between p-3 rounded-lg border transition-all cursor-pointer"
               :class="
                 form.selected_container_ids[c.id]
-                  ? 'border-cyan-500/60 bg-cyan-950/20'
-                  : 'border-slate-800 bg-slate-900/30 opacity-70 hover:opacity-100'
+                  ? 'border-cyan-500/60 bg-cyan-50/20'
+                  : 'border-slate-200 bg-white/30 opacity-70 hover:opacity-100'
               "
               @click="form.selected_container_ids[c.id] = !form.selected_container_ids[c.id]"
             >
@@ -684,34 +696,34 @@ onMounted(() => {
                 <input
                   type="checkbox"
                   v-model="form.selected_container_ids[c.id]"
-                  class="h-4 w-4 rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-cyan-500"
+                  class="h-4 w-4 rounded border-slate-300 bg-slate-50 text-cyan-500 focus:ring-cyan-500"
                   @click.stop
                 />
                 <div>
-                  <div class="text-xs font-bold text-slate-100 font-mono flex items-center gap-2">
+                  <div class="text-xs font-bold text-slate-900 font-mono flex items-center gap-2">
                     <span>{{ c.name }}</span>
                     <span
                       class="text-[9px] px-1.5 py-0.2 rounded font-mono font-semibold"
-                      :class="c.running ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'"
+                      :class="c.running ? 'bg-emerald-500/20 text-emerald-600' : 'bg-slate-100 text-slate-600'"
                     >
                       {{ c.running ? 'Running' : 'Stopped' }}
                     </span>
                   </div>
-                  <div class="text-[11px] text-slate-400 font-mono truncate max-w-sm">
+                  <div class="text-[11px] text-slate-600 font-mono truncate max-w-sm">
                     {{ c.image }} • Ports: {{ c.ports || 'internal' }}
                   </div>
                 </div>
               </div>
 
               <div class="text-right text-xs font-mono">
-                <span class="rounded bg-slate-800 px-2 py-0.5 text-[10px] text-indigo-300 border border-slate-700">
+                <span class="rounded bg-slate-100 px-2 py-0.5 text-[10px] text-indigo-700 border border-slate-300">
                   Stack: {{ c.suggested_stack }}
                 </span>
               </div>
             </div>
           </div>
 
-          <div v-else class="text-center py-10 text-slate-500 font-mono text-xs border border-dashed border-slate-800 rounded-xl">
+          <div v-else class="text-center py-10 text-slate-500 font-mono text-xs border border-dashed border-slate-200 rounded-xl">
             // No third-party containers found on this Docker daemon yet.
             <div class="text-[11px] text-slate-600 mt-1">You can deploy new containers using templates right after setup.</div>
           </div>
@@ -722,50 +734,50 @@ onMounted(() => {
         <!-- ================================================================= -->
         <div v-else-if="step === 4" class="space-y-5 animate-fade-in">
           <div>
-            <h2 class="text-lg font-bold text-slate-100 flex items-center gap-2">
-              <Rocket class="h-5 w-5 text-cyan-400" />
+            <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <Rocket class="h-5 w-5 text-cyan-600" />
               <span>Step 4: Review Configuration & Launch</span>
             </h2>
-            <p class="text-xs text-slate-400 mt-1">
+            <p class="text-xs text-slate-600 mt-1">
               Verify your setup preferences before DockTun initializes the environment and launches your dashboard.
             </p>
           </div>
 
           <!-- Summary Cards -->
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono text-xs">
-            <div class="p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 space-y-1">
-              <span class="text-slate-400 uppercase text-[10px]">Admin Account</span>
-              <div class="text-sm font-bold text-slate-100">{{ form.admin_username }}</div>
-              <div class="text-[11px] text-emerald-400">✓ Password Protected</div>
+            <div class="p-3.5 rounded-xl border border-slate-200 bg-white/60 space-y-1">
+              <span class="text-slate-600 uppercase text-[10px]">Admin Account</span>
+              <div class="text-sm font-bold text-slate-900">{{ form.admin_username }}</div>
+              <div class="text-[11px] text-emerald-600">✓ Password Protected</div>
             </div>
 
-            <div class="p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 space-y-1">
-              <span class="text-slate-400 uppercase text-[10px]">Remote Access</span>
-              <div class="text-sm font-bold text-cyan-300 capitalize">{{ form.tunnel_type }}</div>
-              <div class="text-[11px] text-slate-400">
+            <div class="p-3.5 rounded-xl border border-slate-200 bg-white/60 space-y-1">
+              <span class="text-slate-600 uppercase text-[10px]">Remote Access</span>
+              <div class="text-sm font-bold text-cyan-700 capitalize">{{ form.tunnel_type }}</div>
+              <div class="text-[11px] text-slate-600">
                 {{ form.tunnel_type === 'cloudflare' ? 'Zero Trust Edge Tunnel' : form.tunnel_type === 'none' ? 'Local mDNS Only' : 'Encrypted VPN' }}
               </div>
             </div>
 
-            <div class="p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 space-y-1">
-              <span class="text-slate-400 uppercase text-[10px]">Imported Containers</span>
-              <div class="text-sm font-bold text-indigo-300">{{ selectedContainerCount }} Selected</div>
-              <div class="text-[11px]" :class="form.connect_network ? 'text-cyan-400' : 'text-slate-500'">
+            <div class="p-3.5 rounded-xl border border-slate-200 bg-white/60 space-y-1">
+              <span class="text-slate-600 uppercase text-[10px]">Imported Containers</span>
+              <div class="text-sm font-bold text-indigo-700">{{ selectedContainerCount }} Selected</div>
+              <div class="text-[11px]" :class="form.connect_network ? 'text-cyan-600' : 'text-slate-500'">
                 {{ form.connect_network ? 'Bridge Network Attached' : 'Network Unmodified' }}
               </div>
             </div>
           </div>
 
           <!-- Optional Notification Webhook Section -->
-          <div class="p-4 rounded-xl border border-slate-800 bg-slate-900/40 space-y-3">
+          <div class="p-4 rounded-xl border border-slate-200 bg-white/40 space-y-3">
             <label class="flex items-center gap-2.5 cursor-pointer">
               <input
                 type="checkbox"
                 v-model="form.enable_notifications"
-                class="h-4 w-4 rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-cyan-500"
+                class="h-4 w-4 rounded border-slate-300 bg-slate-50 text-cyan-500 focus:ring-cyan-500"
               />
-              <span class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-                <Bell class="h-3.5 w-3.5 text-cyan-400" />
+              <span class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Bell class="h-3.5 w-3.5 text-cyan-600" />
                 <span>Configure Incident Webhook (Optional)</span>
               </span>
             </label>
@@ -787,8 +799,8 @@ onMounted(() => {
           </div>
 
           <!-- Submitting Progress Banner -->
-          <div v-if="submitting" class="p-4 rounded-xl border border-cyan-500/50 bg-cyan-950/30 text-cyan-300 flex items-center gap-3 text-xs font-mono">
-            <RotateCcw class="h-5 w-5 animate-spin text-cyan-400 shrink-0" />
+          <div v-if="submitting" class="p-4 rounded-xl border border-cyan-500/50 bg-cyan-50/30 text-cyan-700 flex items-center gap-3 text-xs font-mono">
+            <RotateCcw class="h-5 w-5 animate-spin text-cyan-600 shrink-0" />
             <div class="space-y-0.5">
               <div class="font-bold">INITIALIZING DOCKTUN...</div>
               <div>{{ submitStep }}</div>
@@ -797,9 +809,9 @@ onMounted(() => {
         </div>
 
         <!-- Wizard Navigation Footer -->
-        <div class="flex items-center justify-between pt-4 border-t border-slate-800">
+        <div class="flex items-center justify-between pt-4 border-t border-slate-200">
           <button
-            v-if="step > 1"
+            v-if="step > (systemStatus.has_admin_user ? 2 : 1)"
             type="button"
             @click="step--"
             :disabled="submitting"
@@ -816,7 +828,7 @@ onMounted(() => {
               type="button"
               @click="step++"
               :disabled="step === 1 && !passwordValid"
-              class="cyber-btn text-xs flex items-center gap-1.5 py-2 px-5 text-white bg-cyan-600/80 hover:bg-cyan-600 border-cyan-500 disabled:opacity-40"
+              class="cyber-btn text-xs flex items-center gap-1.5 py-2 px-5 text-slate-900 bg-cyan-600/80 hover:bg-cyan-600 border-cyan-500 disabled:opacity-40"
             >
               <span>Next Step</span>
               <ChevronRight class="h-3.5 w-3.5" />
@@ -827,7 +839,7 @@ onMounted(() => {
               type="button"
               @click="finishSetup"
               :disabled="submitting || !passwordValid"
-              class="cyber-btn text-xs flex items-center gap-2 py-2 px-6 text-white bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 border-cyan-400 font-bold shadow-lg"
+              class="cyber-btn text-xs flex items-center gap-2 py-2 px-6 text-slate-900 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 border-cyan-400 font-bold shadow-lg"
             >
               <RotateCcw v-if="submitting" class="h-4 w-4 animate-spin" />
               <Rocket v-else class="h-4 w-4" />

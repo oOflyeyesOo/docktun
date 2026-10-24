@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -76,6 +78,7 @@ type SetupNotificationsRequest struct {
 }
 
 type SetupCompleteRequest struct {
+	SetupToken       string                    `json:"setup_token"`
 	AdminUsername    string                    `json:"admin_username"`
 	AdminPassword    string                    `json:"admin_password"`
 	Tunnel           SetupTunnelRequest        `json:"tunnel"`
@@ -137,24 +140,12 @@ func (s *SetupService) GetStatus(force bool) (SetupStatus, error) {
 		status.AdminUsername = "admin"
 	}
 
-	// 1. Check if setup is already completed in system_settings
-	var completedVal string
-	_ = s.db.QueryRow(`SELECT value FROM system_settings WHERE key = 'setup_completed'`).Scan(&completedVal)
-
-	// Check if users exist in SQLite
-	var userCount int
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&userCount)
-	status.HasAdminUser = userCount > 0
-
-	// Determine completed state
-	if completedVal == "true" && !force {
-		status.Completed = true
-	} else if userCount > 0 && s.cfg.AdminPassword != "" && completedVal == "" && !force {
-		// Existing instance with predefined env password
-		status.Completed = true
-	} else {
-		status.Completed = false
+	locked, err := s.Locked()
+	if err != nil {
+		return SetupStatus{}, err
 	}
+	status.HasAdminUser = locked
+	status.Completed = locked
 
 	// 2. Check Docker availability & version
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -238,73 +229,140 @@ func (s *SetupService) GetStatus(force bool) (SetupStatus, error) {
 }
 
 func (s *SetupService) Complete(req SetupCompleteRequest, ip string, tokenGen func(int, string) (string, string, error)) (SetupCompleteResult, error) {
+	locked, err := s.Locked()
+	if err != nil {
+		return SetupCompleteResult{}, err
+	}
+	if locked {
+		return SetupCompleteResult{}, ErrSetupLocked
+	}
+	if len(s.cfg.SetupToken) < 32 || subtle.ConstantTimeCompare([]byte(req.SetupToken), []byte(s.cfg.SetupToken)) != 1 {
+		return SetupCompleteResult{}, ErrSetupToken
+	}
 	username := strings.TrimSpace(req.AdminUsername)
 	if username == "" {
 		username = "admin"
 	}
-
-	// 1. Set or update administrator account
-	var adminID int
-	if req.AdminPassword != "" {
-		hash, err := bcrypt.GenerateFromPassword([]byte(req.AdminPassword), 12)
+	if len(username) > 128 || len(req.AdminPassword) < 12 || len(req.AdminPassword) > 72 {
+		return SetupCompleteResult{}, ErrSetupInput
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.AdminPassword), 12)
+	if err != nil {
+		return SetupCompleteResult{}, err
+	}
+	// A single conditional write closes the check/create race across processes too.
+	result, err := s.db.Exec(`INSERT INTO users (username, password_hash)
+ SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM users)
+ AND NOT EXISTS (SELECT 1 FROM system_settings WHERE key = 'setup_completed' AND value = 'true')`, username, string(hash))
+	if err != nil {
+		return SetupCompleteResult{}, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return SetupCompleteResult{}, err
+	}
+	if n != 1 {
+		return SetupCompleteResult{}, ErrSetupLocked
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return SetupCompleteResult{}, err
+	}
+	adminID := int(id)
+	access, refresh := "", ""
+	if tokenGen != nil {
+		access, refresh, err = tokenGen(adminID, username)
 		if err != nil {
-			return SetupCompleteResult{}, fmt.Errorf("failed to hash password: %w", err)
-		}
-
-		_, err = s.db.Exec(`
-			INSERT INTO users (username, password_hash)
-			VALUES (?, ?)
-			ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash
-		`, username, string(hash))
-		if err != nil {
-			return SetupCompleteResult{}, fmt.Errorf("failed to save admin user: %w", err)
+			return SetupCompleteResult{}, fmt.Errorf("account created; sign in to continue: %w", err)
 		}
 	}
-
-	_ = s.db.QueryRow(`SELECT id FROM users WHERE username = ?`, username).Scan(&adminID)
-	if adminID == 0 {
-		adminID = 1
+	resultData, err := s.applyConfiguration(req, adminID, ip)
+	if err != nil {
+		return SetupCompleteResult{}, err
 	}
+	resultData.AccessToken, resultData.RefreshToken, resultData.Username = access, refresh, username
+	return resultData, nil
+}
 
+var ErrSetupToken = errors.New("invalid setup token; read setup.token on the host")
+var ErrSetupLocked = errors.New("setup is locked; sign in to reconfigure")
+var ErrSetupInput = errors.New("use a username up to 128 bytes and a password between 12 and 72 bytes")
+var ErrSetupIdentity = errors.New("use account settings to change credentials")
+
+// Locked fails closed when the database cannot establish the bootstrap state.
+func (s *SetupService) Locked() (bool, error) {
+	var locked bool
+	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM users) OR EXISTS(SELECT 1 FROM system_settings WHERE key = 'setup_completed' AND value = 'true')`).Scan(&locked)
+	return locked, err
+}
+
+// Reconfigure never creates accounts, changes passwords, or mints sessions.
+func (s *SetupService) Reconfigure(req SetupCompleteRequest, userID int, ip string) (SetupCompleteResult, error) {
+	var username string
+	if userID <= 0 {
+		return SetupCompleteResult{}, ErrSetupIdentity
+	}
+	if err := s.db.QueryRow(`SELECT username FROM users WHERE id = ?`, userID).Scan(&username); err != nil {
+		return SetupCompleteResult{}, ErrSetupIdentity
+	}
+	if req.AdminPassword != "" || (req.AdminUsername != "" && req.AdminUsername != username) {
+		return SetupCompleteResult{}, ErrSetupIdentity
+	}
+	return s.applyConfiguration(req, userID, ip)
+}
+
+func (s *SetupService) applyConfiguration(req SetupCompleteRequest, adminID int, ip string) (SetupCompleteResult, error) {
 	// 2. Configure Tunnel / Remote Access
 	tunnelStatus := "Local / mDNS Only"
 	switch strings.ToLower(req.Tunnel.Type) {
 	case "cloudflare":
 		tunnelStatus = "Cloudflare Tunnel Configured"
 		if req.Tunnel.CloudflareToken != "" {
-			_, _ = s.db.Exec(`
+			_, err := s.db.Exec(`
 				INSERT INTO system_settings (key, value) VALUES ('cloudflare_tunnel_token', ?)
 				ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
 			`, strings.TrimSpace(req.Tunnel.CloudflareToken))
+			if err != nil {
+				return SetupCompleteResult{}, err
+			}
 			tunnelStatus = "Cloudflare Token Tunnel Configured"
 		}
 
 		if req.Tunnel.CloudflareAPIToken != "" && s.cfAPI != nil {
-			_ = s.cfAPI.SaveSettings(
+			err := s.cfAPI.SaveSettings(
 				strings.TrimSpace(req.Tunnel.CloudflareAccountID),
 				strings.TrimSpace(req.Tunnel.CloudflareAPIToken),
 				strings.TrimSpace(req.Tunnel.CloudflareTunnelID),
 				strings.TrimSpace(req.Tunnel.CloudflareTunnelName),
 			)
+			if err != nil {
+				return SetupCompleteResult{}, err
+			}
 			tunnelStatus = "Cloudflare API Managed Tunnel Connected"
 		}
 
 	case "wireguard":
-		tunnelStatus = "WireGuard Point-to-Point Tunnel Activated"
+		tunnelStatus = "WireGuard settings saved"
 		if req.Tunnel.WireguardServerURL != "" {
-			_, _ = s.db.Exec(`
+			_, err := s.db.Exec(`
 				INSERT INTO system_settings (key, value) VALUES ('wireguard_server_url', ?)
 				ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
 			`, strings.TrimSpace(req.Tunnel.WireguardServerURL))
+			if err != nil {
+				return SetupCompleteResult{}, err
+			}
 		}
 
 	case "tailscale":
-		tunnelStatus = "Tailscale Mesh Activated"
+		tunnelStatus = "Tailscale settings saved"
 		if req.Tunnel.TailscaleAuthKey != "" {
-			_, _ = s.db.Exec(`
+			_, err := s.db.Exec(`
 				INSERT INTO system_settings (key, value) VALUES ('tailscale_auth_key', ?)
 				ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
 			`, strings.TrimSpace(req.Tunnel.TailscaleAuthKey))
+			if err != nil {
+				return SetupCompleteResult{}, err
+			}
 		}
 	}
 
@@ -320,12 +378,18 @@ func (s *SetupService) Complete(req SetupCompleteRequest, ip string, tokenGen fu
 
 			// Connect to cloudflared network if requested
 			if req.ImportContainers.ConnectNetwork {
-				_ = s.dockerContainers.ConnectNetwork(cID, "cloudflared")
+				if err := s.dockerContainers.ConnectNetwork(cID, "cloudflared"); err != nil {
+					return SetupCompleteResult{}, err
+				}
 			}
 
 			// Auto-register project stack if requested
 			if req.ImportContainers.AutoImportStacks {
-				if projID, err := s.dockerContainers.EnsureProjectForContainer(cID); err == nil && projID > 0 {
+				projID, err := s.dockerContainers.EnsureProjectForContainer(cID)
+				if err != nil {
+					return SetupCompleteResult{}, err
+				}
+				if projID > 0 {
 					importedStacks++
 				}
 			}
@@ -341,30 +405,26 @@ func (s *SetupService) Complete(req SetupCompleteRequest, ip string, tokenGen fu
 			"webhook_url": req.Notifications.WebhookURL,
 		}
 		data, _ := json.MarshalIndent(notifCfg, "", "  ")
-		_ = os.WriteFile(filepath.Join(s.dataDir, "notifications.json"), data, 0644)
+		if err := os.WriteFile(filepath.Join(s.dataDir, "notifications.json"), data, 0600); err != nil {
+			return SetupCompleteResult{}, err
+		}
 	}
 
 	// 5. Mark setup as completed in system_settings
-	_, _ = s.db.Exec(`
+	_, err := s.db.Exec(`
 		INSERT INTO system_settings (key, value) VALUES ('setup_completed', 'true')
 		ON CONFLICT(key) DO UPDATE SET value = 'true', updated_at = CURRENT_TIMESTAMP
 	`)
+	if err != nil {
+		return SetupCompleteResult{}, err
+	}
 
 	if s.audit != nil {
 		s.audit.Log(adminID, "setup_complete", fmt.Sprintf("Setup wizard completed via %s. Tunnel: %s, Imported: %d containers", ip, tunnelStatus, importedContainers), ip)
 	}
 
-	// 6. Generate immediate JWT auth tokens
-	access, refresh := "", ""
-	if tokenGen != nil {
-		access, refresh, _ = tokenGen(adminID, username)
-	}
-
 	return SetupCompleteResult{
 		OK:                 true,
-		AccessToken:        access,
-		RefreshToken:       refresh,
-		Username:           username,
 		ImportedContainers: importedContainers,
 		ImportedStacks:     importedStacks,
 		TunnelStatus:       tunnelStatus,
