@@ -1,11 +1,14 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,10 +42,13 @@ func (h *HealthCheck) Check(w http.ResponseWriter, r *http.Request) {
 
 	data, err := os.ReadFile(h.configPath)
 	if err != nil {
-		http.Error(w, `{"error":"cannot read config"}`, http.StatusInternalServerError)
+		jsonError(w, "cannot read config", http.StatusInternalServerError)
 		return
 	}
-	_ = yaml.Unmarshal(data, &cfg)
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		jsonError(w, "invalid tunnel configuration", http.StatusInternalServerError)
+		return
+	}
 
 	type ruleTarget struct {
 		Hostname string
@@ -60,6 +66,7 @@ func (h *HealthCheck) Check(w http.ResponseWriter, r *http.Request) {
 
 	results := make([]serviceHealth, len(targets))
 	var wg sync.WaitGroup
+	slots := make(chan struct{}, 8)
 	for i, t := range targets {
 		wg.Add(1)
 		go func(idx int, target ruleTarget) {
@@ -67,27 +74,32 @@ func (h *HealthCheck) Check(w http.ResponseWriter, r *http.Request) {
 			s := serviceHealth{Hostname: target.Hostname, Service: target.Service}
 			start := time.Now()
 
-			u, err := url.Parse(target.Service)
+			host, err := healthAddress(target.Service)
 			if err != nil {
 				s.Status = "invalid"
+				s.Latency = "invalid target"
+				s.LatencyMs = -1
 				results[idx] = s
 				return
 			}
-
-			host := u.Host
-			if !strings.Contains(host, ":") {
-				if u.Scheme == "https" {
-					host += ":443"
-				} else {
-					host += ":80"
-				}
+			select {
+			case slots <- struct{}{}:
+				defer func() { <-slots }()
+			case <-r.Context().Done():
+				s.Status = "down"
+				s.Latency = "cancelled"
+				s.LatencyMs = -1
+				results[idx] = s
+				return
 			}
-
-			conn, err := net.DialTimeout("tcp", host, 3*time.Second)
+			start = time.Now()
+			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+			defer cancel()
+			conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", host)
 			dur := time.Since(start)
 			if err != nil {
 				s.Status = "down"
-				s.Latency = "timeout"
+				s.Latency = "unreachable"
 				s.LatencyMs = -1
 			} else {
 				conn.Close()
@@ -102,4 +114,35 @@ func (h *HealthCheck) Check(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
+}
+
+// healthAddress validates TCP-based ingress targets without guessing ports for
+// arbitrary schemes. JoinHostPort preserves IPv6 literals.
+func healthAddress(target string) (string, error) {
+	u, err := url.Parse(target)
+	if err != nil || u.Hostname() == "" || u.User != nil {
+		return "", fmt.Errorf("invalid target")
+	}
+	port := u.Port()
+	switch u.Scheme {
+	case "http", "https":
+		if port == "" {
+			if u.Scheme == "https" {
+				port = "443"
+			} else {
+				port = "80"
+			}
+		}
+	case "tcp", "ssh", "rdp":
+		if port == "" {
+			return "", fmt.Errorf("explicit port required")
+		}
+	default:
+		return "", fmt.Errorf("unsupported scheme")
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("invalid port")
+	}
+	return net.JoinHostPort(u.Hostname(), port), nil
 }

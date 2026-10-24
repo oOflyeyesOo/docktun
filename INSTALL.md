@@ -180,3 +180,32 @@ this signs out existing sessions. Forwarded IP headers are not trusted, so a
 reverse proxy shares one login rate-limit budget unless trusted-proxy support
 is added. Use HTTPS when exposing the dashboard. Docker socket access grants
 host-level control; restrict dashboard access accordingly.
+
+## System diagnostics and local verification
+
+Open **Settings → System diagnostics** to check whether DockTun can reach the
+Docker engine and whether its Compose plugin is installed. Checks are read-only,
+require a signed-in administrator, and show a timestamp and recovery guidance.
+`/healthz` checks database readiness only: it deliberately stays healthy when
+Docker is offline so the dashboard can explain the failure.
+
+For developers, build `docker build -t docktun:test .`, then run:
+
+```sh
+python3 tests/container_smoke.py
+python3 tests/compose_integration.py
+```
+
+The first test runs without a Docker socket and verifies setup ownership,
+authentication, restart persistence, and disconnected-engine diagnostics.
+The Compose test mounts the Docker socket, checks inventory/details/logs, and
+starts, stops, and restarts only its disposable fixture container. It uses an
+isolated project, a random localhost port, and removes its own containers,
+network, and data volume on completion. It does not configure public tunnels.
+Origin health checks report TCP reachability, not HTTP application health.
+Malformed tunnel YAML now returns an explicit error; IPv6 origins and explicit
+TCP/SSH/RDP ports are handled correctly, with at most eight simultaneous probes.
+
+The single-file, prebuilt-image installation remains a release gate: images
+must be built and published and a clean-host pull/install validated before
+advertising that workflow as supported.

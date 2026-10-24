@@ -48,9 +48,13 @@ try:
     access = session["access_token"]
     request("/api/setup/complete", {**credentials, "setup_token": setup_token}, expected=409)
     request("/api/setup/reconfigure", {}, expected=401)
+    request("/api/diagnostics", expected=401)
     request("/api/setup/reconfigure", {"admin_password": "replacement-password"}, access, expected=400)
     assert request("/api/setup/reconfigure", {}, access)["access_token"] == ""
     request("/api/setup/details", token=access)
+    diagnostics = request("/api/diagnostics", token=access)
+    assert diagnostics["checks"][0]["ok"] is False
+    assert diagnostics["checks"][1]["ok"] is True
     login = {"username": "owner", "password": credentials["admin_password"]}
     request("/auth/login", login)
     docker("restart", name)
