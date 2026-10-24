@@ -42,4 +42,4 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker compose config --quiet
       - run: docker build -t docktun:test .
-
+      - run: python3 tests/container_smoke.py
