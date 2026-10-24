@@ -64,6 +64,7 @@ func main() {
   dockerContainersSvc := service.NewDockerContainers(cfg, database, configSvc, cfdSvc, cfAPISvc, auditSvc)
   meshSvc := service.NewMeshService(dataDir, configSvc, cfg)
   remoteAccessSvc := service.NewRemoteAccessService(cfg, configSvc, cfdSvc, cfAPISvc, meshSvc, auditSvc, dataDir, dockerContainersSvc)
+  storageSvc := service.NewStorageService(database, cfg)
 
   statusHandler := handler.NewStatus(cfdSvc, cfg)
   controlHandler := handler.NewControl(cfdSvc, auditSvc)
@@ -81,6 +82,7 @@ func main() {
   meshHandler := handler.NewMesh(meshSvc)
   remoteAccessHandler := handler.NewRemoteAccess(remoteAccessSvc, auditSvc)
   cloudflareHandler := handler.NewCloudflareHandler(cfAPISvc, configSvc)
+  storageHandler := handler.NewStorageHandler(storageSvc, auditSvc)
   setupSvc := service.NewSetupService(cfg, database, dockerContainersSvc, cfAPISvc, configSvc, meshSvc, auditSvc, dataDir)
   setupHandler := handler.NewSetup(setupSvc, authHandler)
 
@@ -179,6 +181,20 @@ func main() {
     r.Get("/api/docker/system/df", dockerContainersHandler.SystemDF)
     r.Post("/api/docker/system/prune", dockerContainersHandler.SystemPrune)
     r.Post("/api/docker/probe", dockerContainersHandler.ProbeTarget)
+
+    // Storage Management & Reclaim Center
+    r.Get("/api/storage/overview", storageHandler.GetOverview)
+    r.Get("/api/storage/volumes", storageHandler.ListVolumes)
+    r.Delete("/api/storage/volumes/{name}", storageHandler.DeleteVolume)
+    r.Post("/api/storage/volumes/prune", storageHandler.PruneVolumes)
+    r.Get("/api/storage/images", storageHandler.ListImages)
+    r.Delete("/api/storage/images/{id}", storageHandler.DeleteImage)
+    r.Post("/api/storage/images/prune", storageHandler.PruneImages)
+    r.Get("/api/storage/containers", storageHandler.ListContainers)
+    r.Post("/api/storage/containers/prune", storageHandler.PruneContainers)
+    r.Post("/api/storage/build-cache/prune", storageHandler.PruneBuildCache)
+    r.Post("/api/storage/reclaim", storageHandler.ReclaimBatch)
+    r.Post("/api/storage/vacuum-db", storageHandler.VacuumDB)
 
     r.Post("/api/docker/run", dockerRunHandler.Run)
     r.Get("/api/docker/run/output/{id}", dockerRunHandler.Output)

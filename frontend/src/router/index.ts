@@ -7,6 +7,7 @@ const router = createRouter({
     { path: '/login', component: () => import('../views/LoginView.vue') },
     { path: '/', component: () => import('../views/DashboardView.vue') },
     { path: '/containers', component: () => import('../views/ContainersView.vue') },
+    { path: '/storage', component: () => import('../views/StorageView.vue') },
     { path: '/access', component: () => import('../views/RemoteAccessView.vue') },
     { path: '/remote-access', redirect: '/access' },
     { path: '/mesh', redirect: (to) => ({ path: '/access', query: { tab: 'tailscale', ...to.query } }) },

@@ -94,9 +94,14 @@ onMounted(() => {
             <HardDrive class="w-4 h-4 text-cyan-400" />
             <h2 class="text-xs font-bold uppercase tracking-wider text-gray-200">Docker Host Disk Space</h2>
           </div>
-          <button @click="fetchDF" :disabled="dfLoading" class="cyber-btn-sm text-xs flex items-center gap-1">
-            <RotateCcw class="w-3 h-3" :class="dfLoading ? 'animate-spin' : ''" /> Refresh
-          </button>
+          <div class="flex items-center gap-2">
+            <router-link to="/storage" class="text-xs text-indigo-400 hover:text-indigo-300 hover:underline font-mono flex items-center gap-1">
+              <span>Full Storage Tab &rarr;</span>
+            </router-link>
+            <button @click="fetchDF" :disabled="dfLoading" class="cyber-btn-sm text-xs flex items-center gap-1">
+              <RotateCcw class="w-3 h-3" :class="dfLoading ? 'animate-spin' : ''" /> Refresh
+            </button>
+          </div>
         </div>
 
         <p class="text-xs text-muted leading-relaxed">
