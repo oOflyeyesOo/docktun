@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { HardDrive, RotateCcw, ShieldCheck, KeyRound, Globe, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
+import { RotateCcw, ShieldCheck, KeyRound, Globe, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
 const { apiFetch } = useApi()
@@ -52,37 +52,6 @@ onMounted(() => {
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <!-- 1. Centralized Storage & Reclaim Link -->
-      <div class="cyber-card space-y-4">
-        <div class="flex items-center justify-between border-b border-border pb-3">
-          <div class="flex items-center gap-2">
-            <HardDrive class="w-4 h-4 text-cyan-400" />
-            <h2 class="text-xs font-bold uppercase tracking-wider text-gray-200">Storage & Reclaim Center</h2>
-          </div>
-          <router-link to="/storage" class="text-xs text-indigo-400 hover:text-indigo-300 hover:underline font-mono">
-            Open &rarr;
-          </router-link>
-        </div>
-
-        <p class="text-xs text-muted leading-relaxed">
-          Disk usage, volume file browsing, container storage inspection, build cache cleanup, and smart reclaim operations have been centralized into the dedicated Storage tab.
-        </p>
-
-        <div class="p-3 rounded border border-border/60 bg-void/50 text-xs font-mono space-y-1">
-          <span class="text-cyan-300 font-bold block">Consolidated Storage Center</span>
-          <span class="text-muted text-[11px]">Browse volume files, edit code inside containers, clean build cache, and safely reclaim unused disk space.</span>
-        </div>
-
-        <div class="pt-2 border-t border-border">
-          <router-link
-            to="/storage"
-            class="cyber-btn-secondary w-full text-center text-xs flex items-center justify-center gap-2 py-2 text-indigo-300 hover:text-white"
-          >
-            <HardDrive class="w-3.5 h-3.5 text-indigo-400" />
-            <span>Launch Storage & File Manager &rarr;</span>
-          </router-link>
-        </div>
-      </div>
 
       <!-- 2. Cloudflare Tunnel Environment Overview -->
       <div class="cyber-card space-y-4">

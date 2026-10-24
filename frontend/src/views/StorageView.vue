@@ -377,202 +377,268 @@ async function deleteStorageFile(file: any) {
     const params = new URLSearchParams({
       target_type: selectedTarget.value.type,
       target_id: selectedTarget.value.id,
-      path: file.path
-    })
-    await apiFetch(`/api/storage/files/delete?${params}`, { method: 'DELETE' })
-    showToast(`Deleted ${file.name}`)
-    await loadDirectory(currentPath.value)
+// ---------------------------------------------------------------------------
+// PRE-DELETION INFORMATION & CONFIRMATION MODAL STATE
+// ---------------------------------------------------------------------------
+interface PendingDeleteInfo {
+  title: string
+  subtitle?: string
+  targetType: 'volume' | 'volume_prune' | 'image' | 'image_prune' | 'file' | 'container_prune' | 'system_prune'
+  details: { label: string; value: string; highlight?: boolean }[]
+  itemsList?: { name: string; size?: string; info?: string }[]
+  warning: string
+  confirmButtonText: string
+  onConfirm: () => Promise<void>
+}
+
+const pendingDelete = ref<PendingDeleteInfo | null>(null)
+const deletingInProgress = ref(false)
+
+async function executePendingDelete() {
+  if (!pendingDelete.value) return
+  deletingInProgress.value = true
+  try {
+    await pendingDelete.value.onConfirm()
+    pendingDelete.value = null
   } catch (e: any) {
-    showToast(e.message || 'Deletion failed', 'error')
+    showToast(e.message || 'Operation failed', 'error')
+  } finally {
+    deletingInProgress.value = false
   }
 }
 
-// Download File
-function downloadStorageFile(file: any) {
+// Delete Item in File Manager with full details first
+function deleteStorageFile(file: any) {
   if (!selectedTarget.value) return
-  const params = new URLSearchParams({
-    target_type: selectedTarget.value.type,
-    target_id: selectedTarget.value.id,
-    path: file.path
-  })
-  window.open(`/api/storage/files/download?${params}`, '_blank')
-}
-
-// Upload File
-function onFileSelected(e: Event) {
-  const target = e.target as HTMLInputElement
-  if (target.files && target.files.length > 0) {
-    selectedUploadFile.value = target.files[0]
-  }
-}
-
-async function executeUpload() {
-  if (!selectedUploadFile.value || !selectedTarget.value) return
-  uploading.value = true
-
-  const formData = new FormData()
-  formData.append('target_type', selectedTarget.value.type)
-  formData.append('target_id', selectedTarget.value.id)
-  formData.append('dir_path', currentPath.value)
-  formData.append('file', selectedUploadFile.value)
-
-  try {
-    const res = await fetch('/api/storage/files/upload', {
-      method: 'POST',
-      body: formData,
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('token') || ''}`
-      }
-    })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ message: 'Upload failed' }))
-      throw new Error(err.message || 'Upload failed')
+  pendingDelete.value = {
+    title: file.is_dir ? 'Delete Directory & Contents' : 'Delete File',
+    subtitle: 'Storage File Manager Deletion',
+    targetType: 'file',
+    details: [
+      { label: 'Storage Target', value: `${selectedTarget.value.type.toUpperCase()}: ${selectedTarget.value.name}`, highlight: true },
+      { label: 'File / Path', value: file.path },
+      { label: 'Item Type', value: file.is_dir ? 'Directory (recursive removal)' : 'File' },
+      { label: 'Size on Disk', value: file.is_dir ? 'Folder' : file.size_str }
+    ],
+    warning: file.is_dir
+      ? 'CRITICAL: The directory and ALL nested files and subdirectories will be permanently deleted from this storage location.'
+      : 'This file will be permanently deleted from storage. This operation cannot be undone.',
+    confirmButtonText: file.is_dir ? 'Permanently Delete Directory' : 'Permanently Delete File',
+    onConfirm: async () => {
+      const params = new URLSearchParams({
+        target_type: selectedTarget.value.type,
+        target_id: selectedTarget.value.id,
+        path: file.path
+      })
+      await apiFetch(`/api/storage/files/delete?${params}`, { method: 'DELETE' })
+      showToast(`Deleted ${file.name}`)
+      await loadDirectory(currentPath.value)
     }
-    showToast(`Uploaded "${selectedUploadFile.value.name}" successfully`)
-    showUploadModal.value = false
-    selectedUploadFile.value = null
-    await loadDirectory(currentPath.value)
-  } catch (e: any) {
-    showToast(e.message || 'Upload failed', 'error')
-  } finally {
-    uploading.value = false
   }
 }
 
 // ---------------------------------------------------------------------------
-// VOLUME & IMAGE & CONTAINER PRUNE ACTIONS
+// VOLUME & IMAGE & CONTAINER PRUNE ACTIONS WITH FULL DETAILS
 // ---------------------------------------------------------------------------
-async function deleteVolume(vol: any) {
+function deleteVolume(vol: any) {
   if (vol.in_use) {
-    alert(`Cannot delete volume "${vol.name}" because it is currently attached to running container(s): ${vol.containers.join(', ')}`)
+    showToast(`Cannot delete volume "${vol.name}" because it is actively mounted by container(s): ${vol.containers.join(', ')}`, 'error')
     return
   }
-  const confirmed = confirm(
-    `WARNING: This is permanent!\nAre you sure you want to permanently delete Docker volume "${vol.name}"?\nAny persistent database files or data inside this volume will be lost.`
-  )
-  if (!confirmed) return
 
-  actionLoading.value[vol.name] = true
-  try {
-    await apiFetch(`/api/storage/volumes/${encodeURIComponent(vol.name)}`, { method: 'DELETE' })
-    showToast(`Volume ${vol.name} deleted successfully`)
-    await fetchVolumes()
-    await fetchOverview()
-    await fetchTargets()
-  } catch (e: any) {
-    showToast(e.message || 'Failed to delete volume', 'error')
-  } finally {
-    delete actionLoading.value[vol.name]
+  pendingDelete.value = {
+    title: 'Delete Docker Volume',
+    subtitle: 'Permanent Storage Removal',
+    targetType: 'volume',
+    details: [
+      { label: 'Volume Name', value: vol.name, highlight: true },
+      { label: 'Volume Classification', value: vol.is_anonymous ? 'Anonymous Hash Volume' : 'Named Persistent Volume' },
+      { label: 'Size on Host', value: vol.size || 'N/A' },
+      { label: 'Driver & Scope', value: `${vol.driver} • ${vol.scope}` },
+      { label: 'Mountpoint on Host', value: vol.mountpoint },
+      { label: 'Attached Containers', value: vol.containers?.length ? vol.containers.join(', ') : 'None (Dangling / Unmounted)' }
+    ],
+    warning: 'CRITICAL DATA LOSS WARNING: All database tables, user uploads, application state, and persistent records stored inside this Docker volume will be permanently erased from your hard drive.',
+    confirmButtonText: 'Permanently Delete Volume',
+    onConfirm: async () => {
+      actionLoading.value[vol.name] = true
+      try {
+        await apiFetch(`/api/storage/volumes/${encodeURIComponent(vol.name)}`, { method: 'DELETE' })
+        showToast(`Volume ${vol.name} deleted successfully`)
+        await fetchVolumes()
+        await fetchOverview()
+        await fetchTargets()
+      } finally {
+        delete actionLoading.value[vol.name]
+      }
+    }
   }
 }
 
-async function pruneVolumes() {
-  const confirmed = confirm(
-    'CRITICAL WARNING:\nThis will permanently delete ALL dangling Docker volumes that are not attached to an active container.\n\nIf you have stopped database containers or previous test data, this data will be destroyed.\n\nProceed?'
-  )
-  if (!confirmed) return
-
-  loading.value = true
-  try {
-    const res: any = await apiFetch('/api/storage/volumes/prune', { method: 'POST' })
-    showToast(res.output || 'Dangling volumes pruned')
-    await fetchVolumes()
-    await fetchOverview()
-    await fetchTargets()
-  } catch (e: any) {
-    showToast(e.message || 'Prune failed', 'error')
-  } finally {
-    loading.value = false
-  }
-}
-
-async function deleteImage(img: any, force = false) {
-  if (img.in_use && !force) {
-    const tryForce = confirm(
-      `Image ${img.repository}:${img.tag} is in use by container(s): ${img.containers.join(', ')}.\nDo you want to force remove it?`
-    )
-    if (!tryForce) return
-    force = true
-  } else {
-    if (!confirm(`Delete image ${img.repository}:${img.tag} (${img.id.slice(0, 12)})?`)) return
-  }
-
-  actionLoading.value[img.id] = true
-  try {
-    await apiFetch(`/api/storage/images/${img.id}?force=${force}`, { method: 'DELETE' })
-    showToast(`Image deleted`)
-    await fetchImages()
-    await fetchOverview()
-  } catch (e: any) {
-    showToast(e.message || 'Failed to delete image', 'error')
-  } finally {
-    delete actionLoading.value[img.id]
-  }
-}
-
-async function pruneImages(all = false) {
-  const msg = all
-    ? 'This will remove all images that are not used by any container (including tagged images).'
-    : 'This will remove dangling images (<none>:<none>).'
-  if (!confirm(msg + ' Proceed?')) return
-
-  loading.value = true
-  try {
-    const res: any = await apiFetch(`/api/storage/images/prune?all=${all}`, { method: 'POST' })
-    showToast(res.output || 'Images pruned')
-    await fetchImages()
-    await fetchOverview()
-  } catch (e: any) {
-    showToast(e.message || 'Prune failed', 'error')
-  } finally {
-    loading.value = false
-  }
-}
-
-async function pruneContainers() {
-  if (!confirm('This will remove all stopped and exited containers. Proceed?')) return
-  loading.value = true
-  try {
-    const res: any = await apiFetch('/api/storage/containers/prune', { method: 'POST' })
-    showToast(res.output || 'Stopped containers pruned')
-    await fetchContainers()
-    await fetchOverview()
-  } catch (e: any) {
-    showToast(e.message || 'Prune failed', 'error')
-  } finally {
-    loading.value = false
-  }
-}
-
-async function pruneBuildCache(all = false) {
-  if (!confirm('Clean build cache? This is safe and only affects Docker build speed.')) return
-  loading.value = true
-  try {
-    const res: any = await apiFetch(`/api/storage/build-cache/prune?all=${all}`, { method: 'POST' })
-    showToast(res.output || 'Build cache pruned')
-    await fetchOverview()
-  } catch (e: any) {
-    showToast(e.message || 'Prune failed', 'error')
-  } finally {
-    loading.value = false
-  }
-}
-
-const systemPruning = ref(false)
-
-async function pruneSystem() {
-  if (!confirm('This will remove all stopped containers, unused networks, dangling images, and build cache. Proceed?')) {
+function pruneVolumes() {
+  const danglingList = volumes.value.filter(v => !v.in_use)
+  if (danglingList.length === 0) {
+    showToast('No dangling volumes to prune. All volumes are actively attached.', 'info')
     return
   }
-  systemPruning.value = true
-  try {
-    const res: any = await apiFetch('/api/docker/system/prune', { method: 'POST' })
-    showToast(res.output || 'Docker system pruned successfully')
-    await refreshAll()
-  } catch (e: any) {
-    showToast(e.message || 'Prune failed', 'error')
-  } finally {
-    systemPruning.value = false
+
+  pendingDelete.value = {
+    title: 'Prune All Dangling Volumes',
+    subtitle: 'Bulk Persistent Storage Deletion',
+    targetType: 'volume_prune',
+    details: [
+      { label: 'Dangling Volumes Found', value: `${danglingList.length} volumes`, highlight: true },
+      { label: 'Estimated Space to Reclaim', value: overview.value?.reclaimable_str || 'Estimated from DF' }
+    ],
+    itemsList: danglingList.map(v => ({
+      name: v.name,
+      size: v.size || 'N/A',
+      info: v.is_anonymous ? 'Anonymous Volume' : 'Named Volume'
+    })),
+    warning: 'CRITICAL WARNING: These volumes are not mounted to a running container RIGHT NOW. If they belong to stopped databases (Postgres/MySQL), Nextcloud (aio-data), or previous stack tests, ALL their data will be permanently wiped.',
+    confirmButtonText: `Prune ${danglingList.length} Dangling Volumes`,
+    onConfirm: async () => {
+      loading.value = true
+      try {
+        const res: any = await apiFetch('/api/storage/volumes/prune', { method: 'POST' })
+        showToast(res.output || 'Dangling volumes pruned')
+        await fetchVolumes()
+        await fetchOverview()
+        await fetchTargets()
+      } finally {
+        loading.value = false
+      }
+    }
+  }
+}
+
+function deleteImage(img: any, force = false) {
+  pendingDelete.value = {
+    title: 'Delete Docker Image',
+    subtitle: 'Remove Local Image Layers',
+    targetType: 'image',
+    details: [
+      { label: 'Repository & Tag', value: `${img.repository}:${img.tag}`, highlight: true },
+      { label: 'Image ID', value: img.id.slice(0, 12) },
+      { label: 'Virtual Disk Size', value: img.size },
+      { label: 'In-Use Status', value: img.in_use ? `In-Use by: ${img.containers.join(', ')}` : 'Unused (Safe to remove)' },
+      { label: 'Created', value: img.created_since || img.created_at }
+    ],
+    warning: img.in_use
+      ? `WARNING: This image is actively used by running container(s): ${img.containers.join(', ')}. Force deletion will untag the image layers.`
+      : 'This image will be removed from your host Docker cache. It can be re-pulled later if needed.',
+    confirmButtonText: img.in_use ? 'Force Remove Image' : 'Delete Image',
+    onConfirm: async () => {
+      actionLoading.value[img.id] = true
+      try {
+        await apiFetch(`/api/storage/images/${img.id}?force=${img.in_use || force}`, { method: 'DELETE' })
+        showToast(`Image deleted successfully`)
+        await fetchImages()
+        await fetchOverview()
+      } finally {
+        delete actionLoading.value[img.id]
+      }
+    }
+  }
+}
+
+function pruneImages(all = false) {
+  pendingDelete.value = {
+    title: all ? 'Prune All Unused Images' : 'Prune Dangling Images',
+    subtitle: 'Image Storage Maintenance',
+    targetType: 'image_prune',
+    details: [
+      { label: 'Scope', value: all ? 'All images without active running containers' : 'Only untagged (<none>:<none>) dangling layers', highlight: true },
+      { label: 'Target Count', value: all ? `${overview.value?.counts?.unused_images || 0} images` : `${overview.value?.counts?.dangling_images || 0} dangling` }
+    ],
+    warning: all
+      ? 'All downloaded images not currently used by a running container will be removed. If you start those containers later, Docker will re-download the images.'
+      : 'Untagged intermediate build layers (<none>:<none>) will be safely removed.',
+    confirmButtonText: all ? 'Prune All Unused Images' : 'Prune Dangling Images',
+    onConfirm: async () => {
+      loading.value = true
+      try {
+        const res: any = await apiFetch(`/api/storage/images/prune?all=${all}`, { method: 'POST' })
+        showToast(res.output || 'Images pruned')
+        await fetchImages()
+        await fetchOverview()
+      } finally {
+        loading.value = false
+      }
+    }
+  }
+}
+
+function pruneContainers() {
+  pendingDelete.value = {
+    title: 'Prune Stopped Containers',
+    subtitle: 'Container Lifecycle Maintenance',
+    targetType: 'container_prune',
+    details: [
+      { label: 'Stopped Containers Count', value: `${overview.value?.counts?.stopped_containers || 0} containers`, highlight: true }
+    ],
+    warning: 'All exited or stopped container instances will be removed. Their writable layer changes (not in volumes) will be deleted. Running containers are completely untouched.',
+    confirmButtonText: 'Prune Stopped Containers',
+    onConfirm: async () => {
+      loading.value = true
+      try {
+        const res: any = await apiFetch('/api/storage/containers/prune', { method: 'POST' })
+        showToast(res.output || 'Stopped containers pruned')
+        await fetchContainers()
+        await fetchOverview()
+      } finally {
+        loading.value = false
+      }
+    }
+  }
+}
+
+function pruneBuildCache(all = false) {
+  pendingDelete.value = {
+    title: all ? 'Prune All Build Cache' : 'Prune Dangling Build Cache',
+    subtitle: 'Docker Builder Cache Maintenance',
+    targetType: 'image_prune',
+    details: [
+      { label: 'Build Cache Entries', value: `${overview.value?.counts?.build_cache_count || 0} items`, highlight: true },
+      { label: 'Mode', value: all ? 'All build cache objects' : 'Dangling build steps only' }
+    ],
+    warning: 'Pruning build cache is completely safe and does not affect any running containers or images. Next builds will compile from scratch.',
+    confirmButtonText: all ? 'Prune All Build Cache' : 'Prune Dangling Cache',
+    onConfirm: async () => {
+      loading.value = true
+      try {
+        const res: any = await apiFetch(`/api/storage/build-cache/prune?all=${all}`, { method: 'POST' })
+        showToast(res.output || 'Build cache pruned')
+        await fetchOverview()
+      } finally {
+        loading.value = false
+      }
+    }
+  }
+}
+
+function pruneSystem() {
+  pendingDelete.value = {
+    title: 'Complete Docker System Prune',
+    subtitle: 'Host-Wide Clean Up',
+    targetType: 'system_prune',
+    details: [
+      { label: 'Cleaned Resources', value: 'Stopped containers, unused networks, dangling images, build cache', highlight: true },
+      { label: 'Reclaimable Space', value: overview.value?.reclaimable_str || 'Estimated from DF' },
+      { label: 'Protected Resources', value: 'Active running containers and all named volumes are preserved' }
+    ],
+    warning: 'This runs "docker system prune -f" across your entire Docker host. All inactive container instances, unused bridge networks, and dangling image layers will be cleaned up.',
+    confirmButtonText: 'Execute System Prune (-f)',
+    onConfirm: async () => {
+      systemPruning.value = true
+      try {
+        const res: any = await apiFetch('/api/docker/system/prune', { method: 'POST' })
+        showToast(res.output || 'Docker system pruned successfully')
+        await refreshAll()
+      } finally {
+        systemPruning.value = false
+      }
+    }
   }
 }
 
@@ -594,12 +660,29 @@ async function vacuumDatabase() {
 
 async function executeBatchReclaim() {
   if (reclaimOptions.value.prune_volumes) {
-    const sure = confirm(
-      'ATTENTION: You have "Dangling Volumes" selected in Reclaim.\nAny unmounted database or application volumes will be permanently wiped.\n\nAre you sure you want to proceed?'
-    )
-    if (!sure) return
+    const danglingList = volumes.value.filter(v => !v.in_use)
+    pendingDelete.value = {
+      title: 'Smart Reclaim Confirmation (Dangling Volumes Selected)',
+      subtitle: 'Batch Cleanup',
+      targetType: 'volume_prune',
+      details: [
+        { label: 'Selected Tasks', value: 'Images, Containers, Build Cache + Dangling Volumes', highlight: true },
+        { label: 'Volumes to be Destroyed', value: `${danglingList.length} unmounted volumes` }
+      ],
+      itemsList: danglingList.map(v => ({ name: v.name, size: v.size || 'N/A', info: v.is_anonymous ? 'Anonymous' : 'Named' })),
+      warning: 'CRITICAL: You have selected "Prune Dangling Volumes". Any databases or files inside unattached volumes will be permanently lost.',
+      confirmButtonText: 'Proceed with Smart Reclaim',
+      onConfirm: async () => {
+        await runBatchReclaimInternal()
+      }
+    }
+    return
   }
 
+  await runBatchReclaimInternal()
+}
+
+async function runBatchReclaimInternal() {
   reclaimLoading.value = true
   reclaimResults.value = []
   try {
@@ -614,7 +697,6 @@ async function executeBatchReclaim() {
     reclaimResults.value = ['Error during reclaim: ' + e.message]
     showToast(e.message || 'Reclaim failed', 'error')
   } finally {
-    reclaimLoading.value = false
   }
 }
 
@@ -2102,6 +2184,99 @@ onMounted(async () => {
         <div class="flex justify-end pt-2 border-t border-slate-800">
           <button @click="selectedItemInspect = null" class="cyber-btn-secondary text-xs">
             Close
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- MODAL: DETAILED PRE-DELETION INFORMATION & CONFIRMATION               -->
+    <!-- ===================================================================== -->
+    <div
+      v-if="pendingDelete"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4"
+      @click.self="pendingDelete = null"
+    >
+      <div class="cyber-card max-w-xl w-full border-rose-500/50 bg-slate-950 p-5 space-y-4 shadow-2xl">
+        <!-- Header -->
+        <div class="flex items-start justify-between border-b border-slate-800 pb-3">
+          <div class="flex items-center gap-2.5">
+            <div class="p-2 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400">
+              <AlertTriangle class="h-5 w-5" />
+            </div>
+            <div>
+              <h3 class="text-sm font-bold text-white font-mono">{{ pendingDelete.title }}</h3>
+              <p class="text-[11px] text-slate-400 font-mono">{{ pendingDelete.subtitle || 'Review before final deletion' }}</p>
+            </div>
+          </div>
+          <button @click="pendingDelete = null" class="text-slate-400 hover:text-white">
+            <X class="h-4 w-4" />
+          </button>
+        </div>
+
+        <!-- Details Grid -->
+        <div class="space-y-2 text-xs font-mono">
+          <div
+            v-for="(det, idx) in pendingDelete.details"
+            :key="idx"
+            class="flex items-start justify-between p-2 rounded bg-slate-900/60 border border-slate-800/80 gap-2"
+          >
+            <span class="text-slate-400 shrink-0">{{ det.label }}:</span>
+            <span
+              class="text-right break-all font-semibold"
+              :class="det.highlight ? 'text-amber-300' : 'text-slate-200'"
+            >
+              {{ det.value }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Scrollable List of Affected Items (if pruning bulk items) -->
+        <div v-if="pendingDelete.itemsList && pendingDelete.itemsList.length" class="space-y-1.5">
+          <div class="flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span>Items to be Permanently Removed ({{ pendingDelete.itemsList.length }}):</span>
+          </div>
+          <div class="max-h-44 overflow-y-auto space-y-1 border border-slate-800 rounded-lg p-2 bg-slate-900/40 text-xs font-mono">
+            <div
+              v-for="(it, i) in pendingDelete.itemsList"
+              :key="i"
+              class="flex items-center justify-between py-1 px-1.5 rounded hover:bg-slate-800/50"
+            >
+              <span class="text-slate-200 truncate pr-2" :title="it.name">{{ it.name }}</span>
+              <div class="flex items-center gap-2 shrink-0">
+                <span v-if="it.info" class="text-[10px] text-slate-500">{{ it.info }}</span>
+                <span class="text-amber-400 font-bold text-[11px]">{{ it.size }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- High-Impact Danger Callout -->
+        <div class="p-3 rounded-lg border border-rose-500/30 bg-rose-950/20 text-xs font-mono flex items-start gap-2.5 text-rose-300">
+          <ShieldAlert class="h-4 w-4 shrink-0 text-rose-400 mt-0.5" />
+          <div class="leading-relaxed">
+            {{ pendingDelete.warning }}
+          </div>
+        </div>
+
+        <!-- Footer Actions -->
+        <div class="flex items-center justify-between pt-3 border-t border-slate-800">
+          <button
+            @click="pendingDelete = null"
+            :disabled="deletingInProgress"
+            class="cyber-btn-secondary text-xs"
+          >
+            Cancel
+          </button>
+
+          <button
+            @click="executePendingDelete"
+            :disabled="deletingInProgress"
+            class="cyber-btn flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs shadow-lg shadow-rose-600/20"
+          >
+            <RotateCcw v-if="deletingInProgress" class="h-3.5 w-3.5 animate-spin" />
+            <Trash2 v-else class="h-3.5 w-3.5" />
+            <span>{{ deletingInProgress ? 'Deleting...' : pendingDelete.confirmButtonText }}</span>
           </button>
         </div>
       </div>
