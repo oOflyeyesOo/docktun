@@ -1,0 +1,55 @@
+# DockTun prebuilt-image installer. No source checkout or Dockerfile required.
+# Save as compose.yml and run: docker compose up -d
+name: docktun
+
+services:
+  docktun:
+    image: ghcr.io/ooflyeyesoo/docktun:latest
+    container_name: docktun
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:3001"
+    environment:
+      DB_PATH: /app/data/app.db
+      CLOUDFLARED_CONFIG_PATH: /etc/cloudflared/config.yml
+      CLOUDFLARED_CONTAINER: docktun-cloudflared
+      CLOUDFLARED_METRICS: http://docktun-cloudflared:2000/metrics
+      SELF_PATH: /opt/projects/docktun
+    volumes:
+      - docktun-data:/app/data
+      - docktun-cloudflared:/etc/cloudflared
+      - ./projects:/opt/projects
+      # Docker socket grants DockTun broad control of the host. Use only on trusted systems.
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3001/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    networks:
+      - cloudflared
+
+  # Optional: start after configuring Cloudflare tunnel credentials and ingress
+  # with: docker compose --profile cloudflare up -d
+  cloudflared:
+    profiles: ["cloudflare"]
+    image: cloudflare/cloudflared:latest
+    container_name: docktun-cloudflared
+    restart: unless-stopped
+    command: tunnel --config /etc/cloudflared/config.yml --metrics 0.0.0.0:2000 run
+    volumes:
+      - docktun-cloudflared:/etc/cloudflared:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - cloudflared
+
+volumes:
+  docktun-data:
+  docktun-cloudflared:
+
+networks:
+  cloudflared:
+    name: cloudflared
+    driver: bridge
