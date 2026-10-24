@@ -4,25 +4,25 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        void: '#0a0a0f',
-        surface: '#12121a',
-        chrome: '#1c1c2e',
-        border: '#2a2a3a',
+        void: '#f1f5f9',
+        surface: '#ffffff',
+        chrome: '#f8fafc',
+        border: '#e2e8f0',
         muted: '#6b7280',
-        neon: '#00ff88',
-        magenta: '#ff00ff',
-        cyan: '#00d4ff',
-        danger: '#ff3366',
+        neon: '#059669',
+        magenta: '#7c3aed',
+        cyan: '#0891b2',
+        danger: '#e11d48',
       },
       fontFamily: {
-        display: ['Orbitron', 'monospace'],
+        display: ['Inter', 'Segoe UI', 'sans-serif'],
         mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
       },
       boxShadow: {
-        neon: '0 0 5px #00ff88, 0 0 10px #00ff8840',
-        'neon-lg': '0 0 10px #00ff88, 0 0 20px #00ff8860, 0 0 40px #00ff8830',
-        'neon-magenta': '0 0 5px #ff00ff, 0 0 20px #ff00ff60',
-        'neon-cyan': '0 0 5px #00d4ff, 0 0 20px #00d4ff60',
+        neon: '0 0 5px #059669, 0 0 10px #05966940',
+        'neon-lg': '0 0 10px #059669, 0 0 20px #05966960, 0 0 40px #05966930',
+        'neon-magenta': '0 0 5px #7c3aed, 0 0 20px #7c3aed60',
+        'neon-cyan': '0 0 5px #0891b2, 0 0 20px #0891b260',
       },
       animation: {
         blink: 'blink 1s step-end infinite',

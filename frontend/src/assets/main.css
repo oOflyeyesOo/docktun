@@ -1,68 +1,86 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   body {
-    @apply bg-slate-950 text-slate-100 antialiased;
+    @apply bg-slate-50 text-slate-900 antialiased;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background-image: radial-gradient(circle at top, rgba(99, 102, 241, 0.05), transparent 45%),
                       radial-gradient(circle at bottom right, rgba(14, 165, 233, 0.03), transparent 40%);
   }
 
   ::selection {
-    @apply bg-indigo-500/30 text-indigo-100;
+    @apply bg-indigo-100 text-indigo-900;
   }
 }
 
 @layer components {
   /* Modern clean card */
   .cyber-card {
-    @apply rounded-xl border border-slate-800/80 bg-slate-900/60 p-4 sm:p-5 shadow-sm backdrop-blur transition-all duration-200;
+    @apply rounded-xl border border-slate-200/80 bg-white p-4 sm:p-6 shadow-sm transition-all duration-200;
   }
 
   .cyber-card-glow {
-    @apply cyber-card hover:border-slate-700 hover:bg-slate-900/80 hover:shadow-md;
+    @apply cyber-card hover:border-slate-300 hover:bg-white/80 hover:shadow-md;
   }
 
   /* Modern Primary Button */
   .cyber-btn {
-    @apply inline-flex items-center justify-center font-medium rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white px-3.5 py-2 text-xs transition-colors duration-150 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center font-medium rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-3.5 py-2 text-xs transition-colors duration-150 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   /* Modern Secondary Button */
   .cyber-btn-secondary {
-    @apply inline-flex items-center justify-center font-medium rounded-lg bg-slate-800/90 hover:bg-slate-700/90 text-slate-200 border border-slate-700/80 px-3.5 py-2 text-xs transition-colors duration-150 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-500/30 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center font-medium rounded-lg bg-slate-100/90 hover:bg-slate-200/90 text-slate-800 border border-slate-300/80 px-3.5 py-2 text-xs transition-colors duration-150 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-500/30 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   /* Modern Small Button */
   .cyber-btn-sm {
-    @apply inline-flex items-center justify-center font-medium rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/80 px-2.5 py-1 text-xs transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center font-medium rounded-md bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300/80 px-2.5 py-1 text-xs transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   /* Modern Danger Button */
   .cyber-btn-danger {
-    @apply inline-flex items-center justify-center font-medium rounded-lg bg-rose-600/10 hover:bg-rose-600/20 text-rose-300 border border-rose-500/30 px-3.5 py-2 text-xs transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-rose-500/30 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center font-medium rounded-lg bg-rose-600/10 hover:bg-rose-600/20 text-rose-700 border border-rose-500/30 px-3.5 py-2 text-xs transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-rose-500/30 disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
   /* Modern Input */
   .cyber-input {
-    @apply w-full rounded-lg border border-slate-700/80 bg-slate-950/90 px-3.5 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none transition;
+    @apply w-full rounded-lg border border-slate-300/80 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none transition;
   }
 
   /* Modern Badge */
   .cyber-badge {
-    @apply inline-flex items-center font-medium rounded-md px-2 py-0.5 text-xs text-slate-300 bg-slate-800 border border-slate-700/60;
+    @apply inline-flex items-center font-medium rounded-md px-2 py-0.5 text-xs text-slate-700 bg-slate-100 border border-slate-300/60;
   }
 
   /* Headings */
   .cyber-heading {
-    @apply text-lg font-semibold tracking-tight text-slate-100;
+    @apply text-lg font-semibold tracking-tight text-slate-900;
   }
 
   .text-glow {
     text-shadow: none;
   }
+}
+
+@layer base {
+ html { color-scheme: light; }
+ body { margin: 0; }
+ button, input, select, textarea { font: inherit; }
+ :focus-visible { outline: 2px solid #4f46e5; outline-offset: 3px; }
+ input[type="checkbox"], input[type="radio"] { accent-color: #4f46e5; }
+ ::-webkit-scrollbar { width: 7px; height: 7px; }
+ ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 12px; }
+ ::-webkit-scrollbar-track { background: transparent; }
+ @media (prefers-reduced-motion: reduce) {
+ *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+ }
+}
+@layer components {
+ .workspace-main { background: #f6f8fc; }
+ .workspace-main > div { max-width: 1600px; margin-inline: auto; }
+ .cyber-card { box-shadow: 0 2px 8px -5px rgb(15 23 42 / 0.12); }
+ .cyber-btn, .cyber-btn-secondary { min-height: 36px; }
 }

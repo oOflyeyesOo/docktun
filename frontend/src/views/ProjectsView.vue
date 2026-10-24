@@ -817,8 +817,8 @@ onMounted(async () => {
         <p class="text-xs text-muted font-mono mt-1">// Manage Compose stacks, containers, and volumes</p>
       </div>
       <div class="flex items-center gap-2">
-        <button @click="openCatalog" class="cyber-btn flex items-center gap-2 text-cyan-300 border-cyan-800 bg-cyan-950/40 hover:bg-cyan-900/50" title="Deploy pre-configured popular apps with 1 click">
-          <Sparkles class="w-4 h-4 text-cyan-400" /> App Catalog
+        <button @click="openCatalog" class="cyber-btn flex items-center gap-2 text-cyan-700 border-cyan-800 bg-cyan-950/40 hover:bg-cyan-900/50" title="Deploy pre-configured popular apps with 1 click">
+          <Sparkles class="w-4 h-4 text-cyan-600" /> App Catalog
         </button>
         <button @click="openDockerRun" class="cyber-btn flex items-center gap-2">
           <Terminal class="w-4 h-4" :stroke-width="2" /> Docker Run
@@ -864,7 +864,7 @@ onMounted(async () => {
       <div class="flex items-center justify-between mb-2">
         <p v-if="Object.values(actionLoading).some(v => v)" class="text-xs text-neon animate-pulse font-mono">// RUNNING ACTION...</p>
         <p v-else class="text-xs text-muted font-mono">// OUTPUT CONSOLE</p>
-        <button @click="output = ''" class="text-xs text-muted hover:text-white font-mono">[ CLEAR ]</button>
+        <button @click="output = ''" class="text-xs text-muted hover:text-slate-900 font-mono">[ CLEAR ]</button>
       </div>
       <pre ref="outputEl" class="text-xs text-muted font-mono whitespace-pre-wrap max-h-80 overflow-y-auto bg-void/50 p-3 border border-border/50">{{ output }}</pre>
     </div>
@@ -876,7 +876,7 @@ onMounted(async () => {
           <div class="min-w-0">
             <div class="flex items-center gap-2">
               <span class="inline-block w-2 h-2 rounded-full bg-neon shadow-neon"></span>
-              <p class="text-sm text-gray-100 font-mono font-bold tracking-wide truncate">{{ p.name }}</p>
+              <p class="text-sm text-slate-900 font-mono font-bold tracking-wide truncate">{{ p.name }}</p>
             </div>
             <p class="text-xs text-muted mt-1 font-mono truncate">{{ p.path }}</p>
             <p v-if="p.repo_url" class="text-xs text-muted/60 mt-0.5 font-mono truncate">{{ p.repo_url }}</p>
@@ -901,7 +901,7 @@ onMounted(async () => {
             <span class="w-px h-5 bg-border mx-1"></span>
 
             <!-- Compose & .env & Files -->
-            <button @click="openProjectManager(p, 'compose')" class="cyber-btn-sm text-cyan-400" title="Edit docker-compose.yml">
+            <button @click="openProjectManager(p, 'compose')" class="cyber-btn-sm text-cyan-600" title="Edit docker-compose.yml">
               <FileCode class="w-3.5 h-3.5" />
               <span class="hidden sm:inline text-xs ml-1 font-mono">Compose</span>
             </button>
@@ -909,16 +909,16 @@ onMounted(async () => {
               <KeyRound class="w-3.5 h-3.5" />
               <span class="hidden sm:inline text-xs ml-1 font-mono">.env</span>
             </button>
-            <button @click="openProjectManager(p, 'files')" class="cyber-btn-sm text-purple-400" title="Project Files Explorer">
+            <button @click="openProjectManager(p, 'files')" class="cyber-btn-sm text-purple-600" title="Project Files Explorer">
               <FolderOpen class="w-3.5 h-3.5" />
               <span class="hidden sm:inline text-xs ml-1 font-mono">Files</span>
             </button>
             <router-link
               :to="'/containers?search=' + encodeURIComponent(p.name)"
-              class="cyber-btn-sm text-cyan-300 flex items-center gap-1"
+              class="cyber-btn-sm text-cyan-700 flex items-center gap-1"
               title="Inspect containers in this stack"
             >
-              <Server class="w-3.5 h-3.5 text-emerald-400" />
+              <Server class="w-3.5 h-3.5 text-emerald-600" />
               <span class="hidden sm:inline text-xs ml-1 font-mono">Containers</span>
             </router-link>
 
@@ -966,11 +966,11 @@ onMounted(async () => {
             <div class="flex items-center gap-2">
               <span class="text-xs text-neon uppercase tracking-wider font-mono">// PROJECT MANAGER</span>
               <span class="text-muted">/</span>
-              <span class="text-sm text-white font-mono font-bold">{{ activeProject.name }}</span>
+              <span class="text-sm text-slate-900 font-mono font-bold">{{ activeProject.name }}</span>
             </div>
             <p class="text-xs text-muted font-mono mt-0.5 truncate">{{ activeProject.path }}</p>
           </div>
-          <button @click="closeProjectManager" class="text-muted hover:text-white transition-colors">
+          <button @click="closeProjectManager" class="text-muted hover:text-slate-900 transition-colors">
             <X class="w-5 h-5" />
           </button>
         </div>
@@ -980,21 +980,21 @@ onMounted(async () => {
           <button
             @click="activeTab = 'compose'; loadCompose(activeProject.id)"
             class="px-4 py-2.5 text-xs font-mono uppercase tracking-wider flex items-center gap-2 transition-all border-b-2"
-            :class="activeTab === 'compose' ? 'border-neon text-neon bg-neon/5' : 'border-transparent text-muted hover:text-white'"
+            :class="activeTab === 'compose' ? 'border-neon text-neon bg-neon/5' : 'border-transparent text-muted hover:text-slate-900'"
           >
             <FileCode class="w-4 h-4" /> docker-compose.yml
           </button>
           <button
             @click="activeTab = 'env'; loadEnv(activeProject.id)"
             class="px-4 py-2.5 text-xs font-mono uppercase tracking-wider flex items-center gap-2 transition-all border-b-2"
-            :class="activeTab === 'env' ? 'border-neon text-neon bg-neon/5' : 'border-transparent text-muted hover:text-white'"
+            :class="activeTab === 'env' ? 'border-neon text-neon bg-neon/5' : 'border-transparent text-muted hover:text-slate-900'"
           >
             <KeyRound class="w-4 h-4" /> .env
           </button>
           <button
             @click="activeTab = 'files'; loadFiles(activeProject.id, '')"
             class="px-4 py-2.5 text-xs font-mono uppercase tracking-wider flex items-center gap-2 transition-all border-b-2"
-            :class="activeTab === 'files' ? 'border-neon text-neon bg-neon/5' : 'border-transparent text-muted hover:text-white'"
+            :class="activeTab === 'files' ? 'border-neon text-neon bg-neon/5' : 'border-transparent text-muted hover:text-slate-900'"
           >
             <FolderOpen class="w-4 h-4" /> File Browser
           </button>
@@ -1003,7 +1003,7 @@ onMounted(async () => {
         <!-- Tab 1: Compose Editor -->
         <div v-if="activeTab === 'compose'" class="p-4 flex-1 flex flex-col space-y-3 overflow-hidden">
           <div class="flex items-center justify-between">
-            <p class="text-xs text-muted font-mono">Editing: <span class="text-cyan-400 font-bold">{{ composeFilename }}</span></p>
+            <p class="text-xs text-muted font-mono">Editing: <span class="text-cyan-600 font-bold">{{ composeFilename }}</span></p>
             <span v-if="composeMsg" class="text-xs text-neon font-mono">{{ composeMsg }}</span>
           </div>
 
@@ -1011,7 +1011,7 @@ onMounted(async () => {
             v-model="composeContent"
             rows="16"
             placeholder="# Write your docker-compose.yml here"
-            class="cyber-input flex-1 w-full font-mono text-xs text-gray-100 bg-void/90 leading-relaxed p-4 border border-border focus:border-neon resize-none overflow-y-auto"
+            class="cyber-input flex-1 w-full font-mono text-xs text-slate-900 bg-void/90 leading-relaxed p-4 border border-border focus:border-neon resize-none overflow-y-auto"
             spellcheck="false"
           ></textarea>
 
@@ -1066,10 +1066,10 @@ onMounted(async () => {
           <div v-if="editingFile" class="flex-1 flex flex-col space-y-3">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <button @click="editingFile = null" class="cyber-btn-sm flex items-center gap-1 text-muted hover:text-white">
+                <button @click="editingFile = null" class="cyber-btn-sm flex items-center gap-1 text-muted hover:text-slate-900">
                   <ArrowLeft class="w-3.5 h-3.5" /> Back
                 </button>
-                <span class="text-xs text-white font-mono font-bold">{{ editingFile.path }}</span>
+                <span class="text-xs text-slate-900 font-mono font-bold">{{ editingFile.path }}</span>
               </div>
               <span v-if="editingFileMsg" class="text-xs text-neon font-mono">{{ editingFileMsg }}</span>
             </div>
@@ -1077,7 +1077,7 @@ onMounted(async () => {
             <textarea
               v-model="editingFile.content"
               rows="16"
-              class="cyber-input flex-1 w-full font-mono text-xs text-gray-200 bg-void/90 leading-relaxed p-4 border border-border focus:border-neon resize-none overflow-y-auto"
+              class="cyber-input flex-1 w-full font-mono text-xs text-slate-800 bg-void/90 leading-relaxed p-4 border border-border focus:border-neon resize-none overflow-y-auto"
               spellcheck="false"
             ></textarea>
 
@@ -1096,7 +1096,7 @@ onMounted(async () => {
               <div class="flex items-center gap-2 text-xs font-mono">
                 <button @click="loadFiles(activeProject.id, '')" class="text-neon hover:underline">[ROOT]</button>
                 <span v-if="currentDir" class="text-muted">/</span>
-                <span v-if="currentDir" class="text-gray-200">{{ currentDir }}</span>
+                <span v-if="currentDir" class="text-slate-800">{{ currentDir }}</span>
               </div>
               <div class="flex items-center gap-2">
                 <button @click="showNewItemModal = true; newItemIsDir = false" class="cyber-btn-sm flex items-center gap-1">
@@ -1141,10 +1141,10 @@ onMounted(async () => {
                   <tr v-for="f in fileList" :key="f.path" class="hover:bg-neon/5 transition-colors group">
                     <td class="p-2.5 cursor-pointer" @click="openFile(f)">
                       <div class="flex items-center gap-2">
-                        <Folder v-if="f.is_dir" class="w-4 h-4 text-cyan-400" />
+                        <Folder v-if="f.is_dir" class="w-4 h-4 text-cyan-600" />
                         <FileCode v-else-if="f.name.endsWith('.yml') || f.name.endsWith('.yaml')" class="w-4 h-4 text-neon" />
-                        <FileText v-else class="w-4 h-4 text-muted group-hover:text-gray-200" />
-                        <span :class="f.is_dir ? 'text-cyan-300 font-bold' : 'text-gray-200'">{{ f.name }}</span>
+                        <FileText v-else class="w-4 h-4 text-muted group-hover:text-slate-800" />
+                        <span :class="f.is_dir ? 'text-cyan-700 font-bold' : 'text-slate-800'">{{ f.name }}</span>
                       </div>
                     </td>
                     <td class="p-2.5 text-muted">{{ f.is_dir ? '-' : formatBytes(f.size) }}</td>
@@ -1178,7 +1178,7 @@ onMounted(async () => {
             <Terminal class="w-5 h-5 text-neon" />
             <h2 class="font-display text-base text-neon uppercase tracking-wider">Docker Run</h2>
           </div>
-          <button @click="showDockerRun = false" class="text-muted hover:text-white transition-colors">
+          <button @click="showDockerRun = false" class="text-muted hover:text-slate-900 transition-colors">
             <X class="w-5 h-5" />
           </button>
         </div>
@@ -1218,7 +1218,7 @@ onMounted(async () => {
             <div class="cyber-card p-3 border-border hover:border-neon/50 cursor-pointer" @click="dockerRunMode = 'compose'">
               <div class="flex items-center gap-2">
                 <input type="radio" value="compose" v-model="dockerRunMode" class="text-neon" />
-                <span class="text-xs font-mono font-bold text-gray-200">Convert to Compose Stack</span>
+                <span class="text-xs font-mono font-bold text-slate-800">Convert to Compose Stack</span>
               </div>
               <p class="text-[11px] text-muted font-mono mt-1 ml-5">
                 Generates a docker-compose.yml in DockTun. Best for editing compose files, .env, and full management.
@@ -1228,7 +1228,7 @@ onMounted(async () => {
             <div class="cyber-card p-3 border-border hover:border-neon/50 cursor-pointer" @click="dockerRunMode = 'direct'">
               <div class="flex items-center gap-2">
                 <input type="radio" value="direct" v-model="dockerRunMode" class="text-neon" />
-                <span class="text-xs font-mono font-bold text-gray-200">Direct Docker Run</span>
+                <span class="text-xs font-mono font-bold text-slate-800">Direct Docker Run</span>
               </div>
               <p class="text-[11px] text-muted font-mono mt-1 ml-5">
                 Executes the raw docker run CLI command. Great for utility containers or one-off tasks.
@@ -1238,11 +1238,11 @@ onMounted(async () => {
 
           <!-- Cloudflare Network & Project Options -->
           <div class="space-y-2 pt-1 font-mono text-xs">
-            <label class="flex items-center gap-2 cursor-pointer text-gray-300">
+            <label class="flex items-center gap-2 cursor-pointer text-slate-700">
               <input type="checkbox" v-model="dockerRunCloudflared" class="accent-neon" />
-              <span>Connect to Docker network <code class="text-cyan-400">cloudflared</code> (allows Cloudflare Tunnel ingress)</span>
+              <span>Connect to Docker network <code class="text-cyan-600">cloudflared</code> (allows Cloudflare Tunnel ingress)</span>
             </label>
-            <label class="flex items-center gap-2 cursor-pointer text-gray-300">
+            <label class="flex items-center gap-2 cursor-pointer text-slate-700">
               <input type="checkbox" v-model="dockerRunCreateProject" class="accent-neon" />
               <span>Register container as a DockTun Project</span>
             </label>
@@ -1255,7 +1255,7 @@ onMounted(async () => {
               <span v-else-if="dockerRunJob?.exit_code === 0" class="text-xs text-neon font-mono">✔ EXECUTION SUCCESSFUL</span>
               <span v-else class="text-xs text-danger font-mono">✖ EXECUTION FAILED</span>
 
-              <button @click="dockerRunLines = []" class="text-xs text-muted hover:text-white font-mono">[ CLEAR ]</button>
+              <button @click="dockerRunLines = []" class="text-xs text-muted hover:text-slate-900 font-mono">[ CLEAR ]</button>
             </div>
 
             <pre ref="dockerRunEl" class="text-xs text-muted font-mono whitespace-pre-wrap max-h-56 overflow-y-auto leading-relaxed">{{ dockerRunLines.join('\n') }}</pre>
@@ -1286,19 +1286,19 @@ onMounted(async () => {
     <!-- APP TEMPLATES CATALOG MODAL (Portainer / Cosmos Style)         -->
     <!-- ============================================================= -->
     <div v-if="showCatalog" class="fixed inset-0 z-50 flex items-center justify-center bg-void/80 p-4 backdrop-blur-sm" @click.self="showCatalog = false">
-      <div class="cyber-card w-full max-w-4xl max-h-[90vh] flex flex-col p-0 overflow-hidden border-cyan-800 shadow-2xl">
+      <div class="cyber-card w-full max-w-4xl max-h-[90vh] flex flex-col p-0 overflow-hidden border-cyan-800 shadow-sm">
         <!-- Catalog Header -->
         <div class="p-5 border-b border-border bg-surface flex items-center justify-between">
           <div class="flex items-center gap-3">
-            <div class="rounded-lg bg-cyan-950/80 border border-cyan-800 p-2 text-cyan-300">
-              <Sparkles class="w-5 h-5 text-cyan-400" />
+            <div class="rounded-lg bg-cyan-950/80 border border-cyan-800 p-2 text-cyan-700">
+              <Sparkles class="w-5 h-5 text-cyan-600" />
             </div>
             <div>
-              <h2 class="text-base font-bold text-gray-100 font-mono tracking-wide">1-Click App Catalog</h2>
+              <h2 class="text-base font-bold text-slate-900 font-mono tracking-wide">1-Click App Catalog</h2>
               <p class="text-xs text-muted font-mono mt-0.5">Pre-configured self-hosted apps attached to the Cloudflare network</p>
             </div>
           </div>
-          <button @click="showCatalog = false" class="text-muted hover:text-white transition">
+          <button @click="showCatalog = false" class="text-muted hover:text-slate-900 transition">
             <X class="w-5 h-5" />
           </button>
         </div>
@@ -1325,7 +1325,7 @@ onMounted(async () => {
                   :key="cat"
                   @click="catalogCategory = cat"
                   class="rounded px-2.5 py-1 transition whitespace-nowrap"
-                  :class="catalogCategory === cat ? 'bg-cyan-950 text-cyan-300 border border-cyan-700' : 'bg-surface text-muted hover:text-white'"
+                  :class="catalogCategory === cat ? 'bg-cyan-950 text-cyan-700 border border-cyan-700' : 'bg-surface text-muted hover:text-slate-900'"
                 >
                   {{ cat }}
                 </button>
@@ -1342,10 +1342,10 @@ onMounted(async () => {
               >
                 <div>
                   <div class="flex items-center justify-between mb-2">
-                    <span class="text-xs font-bold text-gray-100 font-mono group-hover:text-cyan-300 transition">
+                    <span class="text-xs font-bold text-slate-900 font-mono group-hover:text-cyan-700 transition">
                       {{ tmpl.title }}
                     </span>
-                    <span class="rounded bg-slate-900 border border-slate-800 px-2 py-0.5 text-[10px] font-mono text-cyan-400">
+                    <span class="rounded bg-white border border-slate-200 px-2 py-0.5 text-[10px] font-mono text-cyan-600">
                       {{ tmpl.category }}
                     </span>
                   </div>
@@ -1356,7 +1356,7 @@ onMounted(async () => {
 
                 <div class="mt-4 pt-3 border-t border-border/50 flex items-center justify-between text-xs font-mono">
                   <span class="text-muted/70 text-[11px]">Port: {{ tmpl.defaultPort }}</span>
-                  <span class="text-cyan-400 font-bold group-hover:translate-x-0.5 transition flex items-center gap-1">
+                  <span class="text-cyan-600 font-bold group-hover:translate-x-0.5 transition flex items-center gap-1">
                     <span>Deploy</span>
                     <span>&rarr;</span>
                   </span>
@@ -1373,12 +1373,12 @@ onMounted(async () => {
           <div v-else class="space-y-4">
             <div class="flex items-center justify-between pb-3 border-b border-border">
               <div class="flex items-center gap-2">
-                <button @click="selectedTemplate = null" class="cyber-btn-sm text-muted hover:text-white flex items-center gap-1">
+                <button @click="selectedTemplate = null" class="cyber-btn-sm text-muted hover:text-slate-900 flex items-center gap-1">
                   <ArrowLeft class="w-3.5 h-3.5" /> Back to Catalog
                 </button>
-                <h3 class="text-sm font-bold text-cyan-300 font-mono ml-2">Deploy {{ selectedTemplate.title }}</h3>
+                <h3 class="text-sm font-bold text-cyan-700 font-mono ml-2">Deploy {{ selectedTemplate.title }}</h3>
               </div>
-              <span class="rounded bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 text-xs font-mono text-cyan-300">
+              <span class="rounded bg-cyan-950 border border-cyan-800 px-2.5 py-0.5 text-xs font-mono text-cyan-700">
                 {{ selectedTemplate.category }}
               </span>
             </div>
@@ -1397,7 +1397,7 @@ onMounted(async () => {
             <div>
               <div class="flex items-center justify-between mb-1">
                 <label class="block text-[10px] uppercase font-mono text-muted">docker-compose.yml configuration</label>
-                <span class="text-[10px] text-emerald-400 font-mono">✔ Configured with cloudflared network</span>
+                <span class="text-[10px] text-emerald-600 font-mono">✔ Configured with cloudflared network</span>
               </div>
               <textarea
                 v-model="templateForm.compose"
@@ -1417,10 +1417,10 @@ onMounted(async () => {
             v-if="selectedTemplate"
             @click="deployFromTemplate"
             :disabled="deployingTemplate || !templateForm.name || !templateForm.path"
-            class="cyber-btn flex items-center gap-2 text-cyan-300 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/50"
+            class="cyber-btn flex items-center gap-2 text-cyan-700 border-cyan-600 bg-cyan-950/40 hover:bg-cyan-900/50"
           >
             <RotateCcw v-if="deployingTemplate" class="w-4 h-4 animate-spin" />
-            <Rocket v-else class="w-4 h-4 text-emerald-400" />
+            <Rocket v-else class="w-4 h-4 text-emerald-600" />
             <span>{{ deployingTemplate ? 'Deploying...' : 'Deploy & Start App' }}</span>
           </button>
         </div>

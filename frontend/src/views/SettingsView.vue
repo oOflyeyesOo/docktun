@@ -57,10 +57,10 @@ onMounted(() => {
       <div class="cyber-card space-y-4">
         <div class="flex items-center justify-between border-b border-border pb-3">
           <div class="flex items-center gap-2">
-            <Globe class="w-4 h-4 text-cyan-400" />
-            <h2 class="text-xs font-bold uppercase tracking-wider text-gray-200">Cloudflare Tunnel Status</h2>
+            <Globe class="w-4 h-4 text-cyan-600" />
+            <h2 class="text-xs font-bold uppercase tracking-wider text-slate-800">Cloudflare Tunnel Status</h2>
           </div>
-          <router-link to="/access?tab=cloudflare" class="text-xs text-indigo-400 hover:underline font-mono">
+          <router-link to="/access?tab=cloudflare" class="text-xs text-indigo-600 hover:underline font-mono">
             Full Config &rarr;
           </router-link>
         </div>
@@ -68,33 +68,33 @@ onMounted(() => {
         <div class="space-y-2.5 text-xs font-mono">
           <div class="flex items-center justify-between p-2.5 rounded bg-void/50 border border-border/50">
             <span class="text-muted">Tunnel Identity:</span>
-            <span class="text-cyan-300 font-bold truncate max-w-[200px]" :title="systemStatus?.tunnel_id || 'Active'">
+            <span class="text-cyan-700 font-bold truncate max-w-[200px]" :title="systemStatus?.tunnel_id || 'Active'">
               {{ systemStatus?.tunnel_id || systemStatus?.tunnel_name || 'docktun' }}
             </span>
           </div>
 
           <div class="flex items-center justify-between p-2.5 rounded bg-void/50 border border-border/50">
             <span class="text-muted">Protocol & Architecture:</span>
-            <span class="text-slate-200 font-bold">{{ systemStatus?.protocol || 'HTTP/2' }} • 2-Container Unified</span>
+            <span class="text-slate-800 font-bold">{{ systemStatus?.protocol || 'HTTP/2' }} • 2-Container Unified</span>
           </div>
 
           <div class="flex items-center justify-between p-2.5 rounded bg-void/50 border border-border/50">
             <span class="text-muted">High Availability Conns:</span>
-            <span class="text-emerald-400 font-bold">{{ systemStatus?.ha_connections || 4 }} Edge Links</span>
+            <span class="text-emerald-600 font-bold">{{ systemStatus?.ha_connections || 4 }} Edge Links</span>
           </div>
 
           <div class="flex items-center justify-between p-2.5 rounded bg-void/50 border border-border/50">
             <span class="text-muted">Active Ingress Hostnames:</span>
-            <span class="text-cyan-400 font-bold">{{ systemStatus?.hostnames?.length || 0 }} Domains</span>
+            <span class="text-cyan-600 font-bold">{{ systemStatus?.hostnames?.length || 0 }} Domains</span>
           </div>
         </div>
 
         <div class="pt-2 border-t border-border">
           <router-link
             to="/access?tab=cloudflare"
-            class="cyber-btn-secondary w-full text-center text-xs flex items-center justify-center gap-2 py-2 text-indigo-300"
+            class="cyber-btn-secondary w-full text-center text-xs flex items-center justify-center gap-2 py-2 text-indigo-700"
           >
-            <ShieldCheck class="w-3.5 h-3.5 text-indigo-400" />
+            <ShieldCheck class="w-3.5 h-3.5 text-indigo-600" />
             <span>Manage Cloudflare API Keys & Ingress Rules &rarr;</span>
           </router-link>
         </div>
@@ -112,8 +112,8 @@ onMounted(() => {
           class="border p-3 text-xs font-mono flex items-center gap-2"
           :class="message.type === 'success' ? 'border-neon text-neon bg-neon/5' : 'border-danger text-danger bg-danger/5'"
         >
-          <CheckCircle2 v-if="message.type === 'success'" class="w-4 h-4 text-emerald-400" />
-          <AlertCircle v-else class="w-4 h-4 text-red-400" />
+          <CheckCircle2 v-if="message.type === 'success'" class="w-4 h-4 text-emerald-600" />
+          <AlertCircle v-else class="w-4 h-4 text-red-600" />
           <span>{{ message.text }}</span>
         </div>
 
@@ -140,8 +140,8 @@ onMounted(() => {
       <!-- 4. First-Run Setup & Onboarding Wizard -->
       <div class="cyber-card space-y-4">
         <div class="flex items-center gap-2 border-b border-border pb-3">
-          <Sparkles class="w-4 h-4 text-cyan-400" />
-          <h2 class="text-xs font-bold uppercase tracking-wider text-gray-200">First-Run Setup & Onboarding</h2>
+          <Sparkles class="w-4 h-4 text-cyan-600" />
+          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-800">First-Run Setup & Onboarding</h2>
         </div>
 
         <p class="text-xs text-muted leading-relaxed">
@@ -149,13 +149,13 @@ onMounted(() => {
         </p>
 
         <div class="p-3 rounded border border-border/60 bg-void/50 text-xs font-mono space-y-1">
-          <span class="text-cyan-300 font-bold block">Guided Reconfiguration Wizard</span>
+          <span class="text-cyan-700 font-bold block">Guided Reconfiguration Wizard</span>
           <span class="text-muted text-[11px]">Walks through tunnel activation, network attachments, and container imports step-by-step.</span>
         </div>
 
         <router-link
           to="/setup?force=true"
-          class="cyber-btn-secondary w-full text-center text-xs flex items-center justify-center gap-2 py-2 text-cyan-300 hover:text-cyan-200"
+          class="cyber-btn-secondary w-full text-center text-xs flex items-center justify-center gap-2 py-2 text-cyan-700 hover:text-cyan-200"
         >
           <RotateCcw class="w-3.5 h-3.5" />
           <span>Launch Setup Wizard &rarr;</span>
