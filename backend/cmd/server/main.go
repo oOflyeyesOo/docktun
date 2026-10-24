@@ -65,6 +65,7 @@ func main() {
   meshSvc := service.NewMeshService(dataDir, configSvc, cfg)
   remoteAccessSvc := service.NewRemoteAccessService(cfg, configSvc, cfdSvc, cfAPISvc, meshSvc, auditSvc, dataDir, dockerContainersSvc)
   storageSvc := service.NewStorageService(database, cfg)
+  storageFilesSvc := service.NewStorageFilesService(database, cfg)
 
   statusHandler := handler.NewStatus(cfdSvc, cfg)
   controlHandler := handler.NewControl(cfdSvc, auditSvc)
@@ -82,7 +83,7 @@ func main() {
   meshHandler := handler.NewMesh(meshSvc)
   remoteAccessHandler := handler.NewRemoteAccess(remoteAccessSvc, auditSvc)
   cloudflareHandler := handler.NewCloudflareHandler(cfAPISvc, configSvc)
-  storageHandler := handler.NewStorageHandler(storageSvc, auditSvc)
+  storageHandler := handler.NewStorageHandler(storageSvc, storageFilesSvc, auditSvc)
   setupSvc := service.NewSetupService(cfg, database, dockerContainersSvc, cfAPISvc, configSvc, meshSvc, auditSvc, dataDir)
   setupHandler := handler.NewSetup(setupSvc, authHandler)
 
@@ -195,6 +196,16 @@ func main() {
     r.Post("/api/storage/build-cache/prune", storageHandler.PruneBuildCache)
     r.Post("/api/storage/reclaim", storageHandler.ReclaimBatch)
     r.Post("/api/storage/vacuum-db", storageHandler.VacuumDB)
+
+    // Storage File Manager (browse/edit volumes, containers, projects, host storage)
+    r.Get("/api/storage/files/targets", storageHandler.ListTargets)
+    r.Get("/api/storage/files/list", storageHandler.ListFiles)
+    r.Get("/api/storage/files/read", storageHandler.ReadFile)
+    r.Post("/api/storage/files/write", storageHandler.WriteFile)
+    r.Post("/api/storage/files/create", storageHandler.CreateItem)
+    r.Delete("/api/storage/files/delete", storageHandler.DeleteItem)
+    r.Get("/api/storage/files/download", storageHandler.DownloadFile)
+    r.Post("/api/storage/files/upload", storageHandler.UploadFile)
 
     r.Post("/api/docker/run", dockerRunHandler.Run)
     r.Get("/api/docker/run/output/{id}", dockerRunHandler.Output)
