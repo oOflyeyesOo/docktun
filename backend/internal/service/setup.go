@@ -238,6 +238,16 @@ func (s *SetupService) GetStatus(force bool) (SetupStatus, error) {
 }
 
 func (s *SetupService) Complete(req SetupCompleteRequest, ip string, tokenGen func(int, string) (string, string, error)) (SetupCompleteResult, error) {
+	var existingUsers int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&existingUsers); err != nil {
+		return SetupCompleteResult{}, fmt.Errorf("failed to check setup state: %w", err)
+	}
+	if existingUsers > 0 {
+		return SetupCompleteResult{}, fmt.Errorf("initial setup is already locked; use authenticated settings")
+	}
+	if len(req.AdminPassword) < 12 {
+		return SetupCompleteResult{}, fmt.Errorf("administrator password must be at least 12 characters")
+	}
 	username := strings.TrimSpace(req.AdminUsername)
 	if username == "" {
 		username = "admin"
