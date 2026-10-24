@@ -37,7 +37,7 @@ import {
   Terminal,
   FileCode,
   FileArchive,
-  Image as ImageIcon
+  FileImage
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
@@ -279,7 +279,7 @@ function getFileIcon(file: any) {
   if (['.yml', '.yaml', '.json', '.env', '.conf', '.toml', '.xml', '.ini'].includes(ext)) return FileCode2
   if (['.js', '.ts', '.vue', '.go', '.py', '.sh', '.bash', '.css', '.html', '.php', '.rs', '.c', '.cpp'].includes(ext)) return FileCode
   if (['.tar', '.gz', '.zip', '.rar', '.7z', '.bz2'].includes(ext)) return FileArchive
-  if (['.png', '.jpg', '.jpeg', '.svg', '.gif', '.webp', '.ico'].includes(ext)) return ImageIcon
+  if (['.png', '.jpg', '.jpeg', '.svg', '.gif', '.webp', '.ico'].includes(ext)) return FileImage
   return FileText
 }
 
