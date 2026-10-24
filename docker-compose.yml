@@ -1,3 +1,5 @@
+name: docktun
+
 services:
   cloudflared:
     image: cloudflare/cloudflared:latest

@@ -1999,7 +1999,30 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		if upErr == nil {
 			recreated = true
 		} else {
-			appendLog(fmt.Sprintf("[WARN] Compose up encountered an issue: %s. Attempting scaffolded / direct recreation...", strings.TrimSpace(string(upOut))))
+			outStr := string(upOut)
+			if strings.Contains(outStr, "Conflict") && strings.Contains(outStr, "already in use") {
+				appendLog(fmt.Sprintf("[AUTO-RESOLVE] Existing container %s has non-matching Compose labels. Safely staging container to clear name conflict...", cname))
+				backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
+				_ = exec.Command("docker", "stop", detail.ID).Run()
+				if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
+					retryCmd := exec.Command("docker", append([]string{"compose"}, composeArgs...)...)
+					retryCmd.Dir = validComposeDir
+					retryOut, retryErr := retryCmd.CombinedOutput()
+					appendLog(strings.TrimSpace(string(retryOut)))
+					if retryErr == nil {
+						recreated = true
+						_ = exec.Command("docker", "rm", "-f", backupName).Run()
+						appendLog(fmt.Sprintf("✔ [SUCCESS] Container %s adopted and recreated cleanly by Docker Compose!", cname))
+					} else {
+						_ = exec.Command("docker", "rm", "-f", cname).Run()
+						_ = exec.Command("docker", "rename", backupName, cname).Run()
+						_ = exec.Command("docker", "start", cname).Run()
+						appendLog(fmt.Sprintf("[WARN] Compose retry notice: %s. Attempting scaffolded / direct recreation...", strings.TrimSpace(string(retryOut))))
+					}
+				}
+			} else {
+				appendLog(fmt.Sprintf("[WARN] Compose up encountered an issue: %s. Attempting scaffolded / direct recreation...", strings.TrimSpace(string(upOut))))
+			}
 		}
 	}
 
@@ -2030,7 +2053,30 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 			if upErr == nil {
 				recreated = true
 			} else {
-				appendLog(fmt.Sprintf("[WARN] Compose recreation notice: %s. Falling back to native Docker Engine recreation...", strings.TrimSpace(string(upOut))))
+				outStr := string(upOut)
+				if strings.Contains(outStr, "Conflict") && strings.Contains(outStr, "already in use") {
+					appendLog(fmt.Sprintf("[AUTO-RESOLVE] Resolving container name conflict for %s in scaffolded compose...", cname))
+					backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
+					_ = exec.Command("docker", "stop", detail.ID).Run()
+					if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
+						retryCmd := exec.Command("docker", "compose", "-f", composeFilePath, "up", "-d", "--force-recreate")
+						retryCmd.Dir = destDir
+						retryOut, retryErr := retryCmd.CombinedOutput()
+						appendLog(strings.TrimSpace(string(retryOut)))
+						if retryErr == nil {
+							recreated = true
+							_ = exec.Command("docker", "rm", "-f", backupName).Run()
+							appendLog(fmt.Sprintf("✔ [SUCCESS] Container %s adopted and recreated cleanly by Docker Compose!", cname))
+						} else {
+							_ = exec.Command("docker", "rm", "-f", cname).Run()
+							_ = exec.Command("docker", "rename", backupName, cname).Run()
+							_ = exec.Command("docker", "start", cname).Run()
+							appendLog(fmt.Sprintf("[WARN] Compose recreation notice: %s. Falling back to native Docker Engine recreation...", strings.TrimSpace(string(retryOut))))
+						}
+					}
+				} else {
+					appendLog(fmt.Sprintf("[WARN] Compose recreation notice: %s. Falling back to native Docker Engine recreation...", strings.TrimSpace(string(upOut))))
+				}
 			}
 		}
 	}
@@ -2112,6 +2158,12 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 	for k, v := range detail.Labels {
 		if k != "" && !strings.HasPrefix(k, "com.docker.compose.version") {
 			runArgs = append(runArgs, "--label", fmt.Sprintf("%s=%s", k, v))
+		}
+	}
+	if detail.ProjectName != "" {
+		if _, hasProj := detail.Labels["com.docker.compose.project"]; !hasProj {
+			runArgs = append(runArgs, "--label", fmt.Sprintf("com.docker.compose.project=%s", detail.ProjectName))
+			runArgs = append(runArgs, "--label", fmt.Sprintf("com.docker.compose.service=%s", cname))
 		}
 	}
 
