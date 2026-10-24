@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { HardDrive, Trash2, RotateCcw, ShieldCheck, KeyRound, Globe, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
+import { HardDrive, RotateCcw, ShieldCheck, KeyRound, Globe, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
 const { apiFetch } = useApi()
@@ -10,12 +10,6 @@ const form = reactive({ current_password: '', new_password: '', confirm: '' })
 const message = ref<{ type: string; text: string } | null>(null)
 const loading = ref(false)
 
-// Docker System Disk State
-const dfData = ref<any>(null)
-const dfLoading = ref(false)
-const pruneLoading = ref(false)
-const pruneMessage = ref<string | null>(null)
-
 // Cloudflare Tunnel & System Status
 const systemStatus = ref<any>(null)
 
@@ -23,34 +17,6 @@ async function fetchStatus() {
   try {
     systemStatus.value = await apiFetch('/api/status')
   } catch {}
-}
-
-async function fetchDF() {
-  dfLoading.value = true
-  try {
-    dfData.value = await apiFetch('/api/docker/system/df')
-  } catch (e: any) {
-    console.error('Failed to fetch Docker df', e)
-  } finally {
-    dfLoading.value = false
-  }
-}
-
-async function pruneSystem() {
-  if (!confirm('This will remove all stopped containers, unused networks, dangling images, and build cache. Proceed?')) {
-    return
-  }
-  pruneLoading.value = true
-  pruneMessage.value = null
-  try {
-    const res: any = await apiFetch('/api/docker/system/prune', { method: 'POST' })
-    pruneMessage.value = res.output || 'System pruned successfully!'
-    await fetchDF()
-  } catch (e: any) {
-    pruneMessage.value = 'Prune failed: ' + e.message
-  } finally {
-    pruneLoading.value = false
-  }
 }
 
 async function changePassword() {
@@ -75,7 +41,6 @@ async function changePassword() {
 
 onMounted(() => {
   fetchStatus()
-  fetchDF()
 })
 </script>
 
@@ -83,68 +48,39 @@ onMounted(() => {
   <div class="space-y-6">
     <div>
       <h1 class="cyber-heading text-xl lg:text-2xl">System Settings & Maintenance</h1>
-      <p class="text-xs text-muted font-mono mt-1">// Manage Docker host disk space, credentials, and tunnel configuration</p>
+      <p class="text-xs text-muted font-mono mt-1">// Manage credentials, tunnel configuration, and host utilities</p>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <!-- 1. Docker Host Storage & Prune (Reclaimer) -->
+      <!-- 1. Centralized Storage & Reclaim Link -->
       <div class="cyber-card space-y-4">
         <div class="flex items-center justify-between border-b border-border pb-3">
           <div class="flex items-center gap-2">
             <HardDrive class="w-4 h-4 text-cyan-400" />
-            <h2 class="text-xs font-bold uppercase tracking-wider text-gray-200">Docker Host Disk Space</h2>
+            <h2 class="text-xs font-bold uppercase tracking-wider text-gray-200">Storage & Reclaim Center</h2>
           </div>
-          <div class="flex items-center gap-2">
-            <router-link to="/storage" class="text-xs text-indigo-400 hover:text-indigo-300 hover:underline font-mono flex items-center gap-1">
-              <span>Full Storage Tab &rarr;</span>
-            </router-link>
-            <button @click="fetchDF" :disabled="dfLoading" class="cyber-btn-sm text-xs flex items-center gap-1">
-              <RotateCcw class="w-3 h-3" :class="dfLoading ? 'animate-spin' : ''" /> Refresh
-            </button>
-          </div>
+          <router-link to="/storage" class="text-xs text-indigo-400 hover:text-indigo-300 hover:underline font-mono">
+            Open &rarr;
+          </router-link>
         </div>
 
         <p class="text-xs text-muted leading-relaxed">
-          Reclaim disk space by cleaning up unused container layers, stopped containers, and dangling images.
+          Disk usage, volume file browsing, container storage inspection, build cache cleanup, and smart reclaim operations have been centralized into the dedicated Storage tab.
         </p>
 
-        <!-- Structured DF Items -->
-        <div v-if="dfData?.items?.length" class="space-y-2">
-          <div
-            v-for="(item, idx) in dfData.items"
-            :key="idx"
-            class="flex items-center justify-between p-2.5 rounded border border-border/60 bg-void/50 text-xs font-mono"
-          >
-            <div>
-              <span class="text-cyan-300 font-bold block">{{ item.Type || 'Resource' }}</span>
-              <span class="text-muted text-[11px]">{{ item.TotalCount || 0 }} total ({{ item.Active || 0 }} active)</span>
-            </div>
-            <div class="text-right">
-              <span class="text-gray-200 font-bold block">{{ item.Size || '0B' }}</span>
-              <span class="text-emerald-400 text-[11px] font-semibold">Reclaimable: {{ item.Reclaimable || '0B' }}</span>
-            </div>
-          </div>
+        <div class="p-3 rounded border border-border/60 bg-void/50 text-xs font-mono space-y-1">
+          <span class="text-cyan-300 font-bold block">Consolidated Storage Center</span>
+          <span class="text-muted text-[11px]">Browse volume files, edit code inside containers, clean build cache, and safely reclaim unused disk space.</span>
         </div>
 
-        <!-- Raw fallback if items not parsed -->
-        <pre v-else-if="dfData?.raw" class="text-xs text-muted font-mono whitespace-pre-wrap bg-void p-3 rounded border border-border/50 max-h-48 overflow-y-auto">{{ dfData.raw }}</pre>
-
-        <div v-if="pruneMessage" class="p-3 rounded border border-cyan-800 bg-cyan-950/40 text-xs text-cyan-300 font-mono whitespace-pre-wrap">
-          {{ pruneMessage }}
-        </div>
-
-        <div class="pt-2 flex items-center justify-between border-t border-border">
-          <span class="text-[11px] text-muted font-mono">// Safe prune (-f)</span>
-          <button
-            @click="pruneSystem"
-            :disabled="pruneLoading"
-            class="cyber-btn flex items-center gap-2 text-amber-300 border-amber-600 bg-amber-950/40 hover:bg-amber-900/50 text-xs"
-            title="Remove unused containers, networks, and images"
+        <div class="pt-2 border-t border-border">
+          <router-link
+            to="/storage"
+            class="cyber-btn-secondary w-full text-center text-xs flex items-center justify-center gap-2 py-2 text-indigo-300 hover:text-white"
           >
-            <RotateCcw v-if="pruneLoading" class="w-3.5 h-3.5 animate-spin" />
-            <Trash2 v-else class="w-3.5 h-3.5" />
-            <span>{{ pruneLoading ? 'Pruning Host...' : 'Prune Unused Resources' }}</span>
-          </button>
+            <HardDrive class="w-3.5 h-3.5 text-indigo-400" />
+            <span>Launch Storage & File Manager &rarr;</span>
+          </router-link>
         </div>
       </div>
 

@@ -558,6 +558,24 @@ async function pruneBuildCache(all = false) {
   }
 }
 
+const systemPruning = ref(false)
+
+async function pruneSystem() {
+  if (!confirm('This will remove all stopped containers, unused networks, dangling images, and build cache. Proceed?')) {
+    return
+  }
+  systemPruning.value = true
+  try {
+    const res: any = await apiFetch('/api/docker/system/prune', { method: 'POST' })
+    showToast(res.output || 'Docker system pruned successfully')
+    await refreshAll()
+  } catch (e: any) {
+    showToast(e.message || 'Prune failed', 'error')
+  } finally {
+    systemPruning.value = false
+  }
+}
+
 async function vacuumDatabase() {
   vacuumLoading.value = true
   vacuumMessage.value = null
@@ -1637,6 +1655,31 @@ onMounted(async () => {
               Prune All Build Cache
             </button>
           </div>
+        </div>
+
+        <!-- Complete System Prune Card (Moved from Settings) -->
+        <div class="cyber-card space-y-4 md:col-span-2 border-amber-900/40 bg-slate-900/60">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-2">
+              <Trash2 class="h-4 w-4 text-amber-400" />
+              <span>Full Host Resource Prune (System-Wide Cleanup)</span>
+            </h3>
+
+            <button
+              @click="pruneSystem"
+              :disabled="systemPruning"
+              class="cyber-btn-danger text-xs flex items-center gap-1.5 py-1.5 px-3"
+              title="Remove stopped containers, unused networks, dangling images, and build cache"
+            >
+              <RotateCcw v-if="systemPruning" class="h-3.5 w-3.5 animate-spin" />
+              <Trash2 v-else class="h-3.5 w-3.5" />
+              <span>{{ systemPruning ? 'Pruning Host...' : 'Prune Unused Resources (-f)' }}</span>
+            </button>
+          </div>
+
+          <p class="text-xs text-slate-400 leading-relaxed">
+            Quickly frees up host disk space by removing all stopped containers, unused networks, and dangling image layers in a single pass. Active running containers and named volumes are safely preserved.
+          </p>
         </div>
       </div>
     </div>
