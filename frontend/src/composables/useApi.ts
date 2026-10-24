@@ -3,6 +3,18 @@ import { useRouter } from 'vue-router'
 
 const inFlightGets = new Map<string, Promise<any>>()
 
+function normalizeApiError(res: Response, fallback: string) {
+  return res.text().then((text) => {
+    if (!text) return fallback
+    try {
+      const data = JSON.parse(text)
+      return data?.error || data?.message || fallback
+    } catch {
+      return text || fallback
+    }
+  })
+}
+
 export const useApi = () => {
   const authStore = useAuthStore()
   const router = useRouter()
@@ -38,11 +50,17 @@ export const useApi = () => {
       }
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Request failed' }))
-        throw new Error(err.error || 'Request failed')
+        const message = await normalizeApiError(res, 'Request failed')
+        throw new Error(message)
       }
 
-      return res.json()
+      const text = await res.text()
+      if (!text) return undefined as T
+      try {
+        return JSON.parse(text) as T
+      } catch {
+        return text as unknown as T
+      }
     }
 
     if (isGet) {
@@ -58,4 +76,3 @@ export const useApi = () => {
 
   return { apiFetch }
 }
-
