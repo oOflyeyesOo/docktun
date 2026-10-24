@@ -42,5 +42,6 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker compose config --quiet
       - run: python3 tests/verify_compose_install.py
+      - run: python3 tests/verify_prebuilt_install.py
       - run: docker build -t docktun:test .
       - run: python3 tests/container_smoke.py

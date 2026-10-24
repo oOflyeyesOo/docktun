@@ -31,7 +31,34 @@ Self-hosted web dashboard to manage and monitor Cloudflare Tunnel (cloudflared) 
 
 ## Quick Start
 
-### Option 1: Docker Compose (Recommended)
+### Option 1: Prebuilt image — no source checkout or build (recommended)
+
+**For Synology, NAS, and Linux hosts with Docker Compose**, download just [`compose.prebuilt.yml`](compose.prebuilt.yml), save it as `compose.yml` in an empty folder, then run:
+
+```sh
+docker compose up -d
+docker compose ps
+```
+
+DockTun pulls `ghcr.io/ooflyeyesoo/docktun:latest` instead of compiling the frontend and backend. GitHub Actions publishes multi-platform `amd64` and `arm64` images after successful `main` validation, with commit-specific `sha-...` tags available for pinning. The **GHCR package must be made public separately** before other people can pull anonymously; the GitHub repository itself can remain private.
+
+Open `http://<server-ip>:8080`. If the setup wizard requests an ownership code, read it locally from the DockTun container:
+
+```sh
+docker exec docktun cat /app/data/setup.token
+```
+
+The setup token is sensitive: do not share it or publish it in logs or screenshots.
+
+The Compose file creates persistent volumes for the application data and tunnel configuration. To enable the optional Cloudflare companion service **after configuring its tunnel credentials and ingress config**, run:
+
+```sh
+docker compose --profile cloudflare up -d
+```
+
+DockTun needs the Docker socket to manage containers, granting the app extensive host privileges. Keep the dashboard on a trusted network or behind authenticated remote access; **do not forward port 8080 directly to the public internet.** For Synology, import the single `compose.prebuilt.yml` file into Container Manager, rather than uploading a Dockerfile.
+
+### Option 2: Build from source (full repository required)
 
 Start DockTun with zero initial configuration. The interactive **First-Run Setup Wizard** will guide you through setting up admin credentials, activating tunnels, and importing your existing containers:
 
@@ -52,7 +79,7 @@ docker compose up -d
 # http://localhost:8080 or http://<your-server-ip>:8080
 ```
 
-### Synology and older Docker Compose installations
+### Source build troubleshooting for Synology and older Docker Compose installations
 
 **Use the complete repository source tree as the Docker build context.** The Dockerfile is not standalone. In particular, `frontend/package.json`, `frontend/pnpm-lock.yaml`, `frontend/pnpm-workspace.yaml`, `backend/go.mod`, and `backend/go.sum` must all exist beneath the directory that contains `Dockerfile` and `docker-compose.yml`. A build log that says "Sending build context to Docker daemon 1.865kB" indicates the source files were not included. Upload/extract or clone the **entire** repo into the Synology Container Manager project folder, and select that folder as the build context.
 
@@ -75,7 +102,7 @@ If `docker compose` is unavailable or the project still fails validation, check 
 
 Docker running as a non-root account is not the reason the Dockerfile `COPY` instruction cannot find build context files. The account will still need permissions to use the Docker daemon socket for DockTun's management features.
 
-### Option 2: Single Docker Run Command
+### Option 3: Single Docker Run Command
 
 ```bash
 docker network create cloudflared 2>/dev/null || true
@@ -89,7 +116,7 @@ docker run -d --name docktun \
   ghcr.io/ooflyeyesoo/docktun:latest
 ```
 
-### Option 3: Guided CLI Terminal Installer
+### Option 4: Guided CLI Terminal Installer
 
 For dedicated Linux servers or VMs, the automated script installs Docker, cloudflared, sets up systemd/LXC nesting, and configures everything:
 
