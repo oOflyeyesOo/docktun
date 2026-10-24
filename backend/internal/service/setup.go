@@ -3,12 +3,14 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"docktun/internal/config"
@@ -102,6 +104,7 @@ type SetupService struct {
 	meshSvc          *MeshService
 	audit            *AuditLogger
 	dataDir          string
+	mu               sync.Mutex
 }
 
 func NewSetupService(
@@ -126,7 +129,32 @@ func NewSetupService(
 	}
 }
 
+var (
+	ErrSetupAlreadyConfigured = errors.New("setup is already configured; sign in to reconfigure")
+	ErrSetupNotConfigured = errors.New("initial setup must be completed first")
+	ErrWeakAdminPassword = errors.New("administrator password must be between 12 and 72 bytes")
+)
+
+// initialized checks both setup completion and accounts provisioned from the environment.
+func (s *SetupService) initialized() (bool, error) {
+	var initialized int
+	err := s.db.QueryRow(`SELECT CASE WHEN EXISTS(SELECT 1 FROM users)
+		OR EXISTS(SELECT 1 FROM system_settings WHERE key = 'setup_completed' AND value = 'true')
+		THEN 1 ELSE 0 END`).Scan(&initialized)
+	return initialized == 1, err
+}
+
 func (s *SetupService) GetStatus(force bool) (SetupStatus, error) {
+	if !force {
+		initialized, err := s.initialized()
+		if err != nil {
+			return SetupStatus{}, err
+		}
+		if initialized {
+			// Do not leak Docker inventory, project paths, or tunnel state to unauthenticated callers.
+			return SetupStatus{Completed: true, HasAdminUser: true}, nil
+		}
+	}
 	status := SetupStatus{
 		HostOS:        runtime.GOOS,
 		HostArch:      runtime.GOARCH,
@@ -237,33 +265,68 @@ func (s *SetupService) GetStatus(force bool) (SetupStatus, error) {
 	return status, nil
 }
 
+// Complete may only create the first administrator. The mutex prevents
+// concurrent requests from both claiming initial setup.
 func (s *SetupService) Complete(req SetupCompleteRequest, ip string, tokenGen func(int, string) (string, string, error)) (SetupCompleteResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	initialized, err := s.initialized()
+	if err != nil {
+		return SetupCompleteResult{}, err
+	}
+	if initialized {
+		return SetupCompleteResult{}, ErrSetupAlreadyConfigured
+	}
+	if len(req.AdminPassword) < 12 || len(req.AdminPassword) > 72 {
+		return SetupCompleteResult{}, ErrWeakAdminPassword
+	}
+	return s.applySetup(req, ip, tokenGen, 0)
+}
+
+// Reconfigure cannot modify administrator credentials; password changes
+// belong in the authenticated endpoint that checks the existing password.
+func (s *SetupService) Reconfigure(req SetupCompleteRequest, ip string, userID int) (SetupCompleteResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	initialized, err := s.initialized()
+	if err != nil {
+		return SetupCompleteResult{}, err
+	}
+	if !initialized {
+		return SetupCompleteResult{}, ErrSetupNotConfigured
+	}
+	var username string
+	if err := s.db.QueryRow(`SELECT username FROM users WHERE id = ?`, userID).Scan(&username); err != nil {
+		return SetupCompleteResult{}, fmt.Errorf("authenticated administrator no longer exists: %w", err)
+	}
+	req.AdminUsername = username
+	req.AdminPassword = ""
+	return s.applySetup(req, ip, nil, userID)
+}
+
+func (s *SetupService) applySetup(req SetupCompleteRequest, ip string, tokenGen func(int, string) (string, string, error), existingAdminID int) (SetupCompleteResult, error) {
 	username := strings.TrimSpace(req.AdminUsername)
 	if username == "" {
 		username = "admin"
 	}
 
-	// 1. Set or update administrator account
-	var adminID int
-	if req.AdminPassword != "" {
+	adminID := existingAdminID
+	if existingAdminID == 0 {
 		hash, err := bcrypt.GenerateFromPassword([]byte(req.AdminPassword), 12)
 		if err != nil {
 			return SetupCompleteResult{}, fmt.Errorf("failed to hash password: %w", err)
 		}
-
-		_, err = s.db.Exec(`
-			INSERT INTO users (username, password_hash)
-			VALUES (?, ?)
-			ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash
-		`, username, string(hash))
+		result, err := s.db.Exec(`INSERT INTO users (username, password_hash) VALUES (?, ?)`, username, string(hash))
 		if err != nil {
-			return SetupCompleteResult{}, fmt.Errorf("failed to save admin user: %w", err)
+			return SetupCompleteResult{}, fmt.Errorf("failed to create admin user: %w", err)
 		}
-	}
-
-	_ = s.db.QueryRow(`SELECT id FROM users WHERE username = ?`, username).Scan(&adminID)
-	if adminID == 0 {
-		adminID = 1
+		id, err := result.LastInsertId()
+		if err != nil {
+			return SetupCompleteResult{}, err
+		}
+		adminID = int(id)
 	}
 
 	// 2. Configure Tunnel / Remote Access
