@@ -29,9 +29,32 @@ services:
       retries: 3
     ports:
       - "${PORT:-8080}:3001"
-    env_file:
-      - path: .env
-        required: false
+    # Do not use long-form env_file (requires newer Compose versions).
+    # Compose automatically reads a local .env file for these substitutions,
+    # but a fresh installation can start with no .env at all.
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      TUNNEL_NAME: ${TUNNEL_NAME:-}
+      TUNNEL_ID: ${TUNNEL_ID:-}
+      CLOUDFLARED_CONFIG_PATH: ${CLOUDFLARED_CONFIG_PATH:-/etc/cloudflared/config.yml}
+      CLOUDFLARED_CONTAINER: ${CLOUDFLARED_CONTAINER:-docktun-cloudflared}
+      CLOUDFLARED_METRICS: ${CLOUDFLARED_METRICS:-http://docktun-cloudflared:2000/metrics}
+      DB_PATH: ${DB_PATH:-/app/data/app.db}
+      LISTEN_ADDR: ${LISTEN_ADDR:-0.0.0.0:3001}
+      SELF_PATH: ${SELF_PATH:-/opt/projects/docktun}
+      MESH_MODE: ${MESH_MODE:-none}
+      MESH_CONFIG_PATH: ${MESH_CONFIG_PATH:-/etc/docktun/mesh.json}
+      CF_API_TOKEN: ${CF_API_TOKEN:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      CLOUDFLARE_TOKEN: ${CLOUDFLARE_TOKEN:-}
+      CF_TOKEN: ${CF_TOKEN:-}
+      CF_ACCOUNT_ID: ${CF_ACCOUNT_ID:-}
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+      CF_ACCOUNT: ${CF_ACCOUNT:-}
+      CF_ZONE_ID: ${CF_ZONE_ID:-}
+      CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID:-}
     volumes:
       - ./data:/app/data
       - ./cloudflared:/etc/cloudflared
