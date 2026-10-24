@@ -34,7 +34,7 @@ onMounted(() => {
 
     <div v-if="showSidebar && mobileOpen" class="fixed inset-0 z-30 bg-slate-50/70 lg:hidden" @click="mobileOpen = false"></div>
 
-    <div v-if="showSidebar" :class="mobileOpen ? 'translate-x-0' : '-translate-x-full'" class="fixed inset-y-0 left-0 z-30 transition-transform duration-200 lg:translate-x-0 lg:static">
+    <div v-if="showSidebar" :class="mobileOpen ? 'translate-x-0' : '-translate-x-full'" class="fixed inset-y-0 top-12 lg:top-0 left-0 z-30 transition-transform duration-200 lg:translate-x-0 lg:static">
       <AppSidebar @navigate="mobileOpen = false" />
     </div>
 
