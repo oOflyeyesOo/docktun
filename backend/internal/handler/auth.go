@@ -21,7 +21,10 @@ type Auth struct {
 func NewAuth(cfg *config.Config, db *db.DB, audit *service.AuditLogger) *Auth {
 	if cfg.AdminPassword != "" {
 		hash, _ := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), 12)
-		db.Exec(`INSERT OR IGNORE INTO users (username, password_hash) VALUES (?, ?)`, cfg.AdminUsername, string(hash))
+		db.Exec(`
+			INSERT INTO users (username, password_hash) VALUES (?, ?)
+			ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash
+		`, cfg.AdminUsername, string(hash))
 	}
 	return &Auth{cfg: cfg, db: db, audit: audit}
 }
