@@ -108,3 +108,32 @@ func TestParseDockerRunCommand_BareImage(t *testing.T) {
 		t.Errorf("expected container name 'aiostreams-aio', got %q", parsed.ContainerName)
 	}
 }
+
+func TestGenerateComposeYAML_NamedVolumesAndPrivileged(t *testing.T) {
+	cmd := `docker run -d \
+  --name aio-stack \
+  --privileged \
+  --restart unless-stopped \
+  -v aio-data:/data \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -p 3000:3000 \
+  ghcr.io/ooflyeyesoo/aiostreams-aio:latest`
+
+	parsed, err := ParseDockerRunCommand(cmd)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !parsed.Privileged {
+		t.Errorf("expected Privileged to be true")
+	}
+	yaml := parsed.GenerateComposeYAML()
+	if !strings.Contains(yaml, "privileged: true") {
+		t.Errorf("expected 'privileged: true' in YAML, got:\n%s", yaml)
+	}
+	if !strings.Contains(yaml, "volumes:\n  aio-data:\n    name: aio-data") {
+		t.Errorf("expected top-level 'volumes:\n  aio-data:\n    name: aio-data' in YAML, got:\n%s", yaml)
+	}
+	if strings.Contains(yaml, "name: /var/run/docker.sock") {
+		t.Errorf("bind mount /var/run/docker.sock should not be declared in top-level volumes, got:\n%s", yaml)
+	}
+}

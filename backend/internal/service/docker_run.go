@@ -40,6 +40,12 @@ type ParsedDockerRun struct {
 	Command       []string
 	Detach        bool
 	Remove        bool
+	Privileged    bool
+	ShmSize       string
+	User          string
+	Hostname      string
+	CapAdd        []string
+	Devices       []string
 	ExtraArgs     []string
 }
 
@@ -346,8 +352,26 @@ func (s *DockerRunService) executeDirect(jobID int, parsed *ParsedDockerRun, raw
 		if parsed.Restart != "" {
 			newArgs = append(newArgs, "--restart", parsed.Restart)
 		}
+		if parsed.Privileged {
+			newArgs = append(newArgs, "--privileged")
+		}
 		if parsed.ContainerName != "" {
 			newArgs = append(newArgs, "--name", parsed.ContainerName)
+		}
+		if parsed.Hostname != "" {
+			newArgs = append(newArgs, "--hostname", parsed.Hostname)
+		}
+		if parsed.User != "" {
+			newArgs = append(newArgs, "--user", parsed.User)
+		}
+		if parsed.ShmSize != "" {
+			newArgs = append(newArgs, "--shm-size", parsed.ShmSize)
+		}
+		for _, cap := range parsed.CapAdd {
+			newArgs = append(newArgs, "--cap-add", cap)
+		}
+		for _, dev := range parsed.Devices {
+			newArgs = append(newArgs, "--device", dev)
 		}
 		for _, p := range parsed.Ports {
 			newArgs = append(newArgs, "-p", p)
@@ -555,6 +579,35 @@ func ParseDockerRunCommand(raw string) (*ParsedDockerRun, error) {
 			res.Detach = true
 		} else if t == "--rm" {
 			res.Remove = true
+		} else if t == "--privileged" {
+			res.Privileged = true
+		} else if strings.HasPrefix(t, "--privileged=") {
+			res.Privileged = strings.Trim(strings.TrimPrefix(t, "--privileged="), "\"'") == "true"
+		} else if strings.HasPrefix(t, "--shm-size=") {
+			res.ShmSize = strings.Trim(strings.TrimPrefix(t, "--shm-size="), "\"'")
+		} else if t == "--shm-size" && i+1 < len(tokens) {
+			i++
+			res.ShmSize = strings.Trim(tokens[i], "\"'")
+		} else if strings.HasPrefix(t, "--hostname=") || strings.HasPrefix(t, "-h=") {
+			res.Hostname = strings.Trim(strings.TrimPrefix(strings.TrimPrefix(t, "--hostname="), "-h="), "\"'")
+		} else if (t == "--hostname" || t == "-h") && i+1 < len(tokens) {
+			i++
+			res.Hostname = strings.Trim(tokens[i], "\"'")
+		} else if strings.HasPrefix(t, "--user=") || strings.HasPrefix(t, "-u=") {
+			res.User = strings.Trim(strings.TrimPrefix(strings.TrimPrefix(t, "--user="), "-u="), "\"'")
+		} else if (t == "--user" || t == "-u") && i+1 < len(tokens) {
+			i++
+			res.User = strings.Trim(tokens[i], "\"'")
+		} else if strings.HasPrefix(t, "--cap-add=") {
+			res.CapAdd = append(res.CapAdd, strings.Trim(strings.TrimPrefix(t, "--cap-add="), "\"'"))
+		} else if t == "--cap-add" && i+1 < len(tokens) {
+			i++
+			res.CapAdd = append(res.CapAdd, strings.Trim(tokens[i], "\"'"))
+		} else if strings.HasPrefix(t, "--device=") {
+			res.Devices = append(res.Devices, strings.Trim(strings.TrimPrefix(t, "--device="), "\"'"))
+		} else if t == "--device" && i+1 < len(tokens) {
+			i++
+			res.Devices = append(res.Devices, strings.Trim(tokens[i], "\"'"))
 		} else if takesArg[t] && i+1 < len(tokens) {
 			i++
 			res.ExtraArgs = append(res.ExtraArgs, t, tokens[i])
@@ -588,6 +641,32 @@ func ParseDockerRunCommand(raw string) (*ParsedDockerRun, error) {
 	return res, nil
 }
 
+func extractVolumeSource(vol string) string {
+	parts := strings.Split(vol, ":")
+	if len(parts) == 0 {
+		return ""
+	}
+	// On Windows, drive letter like C:/foo:bar has parts ["C", "/foo", "bar"]
+	if len(parts) >= 2 && len(parts[0]) == 1 && unicode.IsLetter(rune(parts[0][0])) {
+		return parts[0] + ":" + parts[1]
+	}
+	return parts[0]
+}
+
+func isNamedVolume(src string) bool {
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return false
+	}
+	if strings.HasPrefix(src, "/") || strings.HasPrefix(src, "./") || strings.HasPrefix(src, "../") || strings.HasPrefix(src, "~") || strings.HasPrefix(src, `\`) {
+		return false
+	}
+	if len(src) >= 2 && src[1] == ':' {
+		return false
+	}
+	return true
+}
+
 func (p *ParsedDockerRun) GenerateComposeYAML() string {
 	var sb strings.Builder
 	sb.WriteString("services:\n")
@@ -596,6 +675,30 @@ func (p *ParsedDockerRun) GenerateComposeYAML() string {
 	sb.WriteString(fmt.Sprintf("    container_name: %s\n", p.ContainerName))
 	if p.Restart != "" {
 		sb.WriteString(fmt.Sprintf("    restart: %s\n", p.Restart))
+	}
+	if p.Privileged {
+		sb.WriteString("    privileged: true\n")
+	}
+	if p.Hostname != "" {
+		sb.WriteString(fmt.Sprintf("    hostname: %s\n", p.Hostname))
+	}
+	if p.User != "" {
+		sb.WriteString(fmt.Sprintf("    user: %s\n", p.User))
+	}
+	if p.ShmSize != "" {
+		sb.WriteString(fmt.Sprintf("    shm_size: %s\n", p.ShmSize))
+	}
+	if len(p.CapAdd) > 0 {
+		sb.WriteString("    cap_add:\n")
+		for _, cap := range p.CapAdd {
+			sb.WriteString(fmt.Sprintf("      - %s\n", cap))
+		}
+	}
+	if len(p.Devices) > 0 {
+		sb.WriteString("    devices:\n")
+		for _, dev := range p.Devices {
+			sb.WriteString(fmt.Sprintf("      - \"%s\"\n", dev))
+		}
 	}
 	if len(p.Ports) > 0 {
 		sb.WriteString("    ports:\n")
@@ -630,6 +733,26 @@ func (p *ParsedDockerRun) GenerateComposeYAML() string {
 		sb.WriteString(fmt.Sprintf("  %s:\n", p.Network))
 		sb.WriteString("    external: true\n")
 	}
+
+	// Auto-declare named volumes so Docker Compose creates and manages them
+	var namedVolumes []string
+	seenVolumes := make(map[string]bool)
+	for _, vol := range p.Volumes {
+		src := extractVolumeSource(vol)
+		if isNamedVolume(src) && !seenVolumes[src] {
+			seenVolumes[src] = true
+			namedVolumes = append(namedVolumes, src)
+		}
+	}
+
+	if len(namedVolumes) > 0 {
+		sb.WriteString("\nvolumes:\n")
+		for _, nv := range namedVolumes {
+			sb.WriteString(fmt.Sprintf("  %s:\n", nv))
+			sb.WriteString(fmt.Sprintf("    name: %s\n", nv))
+		}
+	}
+
 	return sb.String()
 }
 
