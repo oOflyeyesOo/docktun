@@ -146,7 +146,29 @@ type DockerContainers struct {
 	statsTime   time.Time
 }
 
+func CleanupZombieUpdaters() {
+	out, err := exec.Command("docker", "ps", "-a", "--filter", "name=docktun-updater", "--format", "{{.Names}} {{.ID}}").CombinedOutput()
+	if err == nil {
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		now := time.Now().Unix()
+		for _, line := range lines {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				cname, cid := strings.TrimPrefix(parts[0], "/"), parts[1]
+				sub := strings.TrimPrefix(cname, "docktun-updater-")
+				if ts, err := strconv.ParseInt(sub, 10, 64); err == nil {
+					if now-ts < 10 {
+						continue
+					}
+				}
+				_ = exec.Command("docker", "rm", "-f", cid).Run()
+			}
+		}
+	}
+}
+
 func NewDockerContainers(cfg *config.Config, db *db.DB, configMgr *ConfigManager, cloudflared *Cloudflared, cfAPI *CloudflareAPI, audit *AuditLogger) *DockerContainers {
+	go CleanupZombieUpdaters()
 	return &DockerContainers{
 		cfg:         cfg,
 		db:          db,
@@ -252,6 +274,18 @@ func (s *DockerContainers) List() ([]Container, error) {
 		}
 		c.Name = strings.TrimPrefix(c.Name, "/")
 		c.Running = c.Running || strings.HasPrefix(strings.ToLower(c.Status), "up ")
+
+		if strings.HasPrefix(c.Name, "docktun-updater-") {
+			// Auto-cleanup stale updater containers so they never linger, occupy ports, or clutter the dashboard
+			sub := strings.TrimPrefix(c.Name, "docktun-updater-")
+			if ts, err := strconv.ParseInt(sub, 10, 64); err == nil && time.Now().Unix()-ts < 10 {
+				continue
+			}
+			go func(cid string) {
+				_ = exec.Command("docker", "rm", "-f", cid).Run()
+			}(c.ID)
+			continue
+		}
 
 		if len(fields) >= 9 {
 			networksStr := strings.TrimSpace(fields[8])
@@ -1147,11 +1181,24 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 		if img == "" {
 			img = "alpine"
 		}
+		isHostNet := detail.NetworkMode == "host" || (isAuxiliaryDocktunService(cname, detail.Image) && strings.Contains(strings.ToLower(cname), "zeroconf"))
+		if !isHostNet {
+			for _, net := range detail.Networks {
+				if net == "host" {
+					isHostNet = true
+					break
+				}
+			}
+		}
+
 		var b strings.Builder
 		b.WriteString("services:\n")
 		b.WriteString(fmt.Sprintf("  %s:\n", cname))
 		b.WriteString(fmt.Sprintf("    image: %s\n", img))
 		b.WriteString(fmt.Sprintf("    container_name: %s\n", cname))
+		if isHostNet {
+			b.WriteString("    network_mode: host\n")
+		}
 		restartPol := detail.RestartPolicy
 		if restartPol == "" {
 			restartPol = "unless-stopped"
@@ -1203,7 +1250,7 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 				}
 			}
 		}
-		if detail.Ports != "" {
+		if !isHostNet && detail.Ports != "" {
 			var portLines []string
 			seen := make(map[string]bool)
 			for _, part := range strings.Split(detail.Ports, ",") {
@@ -1248,7 +1295,7 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 			}
 		}
 
-		if len(svcNetworks) > 0 {
+		if !isHostNet && len(svcNetworks) > 0 {
 			b.WriteString("    networks:\n")
 			for _, sn := range svcNetworks {
 				b.WriteString(fmt.Sprintf("      - %s\n", sn))
@@ -2138,6 +2185,8 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		logOutput.WriteString(msg + "\n")
 	}
 
+	CleanupZombieUpdaters()
+
 	if isLocalDocktunImage(image) {
 		appendLog(fmt.Sprintf("[NOTE] Local image %s detected for %s. Using official image ghcr.io/ooflyeyesoo/docktun:latest for update...", image, cname))
 		image = "ghcr.io/ooflyeyesoo/docktun:latest"
@@ -2248,6 +2297,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		if isLocalBuild {
 			appendLog(fmt.Sprintf("[BUILD] Building local service %s via Docker Compose in %s...", compService, validComposeDir))
 			var buildArgs []string
+			buildArgs = append(buildArgs, "--profile", "all", "--profile", "*")
 			if composeCandidate != "" && fileExists(composeCandidate) {
 				buildArgs = append(buildArgs, "-f", composeCandidate)
 			} else {
@@ -2265,6 +2315,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 
 		appendLog(fmt.Sprintf("[STEP 2/4] Updating via Docker Compose in %s (service: %s)...", validComposeDir, compService))
 		var composeArgs []string
+		composeArgs = append(composeArgs, "--profile", "all", "--profile", "*")
 		if composeCandidate != "" && fileExists(composeCandidate) {
 			composeArgs = append(composeArgs, "-f", composeCandidate)
 		} else {
@@ -2275,14 +2326,24 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		if s.isSelfContainer(detail.ID, cname) {
 			appendLog(fmt.Sprintf("✔ [SUCCESS] %s self-update via Docker Compose initiated! Restarting in background...", cname))
 			updaterName := fmt.Sprintf("docktun-updater-%d", time.Now().Unix())
-			composeScript := fmt.Sprintf("sleep 2 && docker compose %s up -d --no-deps --force-recreate %s", strings.Join(composeArgs, " "), compService)
+			var quotedArgs []string
+			for _, a := range composeArgs {
+				if strings.ContainsAny(a, " *?$`'\"") {
+					quotedArgs = append(quotedArgs, fmt.Sprintf("%q", a))
+				} else {
+					quotedArgs = append(quotedArgs, a)
+				}
+			}
+			composeScript := fmt.Sprintf("sleep 2 && docker compose %s", strings.Join(quotedArgs, " "))
 			updaterCmd := exec.Command("docker", "run", "-d", "--rm",
+				"--entrypoint", "/bin/sh",
+				"--network", "none",
 				"-v", "/var/run/docker.sock:/var/run/docker.sock",
 				"-v", fmt.Sprintf("%s:%s", validComposeDir, validComposeDir),
 				"-w", validComposeDir,
 				"--name", updaterName,
 				image,
-				"sh", "-c", composeScript,
+				"-c", composeScript,
 			)
 			if uOut, uErr := updaterCmd.CombinedOutput(); uErr != nil {
 				appendLog(fmt.Sprintf("[WARN] Failed to spawn compose updater container (%v: %s). Falling back to direct recreate...", uErr, strings.TrimSpace(string(uOut))))
@@ -2347,21 +2408,29 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 			sanitizeComposeFile(composeFilePath)
 			appendLog(fmt.Sprintf("[STEP 3/4] Recreating container %s via Docker Compose in %s...", cname, destDir))
 			if s.isSelfContainer(detail.ID, cname) {
-				upCmd := exec.Command("docker", "compose", "-f", composeFilePath, "up", "-d", "--force-recreate")
-				upCmd.Dir = destDir
-				upOut, upErr := upCmd.CombinedOutput()
-				if upErr == nil {
-					recreated = true
-					appendLog(strings.TrimSpace(string(upOut)))
-					appendLog(fmt.Sprintf("✔ [SUCCESS] Container %s recreated cleanly by Docker Compose!", cname))
+				updaterName := fmt.Sprintf("docktun-updater-%d", time.Now().Unix())
+				composeScript := fmt.Sprintf("sleep 2 && docker compose --profile all --profile '*' -f %s up -d --force-recreate", composeFilePath)
+				updaterCmd := exec.Command("docker", "run", "-d", "--rm",
+					"--entrypoint", "/bin/sh",
+					"--network", "none",
+					"-v", "/var/run/docker.sock:/var/run/docker.sock",
+					"-v", fmt.Sprintf("%s:%s", destDir, destDir),
+					"-w", destDir,
+					"--name", updaterName,
+					image,
+					"-c", composeScript,
+				)
+				if uOut, uErr := updaterCmd.CombinedOutput(); uErr != nil {
+					appendLog(fmt.Sprintf("[WARN] Failed to spawn compose updater container (%v: %s). Falling back to native recreation...", uErr, strings.TrimSpace(string(uOut))))
 				} else {
-					appendLog(fmt.Sprintf("[NOTE] Compose recreation notice: %s. Falling back to native recreation...", strings.TrimSpace(string(upOut))))
+					appendLog(fmt.Sprintf("✔ [SUCCESS] Updater container %s started to recreate DockTun via Docker Compose. Refresh your browser in a few seconds.", updaterName))
+					return logOutput.String(), nil
 				}
 			} else {
 				backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
 				_ = exec.Command("docker", "stop", detail.ID).Run()
 				if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
-					upCmd := exec.Command("docker", "compose", "-f", composeFilePath, "up", "-d", "--force-recreate")
+					upCmd := exec.Command("docker", "compose", "--profile", "all", "--profile", "*", "-f", composeFilePath, "up", "-d", "--force-recreate")
 					upCmd.Dir = destDir
 					upOut, upErr := upCmd.CombinedOutput()
 					if upErr == nil {
@@ -2393,7 +2462,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 	}
 
 	// Step 4: Network and Exposure
-	isHostNet := detail.NetworkMode == "host"
+	isHostNet := detail.NetworkMode == "host" || (isAuxiliaryDocktunService(cname, detail.Image) && strings.Contains(strings.ToLower(cname), "zeroconf"))
 	if !isHostNet {
 		for _, net := range detail.Networks {
 			if net == "host" {
@@ -2453,7 +2522,7 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 		restartPol = "unless-stopped"
 	}
 
-	isHostNet := detail.NetworkMode == "host"
+	isHostNet := detail.NetworkMode == "host" || (isAuxiliaryDocktunService(cname, detail.Image) && strings.Contains(strings.ToLower(cname), "zeroconf"))
 	if !isHostNet {
 		for _, net := range detail.Networks {
 			if net == "host" {
@@ -2504,7 +2573,7 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 		}
 	}
 
-	if detail.Ports != "" {
+	if !isHostNet && detail.Ports != "" {
 		seen := make(map[string]bool)
 		for _, part := range strings.Split(detail.Ports, ",") {
 			if parsed, ok := parsePortMapping(part); ok {
@@ -2583,10 +2652,12 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 
 		updaterName := fmt.Sprintf("docktun-updater-%d", time.Now().Unix())
 		updaterCmd := exec.Command("docker", "run", "-d", "--rm",
+			"--entrypoint", "/bin/sh",
+			"--network", "none",
 			"-v", "/var/run/docker.sock:/var/run/docker.sock",
 			"--name", updaterName,
 			newImage,
-			"sh", "-c", detachScript,
+			"-c", detachScript,
 		)
 		if uOut, uErr := updaterCmd.CombinedOutput(); uErr != nil {
 			appendLog(fmt.Sprintf("[WARN] Failed to spawn updater container (%v: %s). Falling back to background process...", uErr, strings.TrimSpace(string(uOut))))
