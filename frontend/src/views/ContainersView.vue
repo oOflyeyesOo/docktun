@@ -1181,14 +1181,21 @@ async function performUpdate(container: ContainerItem) {
   updatingContainer.value[container.id] = true
   try {
     const res = await apiFetch(`/api/docker/containers/${container.id}/update`, { method: 'POST' })
+    const isDocktunSelf = container.name.toLowerCase().includes('docktun') || (res.output && res.output.includes('self-update'))
     updateResultModal.value = {
       name: container.name,
       output: res.output || 'Container updated successfully.',
       success: true,
     }
-    await fetchContainers()
-    if (selectedContainer.value && selectedContainer.value.id === container.id) {
-      await openContainerModal(container, selectedTab.value)
+    if (isDocktunSelf) {
+      setTimeout(() => {
+        window.location.reload()
+      }, 4500)
+    } else {
+      await fetchContainers()
+      if (selectedContainer.value && selectedContainer.value.id === container.id) {
+        await openContainerModal(container, selectedTab.value)
+      }
     }
   } catch (error: any) {
     updateResultModal.value = {

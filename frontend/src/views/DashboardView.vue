@@ -87,6 +87,25 @@ async function fetchContainers() {
   }
 }
 
+const checkingUpdates = ref(false)
+async function checkDashboardUpdates() {
+  checkingUpdates.value = true
+  try {
+    const results = await apiFetch('/api/docker/containers/check-updates', { method: 'POST' })
+    await fetchContainers()
+    const count = (results || []).filter((r: any) => r.update_available).length
+    if (count > 0) {
+      alert(`Update check complete: ${count} container${count > 1 ? 's have' : ' has'} updates available!`)
+    } else {
+      alert('All containers are up to date.')
+    }
+  } catch (err: any) {
+    alert(err.message || 'Failed to check updates')
+  } finally {
+    checkingUpdates.value = false
+  }
+}
+
 async function fetchHealth() {
   probingHealth.value = true
   try {
@@ -840,16 +859,26 @@ onUnmounted(() => {
           <div>
             <router-link
               v-if="containerStats.updatesCount > 0"
-              to="/containers"
+              to="/containers?filter=updates"
               class="inline-flex items-center gap-1 rounded bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.2 text-[10px] font-bold text-amber-700 animate-pulse hover:bg-amber-500/30"
               title="Click to view containers with updates available"
             >
               <Sparkles class="h-2.5 w-2.5" />
               {{ containerStats.updatesCount }} update{{ containerStats.updatesCount > 1 ? 's' : '' }}
             </router-link>
-            <span v-else class="text-[11px] text-slate-500 font-mono">
-              All up to date
-            </span>
+            <div v-else class="flex items-center gap-1.5">
+              <span class="text-[11px] text-slate-500 font-mono">
+                All up to date
+              </span>
+              <button
+                @click="checkDashboardUpdates"
+                :disabled="checkingUpdates"
+                class="text-[10px] text-indigo-600 hover:text-indigo-800 font-mono underline disabled:opacity-50"
+                title="Check remote registries for updates"
+              >
+                {{ checkingUpdates ? 'Checking…' : 'Check' }}
+              </button>
+            </div>
           </div>
           <router-link to="/containers" class="text-indigo-600 hover:underline">Manage &rarr;</router-link>
         </div>

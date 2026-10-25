@@ -1926,18 +1926,32 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	// 0. Detect DockTun container or locally built image
-	if isDocktunContainer(cname, detail.Image) {
-		res.CurrentDigest = "local-git"
+	// 0. Detect local DockTun image tag (e.g. "docktun:latest" or "docktun" without remote registry repo)
+	if isLocalDocktunImage(detail.Image) {
+		localCommit := getLocalGitCommit(s.cfg.SelfPath, detail)
 		commitSHA, commitMsg, ghErr := fetchLatestGitHubCommit(ctx, "oOflyeyesOo", "docktun", "main")
 		if ghErr == nil && commitSHA != "" {
 			res.LatestDigest = commitSHA
-			res.Error = fmt.Sprintf("DockTun is built locally. Latest upstream commit: %s (%s). Update via host: git pull && docker compose up -d --build docktun", commitSHA, commitMsg)
+			if localCommit != "" {
+				res.CurrentDigest = localCommit
+				if !strings.HasPrefix(commitSHA, localCommit) && !strings.HasPrefix(localCommit, commitSHA) {
+					res.UpdateAvailable = true
+					res.Error = fmt.Sprintf("Upstream commit %s available (%s)", commitSHA, commitMsg)
+				} else {
+					res.UpdateAvailable = false
+					res.Error = ""
+				}
+			} else {
+				res.CurrentDigest = "local-git"
+				res.UpdateAvailable = true
+				res.Error = fmt.Sprintf("Upstream commit %s available (%s). Built locally.", commitSHA, commitMsg)
+			}
 		} else {
+			res.CurrentDigest = "local-git"
 			res.LatestDigest = "git-main"
-			res.Error = "DockTun is built locally. Update via host: git pull && docker compose up -d --build docktun"
+			res.Error = "DockTun is built locally. Update via host git pull or switch to ghcr.io/ooflyeyesoo/docktun:latest."
+			res.UpdateAvailable = false
 		}
-		res.UpdateAvailable = false
 		s.saveUpdateToDB(res)
 		return res, nil
 	}
@@ -2004,6 +2018,27 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 	}
 
 	if err != nil {
+		if s.isSelfContainer(detail.ID, cname) || isDocktunContainer(cname, detail.Image) {
+			commitSHA, commitMsg, ghErr := fetchLatestGitHubCommit(ctx, "oOflyeyesOo", "docktun", "main")
+			if ghErr == nil && commitSHA != "" {
+				res.LatestDigest = commitSHA
+				localCommit := getLocalGitCommit(s.cfg.SelfPath, detail)
+				if localCommit != "" {
+					res.CurrentDigest = localCommit
+					if !strings.HasPrefix(commitSHA, localCommit) && !strings.HasPrefix(localCommit, commitSHA) {
+						res.UpdateAvailable = true
+						res.Error = fmt.Sprintf("Upstream commit %s available (%s)", commitSHA, commitMsg)
+					}
+				} else {
+					res.CurrentDigest = "local-git"
+					res.UpdateAvailable = true
+					res.Error = fmt.Sprintf("Upstream commit %s available (%s)", commitSHA, commitMsg)
+				}
+				s.saveUpdateToDB(res)
+				return res, nil
+			}
+		}
+
 		if strings.Contains(err.Error(), "does not host this image") || strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "404") {
 			res.Error = "Local build or private image (updates managed locally)"
 		} else {
@@ -2090,6 +2125,11 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 	appendLog := func(msg string) {
 		log.Printf("[docktun-update] %s", msg)
 		logOutput.WriteString(msg + "\n")
+	}
+
+	if isLocalDocktunImage(image) {
+		appendLog(fmt.Sprintf("[NOTE] Local image %s detected for %s. Using official image ghcr.io/ooflyeyesoo/docktun:latest for update...", image, cname))
+		image = "ghcr.io/ooflyeyesoo/docktun:latest"
 	}
 
 	appendLog(fmt.Sprintf("[STEP 1/4] Pulling latest image: %s...", image))
@@ -2192,6 +2232,26 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 			composeArgs = append(composeArgs, "--project-directory", validComposeDir)
 		}
 		composeArgs = append(composeArgs, "up", "-d", "--no-deps", "--force-recreate", compService)
+
+		if s.isSelfContainer(detail.ID, cname) {
+			appendLog(fmt.Sprintf("✔ [SUCCESS] %s self-update via Docker Compose initiated! Restarting in background...", cname))
+			updaterName := fmt.Sprintf("docktun-updater-%d", time.Now().Unix())
+			composeScript := fmt.Sprintf("sleep 2 && docker compose %s up -d --no-deps --force-recreate %s", strings.Join(composeArgs, " "), compService)
+			updaterCmd := exec.Command("docker", "run", "-d", "--rm",
+				"-v", "/var/run/docker.sock:/var/run/docker.sock",
+				"-v", fmt.Sprintf("%s:%s", validComposeDir, validComposeDir),
+				"-w", validComposeDir,
+				"--name", updaterName,
+				image,
+				"sh", "-c", composeScript,
+			)
+			if uOut, uErr := updaterCmd.CombinedOutput(); uErr != nil {
+				appendLog(fmt.Sprintf("[WARN] Failed to spawn compose updater container (%v: %s). Falling back to direct recreate...", uErr, strings.TrimSpace(string(uOut))))
+			} else {
+				appendLog(fmt.Sprintf("✔ [SUCCESS] Updater container %s started to recreate DockTun via Docker Compose. Refresh your browser in a few seconds.", updaterName))
+				return logOutput.String(), nil
+			}
+		}
 
 		upCmd := exec.Command("docker", append([]string{"compose"}, composeArgs...)...)
 		upCmd.Dir = validComposeDir
@@ -2437,11 +2497,44 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 	}
 
 	if s.isSelfContainer(detail.ID, cname) {
-		appendLog(fmt.Sprintf("✔ [SUCCESS] %s self-update initiated! Restarting container with image %s in background...", cname, newImage))
+		appendLog(fmt.Sprintf("✔ [SUCCESS] %s self-update initiated! Restarting container with image %s via detached updater...", cname, newImage))
 		selfArgs := append([]string{"run", "-d"}, runArgs[1:]...)
-		detachScript := fmt.Sprintf("sleep 1 && docker stop %s && docker rm -f %s && docker %s", detail.ID, detail.ID, strings.Join(selfArgs, " "))
-		bgCmd := exec.Command("sh", "-c", detachScript)
-		_ = bgCmd.Start()
+
+		var extraNetCmds []string
+		for _, net := range extraNets {
+			aliasArg := ""
+			if aliases, ok := detail.NetworkAliases[net]; ok {
+				for _, a := range aliases {
+					if a != "" && a != cname && !strings.HasPrefix(detail.ID, a) {
+						aliasArg = fmt.Sprintf("--alias %s ", a)
+						break
+					}
+				}
+			}
+			extraNetCmds = append(extraNetCmds, fmt.Sprintf("docker network connect %s%s %s || true", aliasArg, net, cname))
+		}
+		extraScript := ""
+		if len(extraNetCmds) > 0 {
+			extraScript = " && " + strings.Join(extraNetCmds, " && ")
+		}
+
+		detachScript := fmt.Sprintf("sleep 2 && docker stop %s && docker rm -f %s && docker %s%s",
+			detail.ID, detail.ID, strings.Join(selfArgs, " "), extraScript)
+
+		updaterName := fmt.Sprintf("docktun-updater-%d", time.Now().Unix())
+		updaterCmd := exec.Command("docker", "run", "-d", "--rm",
+			"-v", "/var/run/docker.sock:/var/run/docker.sock",
+			"--name", updaterName,
+			newImage,
+			"sh", "-c", detachScript,
+		)
+		if uOut, uErr := updaterCmd.CombinedOutput(); uErr != nil {
+			appendLog(fmt.Sprintf("[WARN] Failed to spawn updater container (%v: %s). Falling back to background process...", uErr, strings.TrimSpace(string(uOut))))
+			bgCmd := exec.Command("sh", "-c", detachScript)
+			_ = bgCmd.Start()
+		} else {
+			appendLog(fmt.Sprintf("✔ [SUCCESS] Updater container %s started. DockTun will restart with the latest image in ~3-5 seconds. Refresh your browser shortly.", updaterName))
+		}
 		return nil
 	}
 
@@ -2772,6 +2865,54 @@ func isDocktunContainer(name, image string) bool {
 		img == "docktun" || img == "docktun:latest" ||
 		strings.HasSuffix(img, "-docktun:latest") ||
 		strings.Contains(img, "docktun")
+}
+
+func isLocalDocktunImage(image string) bool {
+	img := strings.ToLower(strings.TrimSpace(image))
+	// If it contains a slash or registry domain (e.g. "ghcr.io/ooflyeyesoo/docktun:latest"),
+	// it is a remote registry image, NOT a local-only image!
+	if strings.Contains(img, "/") {
+		return false
+	}
+	return img == "docktun" || img == "docktun:latest" || strings.Contains(img, "docktun")
+}
+
+func getLocalGitCommit(selfPath string, detail ContainerDetail) string {
+	if rev, ok := detail.Labels["org.opencontainers.image.revision"]; ok && rev != "" {
+		if len(rev) > 7 {
+			return rev[:7]
+		}
+		return rev
+	}
+	if rev, ok := detail.Labels["git_commit"]; ok && rev != "" {
+		if len(rev) > 7 {
+			return rev[:7]
+		}
+		return rev
+	}
+	if c := os.Getenv("GIT_COMMIT"); c != "" {
+		if len(c) > 7 {
+			return c[:7]
+		}
+		return c
+	}
+	paths := []string{selfPath, "/opt/projects/docktun", "/app", "."}
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		gitDir := filepath.Join(p, ".git")
+		if _, err := os.Stat(gitDir); err == nil {
+			cmd := exec.Command("git", "-C", p, "rev-parse", "--short", "HEAD")
+			if out, err := cmd.Output(); err == nil {
+				commit := strings.TrimSpace(string(out))
+				if commit != "" {
+					return commit
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func fetchLatestGitHubCommit(ctx context.Context, owner, repo, branch string) (string, string, error) {

@@ -307,6 +307,27 @@ func main() {
     cfAPISvc.AutoSyncIngressDNS(configSvc)
   }()
 
+  // Periodically check for container updates in background
+  go func() {
+    time.Sleep(10 * time.Second)
+    log.Println("[docktun] running initial container update check...")
+    if _, err := dockerContainersSvc.CheckAllUpdates(); err != nil {
+      log.Printf("[docktun] update check notice: %v", err)
+    }
+
+    ticker := time.NewTicker(4 * time.Hour)
+    defer ticker.Stop()
+    for {
+      select {
+      case <-ctx.Done():
+        return
+      case <-ticker.C:
+        log.Println("[docktun] running periodic container update check...")
+        _, _ = dockerContainersSvc.CheckAllUpdates()
+      }
+    }
+  }()
+
   <-ctx.Done()
   log.Println("shutting down...")
 
