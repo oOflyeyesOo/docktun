@@ -48,3 +48,13 @@ mount = next(m for m in ts['volumes'] if m['target'] == '/var/lib/tailscale')
 assert mount['type'] == 'volume'
 assert with_tailscale['volumes'][mount['source']]['name'] == with_tailscale['services']['docktun']['environment']['TAILSCALE_STATE_VOLUME']
 print('Tailscale profile, portable userspace mode and shared named state volume passed')
+
+custom_env = dict(env, DOCKER_NETWORK='synology-custom-network')
+custom_env.pop('TAILSCALE_NETWORK', None)
+custom = json.loads(subprocess.check_output(
+    ['docker', 'compose', '-f', compose.name, '--profile', 'tailscale', 'config', '--format', 'json'],
+    cwd=root, env=custom_env, text=True,
+))
+assert custom['networks']['docktun']['name'] == 'synology-custom-network'
+assert custom['services']['docktun']['environment']['TAILSCALE_NETWORK'] == 'synology-custom-network'
+print('Custom Docker network remains consistent with Tailscale')

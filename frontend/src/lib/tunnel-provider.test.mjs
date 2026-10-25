@@ -16,3 +16,9 @@ test('disabled Cloudflare has no degraded warning or controls', () => {
   assert.equal(cloudflareEnabled({status: 'not found'}), true)
   assert.equal(cloudflareEnabled({status: 'running'}), true)
 })
+
+test('no provider selection opens a neutral overview', () => {
+ assert.equal(remoteAccessTab(undefined, 'none'), 'overview')
+ assert.equal(remoteAccessTab(undefined, undefined), 'overview')
+ assert.equal(remoteAccessTab(undefined, 'cloudflare'), 'cloudflare')
+})

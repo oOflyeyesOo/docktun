@@ -23,8 +23,7 @@ func (a *Auth) Verify(next http.Handler) http.Handler {
 		header := r.Header.Get("Authorization")
 		if strings.HasPrefix(header, "Bearer ") {
 			tokenStr = strings.TrimPrefix(header, "Bearer ")
-		} else if qToken := r.URL.Query().Get("token"); qToken != "" {
-			tokenStr = qToken
+
 		} else {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return

@@ -1,10 +1,8 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,13 +35,13 @@ type FileNode struct {
 }
 
 type FileReadResult struct {
-	Path      string `json:"path"`
-	Name      string `json:"name"`
-	Size      int64  `json:"size"`
-	SizeStr   string `json:"size_str"`
-	Content   string `json:"content"`
-	IsBinary  bool   `json:"is_binary"`
-	MimeType  string `json:"mime_type"`
+	Path     string `json:"path"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	SizeStr  string `json:"size_str"`
+	Content  string `json:"content"`
+	IsBinary bool   `json:"is_binary"`
+	MimeType string `json:"mime_type"`
 }
 
 type StorageFilesService struct {
@@ -500,9 +498,9 @@ func (s *StorageFilesService) WriteFile(targetType, targetID, relPath, content s
 		fullPath := filepath.ToSlash(filepath.Join(volMount, relPath))
 		parentDir := filepath.ToSlash(filepath.Dir(fullPath))
 
-		cmdStr := fmt.Sprintf(`mkdir -p "%s" && cat > "%s"`, parentDir, fullPath)
+		cmdStr := `mkdir -p "$1" && cat > "$2"`
 		runnerImg := s.getRunnerImage()
-		cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-i", "-v", fmt.Sprintf("%s:%s:rw", targetID, volMount), runnerImg, "sh", "-c", cmdStr)
+		cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-i", "-v", fmt.Sprintf("%s:%s:rw", targetID, volMount), runnerImg, "sh", "-c", cmdStr, "storage", parentDir, fullPath)
 		cmd.Stdin = strings.NewReader(content)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -517,8 +515,8 @@ func (s *StorageFilesService) WriteFile(targetType, targetID, relPath, content s
 		fullPath := "/" + strings.TrimPrefix(relPath, "/")
 		parentDir := filepath.ToSlash(filepath.Dir(fullPath))
 
-		cmdStr := fmt.Sprintf(`mkdir -p "%s" && cat > "%s"`, parentDir, fullPath)
-		cmd := exec.CommandContext(ctx, "docker", "exec", "-i", targetID, "sh", "-c", cmdStr)
+		cmdStr := `mkdir -p "$1" && cat > "$2"`
+		cmd := exec.CommandContext(ctx, "docker", "exec", "-i", targetID, "sh", "-c", cmdStr, "storage", parentDir, fullPath)
 		cmd.Stdin = strings.NewReader(content)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -665,177 +663,6 @@ func (s *StorageFilesService) DeleteItem(targetType, targetID, relPath string) e
 // 7. Download File Stream
 // -----------------------------------------------------------------------------
 
-func (s *StorageFilesService) GetDownloadStream(targetType, targetID, relPath string) (io.ReadCloser, string, int64, error) {
-	relPath = cleanRelPath(relPath)
-	filename := filepath.Base(relPath)
-
-	switch targetType {
-	case "docktun", "project":
-		basePath := s.resolveHostBasePath(targetType, targetID)
-		fullPath := filepath.Join(basePath, relPath)
-
-		fi, err := os.Stat(fullPath)
-		if err != nil {
-			return nil, "", 0, err
-		}
-		if fi.IsDir() {
-			return nil, "", 0, fmt.Errorf("cannot download a directory")
-		}
-		f, err := os.Open(fullPath)
-		if err != nil {
-			return nil, "", 0, err
-		}
-		return f, filename, fi.Size(), nil
-
-	case "volume":
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		volMount := "/mnt_vol"
-		fullPath := filepath.ToSlash(filepath.Join(volMount, relPath))
-
-		runnerImg := s.getRunnerImage()
-		cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-v", fmt.Sprintf("%s:%s:ro", targetID, volMount), runnerImg, "cat", fullPath)
-		data, err := cmd.Output()
-		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
-				return nil, "", 0, fmt.Errorf("failed to read file from volume: %s", strings.TrimSpace(string(exitErr.Stderr)))
-			}
-			return nil, "", 0, fmt.Errorf("failed to read file: %w", err)
-		}
-
-		rc := io.NopCloser(bytes.NewReader(data))
-		return rc, filename, int64(len(data)), nil
-
-	case "container":
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		fullPath := "/" + strings.TrimPrefix(relPath, "/")
-		cmd := exec.CommandContext(ctx, "docker", "exec", targetID, "cat", fullPath)
-		data, err := cmd.Output()
-		if err != nil {
-			// Fallback: docker cp to temp file, then read and stream (works on stopped containers and containers without cat)
-			tmpFile, tmpErr := os.CreateTemp("", "docktun_dl_*")
-			if tmpErr == nil {
-				defer os.Remove(tmpFile.Name())
-				_ = tmpFile.Close()
-
-				cpCmd := exec.CommandContext(ctx, "docker", "cp", fmt.Sprintf("%s:%s", targetID, fullPath), tmpFile.Name())
-				if cpOut, cpErr := cpCmd.CombinedOutput(); cpErr == nil {
-					cpData, readErr := os.ReadFile(tmpFile.Name())
-					if readErr == nil {
-						rc := io.NopCloser(bytes.NewReader(cpData))
-						return rc, filename, int64(len(cpData)), nil
-					}
-				} else {
-					return nil, "", 0, fmt.Errorf("failed to read file from container: %s (docker cp: %s)", strings.TrimSpace(string(cpOut)), cpErr)
-				}
-			}
-
-			if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
-				return nil, "", 0, fmt.Errorf("failed to read file from container: %s", strings.TrimSpace(string(exitErr.Stderr)))
-			}
-			return nil, "", 0, fmt.Errorf("failed to read file: %w", err)
-		}
-
-		rc := io.NopCloser(bytes.NewReader(data))
-		return rc, filename, int64(len(data)), nil
-
-	default:
-		return nil, "", 0, fmt.Errorf("unknown target type: %s", targetType)
-	}
-}
-
-// -----------------------------------------------------------------------------
-// 8. Upload File
-// -----------------------------------------------------------------------------
-
-func (s *StorageFilesService) UploadFile(targetType, targetID, targetDir, filename string, reader io.Reader) error {
-	targetDir = cleanRelPath(targetDir)
-	targetPath := filepath.ToSlash(filepath.Join(targetDir, filename))
-
-	switch targetType {
-	case "docktun", "project":
-		basePath := s.resolveHostBasePath(targetType, targetID)
-		fullPath := filepath.Join(basePath, targetPath)
-
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-			return err
-		}
-		dst, err := os.Create(fullPath)
-		if err != nil {
-			return err
-		}
-		defer dst.Close()
-		_, err = io.Copy(dst, reader)
-		return err
-
-	case "volume":
-		// Read uploaded bytes into buffer
-		data, err := io.ReadAll(reader)
-		if err != nil {
-			return err
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		volMount := "/mnt_vol"
-		fullPath := filepath.ToSlash(filepath.Join(volMount, targetPath))
-		parentDir := filepath.ToSlash(filepath.Dir(fullPath))
-
-		runnerImg := s.getRunnerImage()
-		cmdStr := fmt.Sprintf(`mkdir -p "%s" && cat > "%s"`, parentDir, fullPath)
-		cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-i", "-v", fmt.Sprintf("%s:%s:rw", targetID, volMount), runnerImg, "sh", "-c", cmdStr)
-		cmd.Stdin = bytes.NewReader(data)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("failed to upload into volume: %s (%w)", strings.TrimSpace(string(out)), err)
-		}
-		return nil
-
-	case "container":
-		data, err := io.ReadAll(reader)
-		if err != nil {
-			return err
-		}
-
-		fullPath := "/" + strings.TrimPrefix(targetPath, "/")
-		parentDir := filepath.ToSlash(filepath.Dir(fullPath))
-
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		cmdStr := fmt.Sprintf(`mkdir -p "%s" && cat > "%s"`, parentDir, fullPath)
-		cmd := exec.CommandContext(ctx, "docker", "exec", "-i", targetID, "sh", "-c", cmdStr)
-		cmd.Stdin = bytes.NewReader(data)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			// Fallback: docker cp from temp file (works on stopped containers and containers without sh)
-			tmpFile, tmpErr := os.CreateTemp("", "docktun_upload_*")
-			if tmpErr == nil {
-				defer os.Remove(tmpFile.Name())
-				_, _ = tmpFile.Write(data)
-				_ = tmpFile.Close()
-
-				cpCmd := exec.CommandContext(ctx, "docker", "cp", tmpFile.Name(), fmt.Sprintf("%s:%s", targetID, fullPath))
-				cpOut, cpErr := cpCmd.CombinedOutput()
-				if cpErr == nil {
-					return nil
-				}
-				return fmt.Errorf("failed to upload into container: %s (cp fallback: %s)", strings.TrimSpace(string(out)), strings.TrimSpace(string(cpOut)))
-			}
-			return fmt.Errorf("failed to upload into container: %s (%w)", strings.TrimSpace(string(out)), err)
-		}
-		return nil
-
-	default:
-		return fmt.Errorf("unknown target type: %s", targetType)
-	}
-}
-
-// -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
 

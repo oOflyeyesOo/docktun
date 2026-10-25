@@ -12,7 +12,7 @@ services:
     environment:
       DOCKER_NETWORK: ${DOCKER_NETWORK:-docktun}
       TAILSCALE_STATE_VOLUME: ${TAILSCALE_STATE_VOLUME:-docktun-tailscale-state}
-      TAILSCALE_NETWORK: ${TAILSCALE_NETWORK:-docktun}
+      TAILSCALE_NETWORK: ${TAILSCALE_NETWORK:-${DOCKER_NETWORK:-docktun}}
       DB_PATH: /app/data/app.db
       CLOUDFLARED_CONFIG_PATH: /etc/cloudflared/config.yml
       CLOUDFLARED_CONTAINER: docktun-cloudflared

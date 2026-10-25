@@ -43,7 +43,7 @@ services:
       CLOUDFLARED_CONTAINER: ${CLOUDFLARED_CONTAINER:-docktun-cloudflared}
       CLOUDFLARED_METRICS: ${CLOUDFLARED_METRICS:-http://docktun-cloudflared:2000/metrics}
       TAILSCALE_STATE_VOLUME: ${TAILSCALE_STATE_VOLUME:-docktun-tailscale-state}
-      TAILSCALE_NETWORK: ${TAILSCALE_NETWORK:-docktun}
+      TAILSCALE_NETWORK: ${TAILSCALE_NETWORK:-${DOCKER_NETWORK:-docktun}}
       DOCKER_NETWORK: ${DOCKER_NETWORK:-docktun}
       DB_PATH: ${DB_PATH:-/app/data/app.db}
       LISTEN_ADDR: ${LISTEN_ADDR:-0.0.0.0:3001}

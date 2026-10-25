@@ -161,7 +161,7 @@ function getExpose(id?: string): ExposureSettings {
       mode: 'internal',
       hostname: '',
       target: '',
-      private_type: 'tailscale',
+      private_type: '',
       private_host: '',
       private_port: 80,
       notes: '',
@@ -172,7 +172,7 @@ function getExpose(id?: string): ExposureSettings {
       mode: 'internal',
       hostname: '',
       target: '',
-      private_type: 'tailscale',
+      private_type: '',
       private_host: '',
       private_port: 80,
       notes: '',
@@ -806,7 +806,6 @@ const summary = computed(() => {
   const running = containers.value.filter((c) => c.running).length
   const publicCount = containers.value.filter((c) => c.exposure_mode === 'public').length
   const privateCount = containers.value.filter((c) => c.exposure_mode === 'private').length
-  const localCount = containers.value.filter((c) => c.running && c.exposure_mode !== 'public' && c.exposure_mode !== 'private').length
 
   let totalCpu = 0
   containers.value.forEach((c) => {
@@ -820,7 +819,6 @@ const summary = computed(() => {
     total,
     running,
     stopped: total - running,
-    localCount,
     publicCount,
     privateCount,
     stackCount: containerGroups.value.filter((g) => g.isStack).length,
@@ -1071,7 +1069,7 @@ async function fetchContainers() {
           mode: c.exposure_mode || c.exposure?.mode || 'internal',
           hostname: c.hostname || c.exposure?.hostname || '',
           target: c.target || c.exposure?.target || `http://${c.name}:80`,
-          private_type: c.private_type || c.exposure?.private_type || 'tailscale',
+          private_type: c.private_type || c.exposure?.private_type || '',
           private_host: c.private_host || c.exposure?.private_host || '',
           private_port: c.private_port || c.exposure?.private_port || 80,
           notes: c.notes || c.exposure?.notes || '',
@@ -1247,7 +1245,7 @@ function toggleExposeDrawer(container: ContainerItem) {
         mode: container.exposure_mode || 'internal',
         hostname: container.hostname || '',
         target: container.target || `http://${container.name}:${pPort}`,
-        private_type: container.private_type || 'tailscale',
+        private_type: container.private_type || '',
         private_host: container.private_host || '',
         private_port: container.private_port || parseInt(pPort, 10) || 80,
         notes: container.notes || '',
@@ -1307,7 +1305,7 @@ async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' |
       mode: c.exposure_mode || 'internal',
       hostname: c.hostname || '',
       target: c.target || `http://${c.name}:${pPort}`,
-      private_type: c.private_type || 'tailscale',
+      private_type: c.private_type || '',
       private_host: c.private_host || '',
       private_port: c.private_port || parseInt(pPort, 10) || 80,
       notes: c.notes || '',
@@ -2010,7 +2008,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Quick Stats Cards -->
-    <div class="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+    <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <div class="cyber-card flex flex-col justify-between p-3.5">
         <div class="flex items-center justify-between text-xs text-slate-600">
           <span>Total Containers</span>
@@ -2043,13 +2041,7 @@ onUnmounted(() => {
         <div class="mt-2 text-2xl font-bold text-indigo-700 font-mono">{{ summary.stackCount }}</div>
       </div>
 
-      <div class="cyber-card flex flex-col justify-between p-3.5">
-        <div class="flex items-center justify-between text-xs text-violet-400">
-          <span>Local (mDNS)</span>
-          <Wifi class="h-4 w-4 text-violet-400" />
-        </div>
-        <div class="mt-2 text-2xl font-bold text-violet-300 font-mono">{{ summary.localCount }}</div>
-      </div>
+
 
       <div class="cyber-card flex flex-col justify-between p-3.5">
         <div class="flex items-center justify-between text-xs text-cyan-600">
@@ -2098,7 +2090,7 @@ onUnmounted(() => {
           class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors"
           :class="filter === 'local' ? 'bg-slate-100 text-violet-300 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
         >
-          Local mDNS ({{ summary.localCount }})
+          Local
         </button>
         <button
           @click="filter = 'public'"
@@ -2526,7 +2518,7 @@ onUnmounted(() => {
                 class="inline-flex items-center gap-1.5 rounded-full border border-violet-500/40 bg-violet-500/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet-300"
               >
                 <Shield class="h-3 w-3" />
-                <span>Private Mesh ({{ container.private_type || 'tailscale' }})</span>
+                <span>Private Mesh ({{ container.private_type || '' }})</span>
               </span>
               <span
                 v-else-if="container.running"
@@ -2893,11 +2885,13 @@ onUnmounted(() => {
 
             <!-- Private Mode Inputs -->
             <template v-if="getExpose(container.id).mode === 'private'">
+              <div><label class="block text-xs">Container target (name:internal port)</label><input v-model="getExpose(container.id).target" :placeholder="container.name + ':8080'" class="cyber-input" /><p class="text-xs text-slate-500">Tailscale TCP forwarding; no separate device or public Funnel. Blank uses the private port as the container port.</p></div>
               <div>
                 <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
                   Private Mesh Type
                 </label>
                 <select v-model="getExpose(container.id).private_type" class="cyber-input">
+                  <option value="" disabled>Choose a provider</option>
                   <option value="tailscale">Tailscale</option>
                   <option value="wireguard">WireGuard</option>
                   <option value="mesh">Custom Mesh</option>
@@ -2905,7 +2899,7 @@ onUnmounted(() => {
               </div>
               <div>
                 <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                  Private Host / IP
+                  Tailscale address (filled after saving) / Other mesh IP
                 </label>
                 <input
                   v-model="getExpose(container.id).private_host"
@@ -2916,7 +2910,7 @@ onUnmounted(() => {
               </div>
               <div>
                 <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                  Private Port
+                  Private listening port
                 </label>
                 <input
                   v-model.number="getExpose(container.id).private_port"
@@ -2931,10 +2925,10 @@ onUnmounted(() => {
           <div class="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-slate-200">
             <p class="text-xs text-slate-600">
               <span v-if="getExpose(container.id).mode === 'public'" class="text-cyan-700">
-                Saving public mode automatically connects the container to 'cloudflared' network and configures tunnel routing.
+                Saving public mode connects the container to the tunnel network and configures Cloudflare routing.
               </span>
               <span v-else-if="getExpose(container.id).mode === 'private'" class="text-violet-300">
-                Routes traffic privately through your encrypted mesh network.
+                Tailscale forwards TCP through the shared DockTun device. Use a unique private port for each app. Other mesh types require their own routing.
               </span>
               <span v-else class="text-slate-500">
                 Removes public ingress rules for this container. Accessible inside Docker network.
@@ -3480,15 +3474,17 @@ onUnmounted(() => {
 
                 <!-- Private Mesh Options -->
                 <template v-if="getExpose(selectedContainer.id).mode === 'private'">
+              <div><label class="block text-xs">Container target (name:internal port)</label><input v-model="getExpose(selectedContainer.id).target" :placeholder="selectedContainer.name + ':8080'" class="cyber-input" /><p class="text-xs">Tailscale uses the shared DockTun device, with a unique TCP port per app.</p></div>
                   <div>
                     <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Mesh Type</label>
                     <select v-model="getExpose(selectedContainer.id).private_type" class="cyber-input text-xs">
-                      <option value="tailscale">Tailscale</option>
+                      <option value="" disabled>Choose a provider</option>
+                  <option value="tailscale">Tailscale</option>
                       <option value="wireguard">WireGuard</option>
                     </select>
                   </div>
                   <div>
-                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Private Host / IP</label>
+                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Tailscale address (filled after saving) / Other mesh IP</label>
                     <input
                       v-model="getExpose(selectedContainer.id).private_host"
                       type="text"
@@ -3497,7 +3493,7 @@ onUnmounted(() => {
                     />
                   </div>
                   <div>
-                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Private Port</label>
+                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Private listening port</label>
                     <input
                       v-model.number="getExpose(selectedContainer.id).private_port"
                       type="number"

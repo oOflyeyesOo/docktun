@@ -23,6 +23,9 @@ import (
 )
 
 func main() {
+  if len(os.Args) == 5 && os.Args[1] == "update-worker" {
+    if err := service.RunSelfUpdateWorker(os.Args[2], os.Args[3], os.Args[4]); err != nil { log.Fatal(err) }; return
+  }
   cfg, err := config.Load()
   if err != nil {
     log.Fatalf("failed to load config: %v", err)
@@ -96,6 +99,10 @@ func main() {
 
   r.Group(func(r chi.Router) {
     r.Use(authMw.Verify)
+    updater := handler.NewSelfUpdate(service.NewSelfUpdater(dataDir), auditSvc)
+    r.Get("/api/self-update", updater.Status)
+    r.Post("/api/self-update/check", updater.Check)
+    r.Post("/api/self-update/install", updater.Install)
 
     r.Get("/api/setup/details", setupHandler.Details)
     r.Post("/api/setup/reconfigure", setupHandler.Reconfigure)
@@ -297,14 +304,16 @@ func main() {
     }
   }()
 
-  // Automatically sync all ingress hostnames & wildcard route with Cloudflare DNS on startup
+  // Reconcile only a provider explicitly selected in setup.
   go func() {
     time.Sleep(2 * time.Second)
+    mesh, err := meshSvc.Load()
+    if err != nil || !mesh.Enabled || mesh.Mode == "none" { return }
     if _, err := dockerContainersSvc.ReconcileNetworks(); err != nil {
       log.Printf("[docktun] network reconciliation notice: %v", err)
     }
     time.Sleep(1 * time.Second)
-    cfAPISvc.AutoSyncIngressDNS(configSvc)
+    if mesh.Mode == "public" { cfAPISvc.AutoSyncIngressDNS(configSvc) }
   }()
 
   // Periodically check for container updates in background
