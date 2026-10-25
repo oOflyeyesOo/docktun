@@ -328,12 +328,44 @@ func (s *DockerRunService) executeDirect(jobID int, parsed *ParsedDockerRun, raw
 	tokens := splitShellArgs(rawCmd)
 	var cmdArgs []string
 
-	// Strip leading "docker"
+	// Strip leading "docker" or "podman"
 	idx := 0
-	if idx < len(tokens) && tokens[idx] == "docker" {
+	if idx < len(tokens) && (tokens[idx] == "docker" || tokens[idx] == "podman") {
 		idx++
 	}
 	cmdArgs = append(cmdArgs, tokens[idx:]...)
+
+	// If the user entered "docker pull ...", "pull ...", or just an image name, construct a "docker run" command
+	isRunCmd := false
+	if len(cmdArgs) > 0 && cmdArgs[0] == "run" {
+		isRunCmd = true
+	}
+
+	if !isRunCmd {
+		newArgs := []string{"run", "-d"}
+		if parsed.Restart != "" {
+			newArgs = append(newArgs, "--restart", parsed.Restart)
+		}
+		if parsed.ContainerName != "" {
+			newArgs = append(newArgs, "--name", parsed.ContainerName)
+		}
+		for _, p := range parsed.Ports {
+			newArgs = append(newArgs, "-p", p)
+		}
+		for _, v := range parsed.Volumes {
+			newArgs = append(newArgs, "-v", v)
+		}
+		for _, e := range parsed.Env {
+			newArgs = append(newArgs, "-e", e)
+		}
+		if parsed.Network != "" {
+			newArgs = append(newArgs, "--network", parsed.Network)
+		}
+		newArgs = append(newArgs, parsed.ExtraArgs...)
+		newArgs = append(newArgs, parsed.Image)
+		newArgs = append(newArgs, parsed.Command...)
+		cmdArgs = newArgs
+	}
 
 	// If cloudflared connect requested and --network wasn't supplied, add --network
 	hasNetwork := false
@@ -437,10 +469,10 @@ func ParseDockerRunCommand(raw string) (*ParsedDockerRun, error) {
 	}
 
 	idx := 0
-	if idx < len(tokens) && tokens[idx] == "docker" {
+	if idx < len(tokens) && (tokens[idx] == "docker" || tokens[idx] == "podman") {
 		idx++
 	}
-	if idx < len(tokens) && tokens[idx] == "run" {
+	if idx < len(tokens) && (tokens[idx] == "run" || tokens[idx] == "pull" || tokens[idx] == "create") {
 		idx++
 	}
 
@@ -546,7 +578,11 @@ func ParseDockerRunCommand(raw string) (*ParsedDockerRun, error) {
 		if colon := strings.Index(base, ":"); colon != -1 {
 			base = base[:colon]
 		}
-		res.ContainerName = base + "-" + fmt.Sprintf("%d", time.Now().Unix()%1000)
+		base = strings.TrimSpace(base)
+		if base == "" {
+			base = "app"
+		}
+		res.ContainerName = base
 	}
 
 	return res, nil

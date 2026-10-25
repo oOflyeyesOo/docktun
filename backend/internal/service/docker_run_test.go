@@ -80,3 +80,31 @@ func TestGenerateComposeYAML_HostNetwork(t *testing.T) {
 		t.Errorf("should not contain 'external: true' for host network mode, got:\n%s", yaml)
 	}
 }
+
+func TestParseDockerRunCommand_DockerPull(t *testing.T) {
+	cmd := "docker pull ghcr.io/ooflyeyesoo/aiostreams-aio:39c3611bfffd26d737876b817c0b857461f441cb"
+	parsed, err := ParseDockerRunCommand(cmd)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed.Image != "ghcr.io/ooflyeyesoo/aiostreams-aio:39c3611bfffd26d737876b817c0b857461f441cb" {
+		t.Errorf("expected image 'ghcr.io/ooflyeyesoo/aiostreams-aio:39c3611bfffd26d737876b817c0b857461f441cb', got %q", parsed.Image)
+	}
+	if parsed.ContainerName != "aiostreams-aio" {
+		t.Errorf("expected container name 'aiostreams-aio', got %q", parsed.ContainerName)
+	}
+}
+
+func TestParseDockerRunCommand_BareImage(t *testing.T) {
+	cmd := "ghcr.io/ooflyeyesoo/aiostreams-aio:latest"
+	parsed, err := ParseDockerRunCommand(cmd)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed.Image != "ghcr.io/ooflyeyesoo/aiostreams-aio:latest" {
+		t.Errorf("expected image 'ghcr.io/ooflyeyesoo/aiostreams-aio:latest', got %q", parsed.Image)
+	}
+	if parsed.ContainerName != "aiostreams-aio" {
+		t.Errorf("expected container name 'aiostreams-aio', got %q", parsed.ContainerName)
+	}
+}
