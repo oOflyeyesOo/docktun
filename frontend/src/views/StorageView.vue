@@ -40,12 +40,12 @@ import {
   FileImage
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
-import { useAuthStore } from '../stores/auth'
+
 
 const route = useRoute()
 const router = useRouter()
-const { apiFetch } = useApi()
-const authStore = useAuthStore()
+const { apiFetch, apiResponse } = useApi()
+
 
 // Primary State
 const loading = ref(true)
@@ -354,12 +354,7 @@ async function downloadStorageFile(file: any) {
       target_id: selectedTarget.value.id,
       path: filePath
     })
-    const headers: Record<string, string> = {}
-    if (authStore.token) {
-      headers['Authorization'] = `Bearer ${authStore.token}`
-      params.set('token', authStore.token)
-    }
-    const res = await fetch(`/api/storage/files/download?${params}`, { headers })
+    const res = await apiResponse(`/api/storage/files/download?${params}`)
     if (!res.ok) {
       const errText = await res.text()
       let msg = `Download failed (HTTP ${res.status})`
@@ -378,7 +373,7 @@ async function downloadStorageFile(file: any) {
     document.body.appendChild(a)
     a.click()
     a.remove()
-    window.URL.revokeObjectURL(url)
+    setTimeout(() => window.URL.revokeObjectURL(url), 30000)
     showToast(`Downloaded ${file.name}`)
   } catch (e: any) {
     showToast(e.message || 'Failed to download file', 'error')
@@ -407,6 +402,7 @@ function onFileSelected(e: Event) {
 
 async function executeUpload() {
   if (!selectedUploadFile.value || !selectedTarget.value) return
+  if (selectedUploadFile.value.size > 64 * 1024 * 1024) { showToast('Files must be 64 MB or smaller', 'error'); return }
   uploading.value = true
   try {
     const formData = new FormData()
@@ -415,16 +411,7 @@ async function executeUpload() {
     formData.append('dir_path', currentPath.value || '')
     formData.append('file', selectedUploadFile.value)
 
-    const headers: Record<string, string> = {}
-    if (authStore.token) {
-      headers['Authorization'] = `Bearer ${authStore.token}`
-    }
-
-    const res = await fetch('/api/storage/files/upload', {
-      method: 'POST',
-      headers,
-      body: formData
-    })
+    const res = await apiResponse('/api/storage/files/upload', { method: 'POST', body: formData })
 
     if (!res.ok) {
       const errText = await res.text()
@@ -2108,7 +2095,7 @@ onMounted(async () => {
           </div>
 
           <div class="space-y-1">
-            <label class="text-[11px] text-slate-700 font-semibold">Select File from Computer</label>
+            <label class="text-[11px] text-slate-700 font-semibold">Select File from Computer (up to 64 MB)</label>
             <input
               ref="uploadFileInput"
               type="file"

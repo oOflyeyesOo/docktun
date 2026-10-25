@@ -76,7 +76,7 @@ const form = reactive({
 
   // Container Import Config
   selected_container_ids: {} as Record<string, boolean>,
-  connect_network: true,
+  connect_network: false,
   auto_import_stacks: true,
 
   // Notifications
@@ -390,10 +390,10 @@ onMounted(() => {
           <div>
             <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
               <Globe class="h-5 w-5 text-cyan-600" />
-              <span>Step 2: Tunnel & Remote Access Activation</span>
+              <span>Step 2: Remote Access (Optional)</span>
             </h2>
             <p class="text-xs text-slate-600 mt-1">
-              Select how you want to access your containers and expose web apps securely over the internet.
+              You can skip remote access entirely. Choose a provider only if you want to configure it; exposing individual containers is a separate choice.
             </p>
           </div>
 
@@ -411,7 +411,7 @@ onMounted(() => {
             >
               <div class="flex items-center justify-between">
                 <Globe class="h-5 w-5 text-cyan-600" />
-                <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-700 font-mono font-bold">Recommended</span>
+                <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-700 font-mono font-bold">Public access</span>
               </div>
               <span class="text-xs font-bold font-mono mt-2 text-slate-900">Cloudflare Tunnel</span>
               <span class="text-[11px] text-slate-600 mt-1 leading-snug">
@@ -473,9 +473,9 @@ onMounted(() => {
                 <Wifi class="h-5 w-5 text-slate-600" />
                 <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-mono">Local</span>
               </div>
-              <span class="text-xs font-bold font-mono mt-2 text-slate-900">Local Only (mDNS)</span>
+              <span class="text-xs font-bold font-mono mt-2 text-slate-900">No remote access</span>
               <span class="text-[11px] text-slate-600 mt-1 leading-snug">
-                No external tunnels. Access containers inside your LAN via <code class="text-slate-700">&lt;name&gt;.local</code>.
+                Manage your containers locally. No tunnel or VPN is required; existing local access stays as configured.
               </span>
             </button>
           </div>
@@ -660,7 +660,7 @@ onMounted(() => {
               <div class="space-y-0.5">
                 <span class="text-xs font-bold text-slate-800">Connect to Tunnel Network</span>
                 <p class="text-[11px] text-slate-600">
-                  Adds containers to the <code class="text-cyan-700">cloudflared</code> Docker network so they can be exposed and routed cleanly.
+                  Optionally connects selected containers to the DockTun network. This does not publish them or enable remote access.
                 </p>
               </div>
             </label>
@@ -756,7 +756,7 @@ onMounted(() => {
               <span class="text-slate-600 uppercase text-[10px]">Remote Access</span>
               <div class="text-sm font-bold text-cyan-700 capitalize">{{ form.tunnel_type }}</div>
               <div class="text-[11px] text-slate-600">
-                {{ form.tunnel_type === 'cloudflare' ? 'Zero Trust Edge Tunnel' : form.tunnel_type === 'none' ? 'Local mDNS Only' : 'Encrypted VPN' }}
+                {{ form.tunnel_type === 'cloudflare' ? 'Zero Trust Edge Tunnel' : form.tunnel_type === 'none' ? 'No remote access' : 'Encrypted VPN' }}
               </div>
             </div>
 

@@ -244,6 +244,72 @@ DockTun/
 
 ## Development
 
+### Optional remote access and container exposure
+
+Remote access is optional. Setup starts with **No remote access**, and importing
+containers does not attach a tunnel network unless requested. Selecting Cloudflare,
+Tailscale, or WireGuard does not expose every container. Each container starts
+internal and requires an explicit exposure choice.
+
+- **Cloudflare:** configure your tunnel, then choose public exposure for individual apps.
+- **Tailscale:** sign in under Remote Access, then select Tailscale private exposure.
+  DockTun configures a persistent TCP forwarding rule on the shared `docktun`
+  Tailscale device. Set the app's internal port and a unique private listening port.
+  Apps do not become separate tailnet devices. This does not enable public Funnel
+  or UDP forwarding; tailnet access policies still apply.
+- **WireGuard/custom mesh:** configure the VPN's routing and any required host port
+  publishing, then save the reachable VPN address and port. Saving the address
+  does not create VPN forwarding rules. DockTun does not assume a gateway address.
+
+Removing exposure removes its managed forwarding rule without disconnecting the
+container's existing Docker networks. This does not remove independently configured
+host port mappings or routes.
+
+### Updating DockTun in the dashboard
+
+Use **Settings → Update DockTun → Check for updates → Install update**. The check
+stages `ghcr.io/ooflyeyesoo/docktun:latest`; installation runs in an independent
+helper container, preserves the inspected mounts, environment, ports and networks,
+and restores the previous container if the replacement fails its health check.
+Container rollback does not undo database migrations or other stored-data changes.
+
+Existing versions without this updater need one normal image pull/recreation first.
+After that, no Git pull is needed for dashboard updates. A source-built installation
+switches its running container to the published image; its source Compose file is
+not rewritten. Running that source Compose build again can replace the image.
+
+The Docker socket and a writable persistent data mount are required. With a custom
+container hostname, set `DOCKTUN_CONTAINER` to the running container's name.
+Self-updates refuse auto-remove containers, static Docker IP assignments, and shared
+container network namespaces, leaving those installations available for manual updates.
+`DOCKTUN_UPDATE_IMAGE` optionally selects another registry reference or an already
+loaded immutable `sha256:` image for offline installations.
+
+Storage transfers support binary and empty files, named volumes, and running or
+stopped containers. Uploads are limited to 64 MiB. Stopped/minimal-container uploads
+require the destination parent directory to exist. Downloads authenticate through
+the request header, without putting login tokens in URLs.
+
+### Regression checks
+
+Use Go 1.25 or newer (the Docker build and CI use Go 1.27).
+
+```bash
+(cd backend && go test -race ./... && go vet ./...)
+(cd frontend && pnpm test && pnpm build)
+docker build -t docktun:test .
+python3 tests/verify_prebuilt_install.py
+DOCKTUN_TEST_IMAGE=docktun:test python3 tests/container_smoke.py
+DOCKTUN_TEST_IMAGE=docktun:test python3 tests/compose_integration.py
+DOCKTUN_TEST_IMAGE=docktun:test python3 tests/transfers_update_integration.py
+DOCKTUN_TEST_IMAGE=docktun:test python3 tests/tailscale_integration.py
+DOCKTUN_TEST_IMAGE=docktun:test python3 tests/tailscale_forwarding_integration.py
+```
+
+The Tailscale tests require the fixed `docktun-tailscale` name to be unused. The
+forwarding test creates a disposable local Headscale tailnet and uses no personal
+Tailscale account or keys. Run these tests sequentially on a disposable Docker engine.
+
 ### Backend
 
 ```bash

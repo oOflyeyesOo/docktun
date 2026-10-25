@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { RotateCcw, ShieldCheck, KeyRound, Globe, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
+import SelfUpdate from '../components/SelfUpdate.vue'
 import SystemDiagnostics from '../components/SystemDiagnostics.vue'
 import { useApi } from '../composables/useApi'
 
@@ -52,6 +53,7 @@ onMounted(() => {
       <p class="text-xs text-muted font-mono mt-1">// Manage credentials, tunnel configuration, and host utilities</p>
     </div>
 
+    <SelfUpdate />
     <SystemDiagnostics />
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">

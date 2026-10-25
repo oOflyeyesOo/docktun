@@ -42,7 +42,7 @@ const route = useRoute()
 const router = useRouter()
 
 // Active Top-Level Tab: 'cloudflare' | 'tailscale' | 'wireguard'
-const activeTab = ref<'cloudflare' | 'tailscale' | 'wireguard'>('tailscale')
+const activeTab = ref<'overview' | 'cloudflare' | 'tailscale' | 'wireguard'>('overview')
 
 // Overview Data
 interface OverviewData {
@@ -187,11 +187,13 @@ const wireguardContainers = computed(() => {
 const showExposeModal = ref(false)
 const exposeTargetContainer = ref<ContainerExposure | null>(null)
 const exposeForm = ref({
-  mode: 'private' as 'public' | 'private' | 'internal',
-  private_type: 'tailscale' as 'tailscale' | 'wireguard',
+  mode: 'internal' as 'public' | 'private' | 'internal',
+  private_type: '' as '' | 'tailscale' | 'wireguard',
   private_port: 80,
+  target_port: 80,
+  private_host: '',
   subdomain: '',
-  domain: 'mightysprite.dev',
+  domain: '',
   zero_trust_enabled: false,
   zero_trust_emails: '',
   zero_trust_auth_type: 'email' as 'email' | 'domain' | 'everyone' | 'ip' | 'bypass_ip',
@@ -398,8 +400,8 @@ function copyText(key: string, text: string) {
 // Open Expose Modal for Container
 function openExposeModal(
   container: ContainerExposure | null,
-  defaultMode: 'public' | 'private' = 'private',
-  privateType: 'tailscale' | 'wireguard' = 'tailscale'
+  defaultMode: 'public' | 'private',
+  privateType: 'tailscale' | 'wireguard'
 ) {
   if (!container && containerExposures.value.length > 0) {
     const unexposed = containerExposures.value.find((c) => c.exposure_mode === 'internal')
@@ -411,8 +413,10 @@ function openExposeModal(
     mode: defaultMode,
     private_type: privateType,
     private_port: container?.private_port || defaultPort,
+    target_port: defaultPort,
+    private_host: '',
     subdomain: container ? container.name.toLowerCase().replace(/[^a-z0-9-]/g, '-') : '',
-    domain: 'mightysprite.dev',
+    domain: '',
     zero_trust_enabled: container?.zero_trust_enabled || false,
     zero_trust_emails: container?.zero_trust_emails || '',
     zero_trust_auth_type: (container?.zero_trust_auth_type as any) || 'email',
@@ -428,6 +432,7 @@ function onExposeTargetChanged(event: Event) {
     exposeTargetContainer.value = found
     const defaultPort = found.ports && found.ports.length > 0 ? found.ports[0] : 80
     exposeForm.value.private_port = found.private_port || defaultPort
+    exposeForm.value.target_port = defaultPort
     exposeForm.value.subdomain = found.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
     exposeForm.value.zero_trust_enabled = found.zero_trust_enabled || false
     exposeForm.value.zero_trust_emails = found.zero_trust_emails || ''
@@ -452,8 +457,9 @@ async function saveContainerExposure() {
         mode: exposeForm.value.mode,
         private_type: exposeForm.value.private_type,
         private_port: exposeForm.value.private_port,
+        private_host: exposeForm.value.private_host,
         hostname: hostname,
-        target: `http://${exposeTargetContainer.value.name}:${exposeForm.value.private_port}`,
+        target: `http://${exposeTargetContainer.value.name}:${exposeForm.value.target_port}`,
         zero_trust_enabled: exposeForm.value.mode === 'public' && exposeForm.value.zero_trust_enabled,
         zero_trust_emails: exposeForm.value.zero_trust_emails?.trim() || '',
         zero_trust_auth_type: exposeForm.value.zero_trust_auth_type,
@@ -497,15 +503,6 @@ onMounted(async () => {
   const mesh = await apiFetch<any>('/api/mesh')
   activeTab.value = remoteAccessTab(qTab, mesh.mode)
   await fetchOverview()
-  if (!qTab && overview.value) {
-    if (overview.value.tailscale?.running) {
-      activeTab.value = 'tailscale'
-    } else if (overview.value.wireguard?.running) {
-      activeTab.value = 'wireguard'
-    } else if (overview.value.cloudflare?.running) {
-      activeTab.value = 'cloudflare'
-    }
-  }
   await fetchContainerExposures()
   if (activeTab.value === 'tailscale') await fetchTailscale()
   if (activeTab.value === 'wireguard') await fetchWireguard()
@@ -688,7 +685,8 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
     <!-- ========================================================================= -->
     <!-- TAB 1: CLOUDFLARE TUNNEL (Full Integrated Config & Rules Engine) -->
     <!-- ========================================================================= -->
-    <div v-show="activeTab === 'cloudflare'" class="space-y-6">
+    <section v-if="activeTab === 'overview'" class="cyber-panel p-5 space-y-2"><h2 class="font-semibold">Remote access is optional</h2><p class="text-sm text-slate-600">Keep your containers internal, or choose Cloudflare, Tailscale, or WireGuard above when you want remote access. Opening a provider does not activate it or expose any containers.</p></section>
+    <div v-if="activeTab === 'cloudflare'" class="space-y-6">
       <ConfigView :embedded="true" />
     </div>
 
@@ -968,7 +966,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 </td>
                 <td class="py-2.5 px-3">
                   <div class="flex items-center gap-2">
-                    <span class="text-purple-700 font-bold truncate max-w-xs">{{ c.tailscale_url || `http://${tailscale?.hostname || 'docktun'}:${c.private_port || 80}` }}</span>
+                    <span class="text-purple-700 font-bold truncate max-w-xs">{{ c.tailscale_url || 'Connect Tailscale to obtain an address' }}</span>
                     <button
                       v-if="c.tailscale_url"
                       @click="copyText('ts_url_' + c.name, c.tailscale_url)"
@@ -1144,7 +1142,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
 
         <div v-if="wireguardContainers.length === 0" class="py-8 text-center text-xs text-slate-500 border border-dashed border-slate-200 rounded-xl bg-slate-50/40 space-y-2">
           <Shield class="h-6 w-6 text-slate-600 mx-auto" />
-          <p>No containers currently routed directly through WireGuard VPN gateway.</p>
+          <p>No containers have a saved WireGuard access address. Configure your VPN routing before adding an address here.</p>
           <button
             @click="openExposeModal(null, 'private', 'wireguard')"
             class="cyber-btn-secondary text-xs text-emerald-700 hover:border-emerald-500/50 inline-flex items-center gap-1.5"
@@ -1182,7 +1180,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 </td>
                 <td class="py-2.5 px-3">
                   <div class="flex items-center gap-2">
-                    <span class="text-emerald-700 font-bold truncate max-w-xs">{{ c.wireguard_url || `http://10.13.13.1:${c.private_port || 80}` }}</span>
+                    <span class="text-emerald-700 font-bold truncate max-w-xs">{{ c.wireguard_url || 'VPN address not configured' }}</span>
                     <button
                       v-if="c.wireguard_url"
                       @click="copyText('wg_url_' + c.name, c.wireguard_url)"
@@ -1511,9 +1509,11 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             </div>
           </div>
 
+          <div v-if="exposeForm.mode === 'private' && exposeForm.private_type === 'wireguard'"><label class="block text-xs">Existing VPN address</label><input v-model="exposeForm.private_host" class="cyber-input" placeholder="VPN-reachable host or IP" /><p class="text-xs text-slate-600">Saves an access address. Configure routing and port publishing in your WireGuard setup first.</p></div>
+          <div v-if="exposeForm.private_type === 'tailscale' || exposeForm.mode === 'public'"><label class="block text-xs">Container internal TCP port</label><input v-model.number="exposeForm.target_port" type="number" min="1" max="65535" class="cyber-input" /><p v-if="exposeForm.mode === 'private'" class="text-xs text-slate-600">Uses the shared DockTun Tailscale device. Choose a unique private listening port for each app; no public Funnel is enabled.</p></div>
           <!-- Container Target Port -->
           <div>
-            <label class="block text-[11px] font-medium text-slate-700 mb-1">Container Port to Expose</label>
+            <label class="block text-[11px] font-medium text-slate-700 mb-1">Private listening port / Access port</label>
             <div class="flex items-center gap-2">
               <input
                 v-model.number="exposeForm.private_port"
@@ -1542,7 +1542,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 <input
                   v-model="exposeForm.domain"
                   type="text"
-                  placeholder="mightysprite.dev"
+                  placeholder="example.com"
                   class="cyber-input font-mono text-xs flex-1"
                 />
               </div>

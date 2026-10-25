@@ -33,3 +33,13 @@ func TestVerifyClaims(t *testing.T) {
 		})
 	}
 }
+
+func TestQueryTokenCannotAuthenticateAPI(t *testing.T) {
+	token, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"sub": 1, "username": "owner", "exp": time.Now().Add(time.Hour).Unix()}).SignedString([]byte("secret"))
+	r := httptest.NewRequest("GET", "/api/storage/files/download?token="+token, nil)
+	w := httptest.NewRecorder()
+	NewAuth("secret").Verify(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("query credential accepted") })).ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatal(w.Code)
+	}
+}

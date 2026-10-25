@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"docktun/internal/service"
+	"github.com/go-chi/chi/v5"
 )
 
 type StorageHandler struct {
@@ -389,7 +390,7 @@ func (h *StorageHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer stream.Close()
 
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Access-Control-Expose-Headers", "Content-Disposition")
 	if size > 0 {
@@ -400,12 +401,13 @@ func (h *StorageHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *StorageHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
-	// Parse multipart form up to 64MB
-	if err := r.ParseMultipartForm(64 * 1024 * 1024); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, 65*1024*1024)
+	if err := r.ParseMultipartForm(8 * 1024 * 1024); err != nil {
 		jsonError(w, "file too large or invalid multipart form", http.StatusBadRequest)
 		return
 	}
 
+	defer r.MultipartForm.RemoveAll()
 	targetType := r.FormValue("target_type")
 	targetID := r.FormValue("target_id")
 	targetDir := r.FormValue("dir_path")
@@ -421,6 +423,10 @@ func (h *StorageHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
+	if header.Size > 64*1024*1024 {
+		jsonError(w, "files must be 64 MB or smaller", http.StatusRequestEntityTooLarge)
+		return
+	}
 
 	if err := h.fileSvc.UploadFile(targetType, targetID, targetDir, header.Filename, file); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)

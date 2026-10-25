@@ -132,6 +132,7 @@ type SetContainerExposureRequest struct {
 	ZeroTrustEmails   string `json:"zero_trust_emails"`
 	ZeroTrustAuthType string `json:"zero_trust_auth_type"`
 	ZeroTrustSession  string `json:"zero_trust_session"`
+	PrivateHost       string `json:"private_host"`
 }
 
 type RemoteAccessService struct {
@@ -863,10 +864,12 @@ func (s *RemoteAccessService) GetContainerExposures() ([]ContainerExposureItem, 
 				} else if tailscaleIP != "" {
 					item.TailscaleURL = fmt.Sprintf("http://%s:%d", tailscaleIP, targetPort)
 				} else {
-					item.TailscaleURL = fmt.Sprintf("http://docktun.local:%d", targetPort)
+					item.TailscaleURL = ""
 				}
 			} else if c.PrivateType == "wireguard" {
-				item.WireguardURL = fmt.Sprintf("http://10.13.13.1:%d", targetPort)
+				if c.PrivateHost != "" {
+					item.WireguardURL = fmt.Sprintf("http://%s:%d", c.PrivateHost, targetPort)
+				}
 			}
 		}
 
@@ -886,6 +889,7 @@ func (s *RemoteAccessService) SetContainerExposure(req SetContainerExposureReque
 		Hostname:          req.Hostname,
 		Target:            req.Target,
 		PrivateType:       req.PrivateType,
+		PrivateHost:       req.PrivateHost,
 		PrivatePort:       req.PrivatePort,
 		ZeroTrustEnabled:  req.ZeroTrustEnabled,
 		ZeroTrustEmails:   req.ZeroTrustEmails,
@@ -899,7 +903,7 @@ func (s *RemoteAccessService) SetContainerExposure(req SetContainerExposureReque
 		}
 	} else if req.Mode == "private" {
 		if req.PrivateType == "" {
-			settings.PrivateType = "tailscale"
+			return fmt.Errorf("choose a private access provider")
 		}
 		if req.PrivatePort <= 0 {
 			settings.PrivatePort = 80

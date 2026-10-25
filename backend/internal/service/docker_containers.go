@@ -135,36 +135,28 @@ type cfConfigDoc struct {
 }
 
 type DockerContainers struct {
-	cfg         *config.Config
-	db          *db.DB
-	configMgr   *ConfigManager
-	cloudflared *Cloudflared
-	cfAPI       *CloudflareAPI
-	audit       *AuditLogger
-	updateMu     sync.RWMutex
-	statsMu      sync.RWMutex
-	statsCache   map[string]liveStats
-	statsTime    time.Time
-	statsRunning int32
+	cfg            *config.Config
+	db             *db.DB
+	configMgr      *ConfigManager
+	cloudflared    *Cloudflared
+	cfAPI          *CloudflareAPI
+	audit          *AuditLogger
+	updateMu       sync.RWMutex
+	statsMu        sync.RWMutex
+	statsCache     map[string]liveStats
+	statsTime      time.Time
+	statsRunning   int32
+	selfUpdater    *SelfUpdater
+	exposureMu     sync.Mutex
+	exposureDocker func(context.Context, ...string) ([]byte, error)
 }
 
+// Only completed, explicitly labelled helpers may be removed. A long pull is not a zombie.
 func CleanupZombieUpdaters() {
-	out, err := exec.Command("docker", "ps", "-a", "--filter", "name=docktun-updater", "--format", "{{.Names}} {{.ID}}").CombinedOutput()
+	out, err := exec.Command("docker", "ps", "-aq", "--filter", "label=docktun.update.target", "--filter", "status=exited").Output()
 	if err == nil {
-		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-		now := time.Now().Unix()
-		for _, line := range lines {
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				cname, cid := strings.TrimPrefix(parts[0], "/"), parts[1]
-				sub := strings.TrimPrefix(cname, "docktun-updater-")
-				if ts, err := strconv.ParseInt(sub, 10, 64); err == nil {
-					if now-ts < 10 {
-						continue
-					}
-				}
-				_ = exec.Command("docker", "rm", "-f", cid).Run()
-			}
+		for _, id := range strings.Fields(string(out)) {
+			_ = exec.Command("docker", "rm", id).Run()
 		}
 	}
 }
@@ -172,6 +164,7 @@ func CleanupZombieUpdaters() {
 func NewDockerContainers(cfg *config.Config, db *db.DB, configMgr *ConfigManager, cloudflared *Cloudflared, cfAPI *CloudflareAPI, audit *AuditLogger) *DockerContainers {
 	go CleanupZombieUpdaters()
 	return &DockerContainers{
+		selfUpdater: NewSelfUpdater(filepath.Dir(cfg.DBPath)),
 		cfg:         cfg,
 		db:          db,
 		configMgr:   configMgr,
@@ -182,11 +175,11 @@ func NewDockerContainers(cfg *config.Config, db *db.DB, configMgr *ConfigManager
 }
 
 type liveStats struct {
-	cpu     string
-	mem     string
-	net     string
-	block   string
-	pids    int
+	cpu   string
+	mem   string
+	net   string
+	block string
+	pids  int
 }
 
 type projRef struct {
@@ -278,14 +271,6 @@ func (s *DockerContainers) List() ([]Container, error) {
 		c.Running = c.Running || strings.HasPrefix(strings.ToLower(c.Status), "up ")
 
 		if strings.HasPrefix(c.Name, "docktun-updater-") {
-			// Auto-cleanup stale updater containers so they never linger, occupy ports, or clutter the dashboard
-			sub := strings.TrimPrefix(c.Name, "docktun-updater-")
-			if ts, err := strconv.ParseInt(sub, 10, 64); err == nil && time.Now().Unix()-ts < 10 {
-				continue
-			}
-			go func(cid string) {
-				_ = exec.Command("docker", "rm", "-f", cid).Run()
-			}(c.ID)
 			continue
 		}
 
@@ -1033,7 +1018,7 @@ func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
 
 	// 4. Ensure all exposed containers are connected to bridged networks
 	if s.db != nil {
-		rows, err := s.db.Query(`SELECT container_name FROM container_exposure WHERE mode IN ('public', 'private')`)
+		rows, err := s.db.Query(`SELECT container_name FROM container_exposures WHERE mode IN ('public', 'private')`)
 		if err == nil && rows != nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -1049,7 +1034,7 @@ func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
 	}
 
 	// 5. Refresh DNS by restarting cloudflared to flush DNS cache and re-establish connection pools
-	if s.cloudflared != nil && s.cloudflared.IsRunning() {
+	if s.cloudflared != nil && s.cloudflared.Status().Status != "disabled" && s.cloudflared.IsRunning() {
 		addLog("Restarting cloudflared to flush DNS cache and re-establish connection pools...")
 		if err := s.cloudflared.Restart(); err != nil {
 			addLog(fmt.Sprintf("Cloudflared restart notice: %v", err))
@@ -1059,7 +1044,7 @@ func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
 	}
 
 	// 6. Automatically sync/reconcile Cloudflare DNS records for all public ingress routes
-	if s.cfAPI != nil && s.configMgr != nil {
+	if s.cfAPI != nil && s.configMgr != nil && s.cloudflared != nil && s.cloudflared.Status().Status != "disabled" {
 		addLog("Re-verifying and syncing Cloudflare DNS routes for public services...")
 		s.cfAPI.AutoSyncIngressDNS(s.configMgr)
 		addLog("✔ Cloudflare DNS sync check dispatched")
@@ -1350,8 +1335,8 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 	return 0, nil
 }
 
-func (s *DockerContainers) Start(id string) error { return dockerCommand("start", id) }
-func (s *DockerContainers) Stop(id string) error { return dockerCommand("stop", id) }
+func (s *DockerContainers) Start(id string) error   { return dockerCommand("start", id) }
+func (s *DockerContainers) Stop(id string) error    { return dockerCommand("stop", id) }
 func (s *DockerContainers) Restart(id string) error { return dockerCommand("restart", id) }
 
 type BatchActionResult struct {
@@ -1519,6 +1504,8 @@ func (s *DockerContainers) normalizeTarget(containerName, rawTarget string) stri
 }
 
 func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) error {
+	s.exposureMu.Lock()
+	defer s.exposureMu.Unlock()
 	name, err := s.containerName(id)
 	if err != nil {
 		return err
@@ -1528,21 +1515,47 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 		settings.Mode = "internal"
 	}
 
-	// 1. If public or private mode, connect container to default network; otherwise disconnect
+	if settings.Mode != "internal" && settings.Mode != "public" && settings.Mode != "private" {
+		return fmt.Errorf("choose internal, public, or private access")
+	}
+	if settings.Mode == "private" && settings.PrivateType != "tailscale" && settings.PrivateType != "wireguard" && settings.PrivateType != "mesh" {
+		return fmt.Errorf("choose a private access provider")
+	}
+	if settings.Mode == "private" && settings.PrivateType != "tailscale" && (strings.TrimSpace(settings.PrivateHost) == "" || settings.PrivatePort < 1 || settings.PrivatePort > 65535) {
+		return fmt.Errorf("enter the existing VPN address and port; WireGuard/custom mesh routing must already be configured")
+	}
+	// Only automatic forwarding needs the tunnel network. Removing a rule must not break existing Docker connectivity.
 	defaultNet := s.DefaultNetwork()
-	if settings.Mode == "public" || settings.Mode == "private" {
-		if err := s.ConnectNetwork(name, defaultNet); err != nil {
-			log.Printf("[docktun] connect network %s for %s: %v", defaultNet, name, err)
+	if tailscaleExposure(settings) {
+		if network := os.Getenv("TAILSCALE_NETWORK"); network != "" {
+			defaultNet = network
 		}
-		if exec.Command("docker", "network", "inspect", "cloudflared").Run() == nil && defaultNet != "cloudflared" {
+	}
+	if settings.Mode == "public" || tailscaleExposure(settings) {
+		if err := s.ConnectNetwork(name, defaultNet); err != nil {
+			return fmt.Errorf("connect container to %s: %w", defaultNet, err)
+		}
+		if settings.Mode == "public" && exec.Command("docker", "network", "inspect", "cloudflared").Run() == nil && defaultNet != "cloudflared" {
 			_ = s.ConnectNetwork(name, "cloudflared")
 		}
-	} else {
-		_ = s.DisconnectNetwork(name, defaultNet)
-		_ = s.DisconnectNetwork(name, "cloudflared")
 	}
 
 	prevExp := s.getExposureFromDB(name)
+	if tailscaleExposure(settings) {
+		if err := s.ConnectNetwork("docktun-tailscale", defaultNet); err != nil {
+			return fmt.Errorf("connect Tailscale to container network: %w", err)
+		}
+	}
+	undo, err := s.syncTailscaleExposure(name, prevExp, &settings)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			undo()
+		}
+	}()
 
 	// 2. Update Cloudflare ingress ONLY if currently public or was previously public
 	if s.configMgr != nil && (settings.Mode == "public" || prevExp.Mode == "public") {
@@ -1561,6 +1574,7 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 		return err
 	}
 
+	committed = true
 	// 4. Synchronize Zero Trust Access Application & Policy if enabled
 	if cleanSettings.Mode == "public" && cleanSettings.ZeroTrustEnabled && cleanSettings.Hostname != "" && s.cfAPI != nil {
 		go func(cName string, set ExposureSettings) {
@@ -1584,11 +1598,6 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 			}
 		}(prevExp.ZeroTrustAppID)
 	}
-
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		_, _ = s.ReconcileNetworks()
-	}()
 
 	return nil
 }
@@ -2003,6 +2012,15 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
+	if s.isSelfContainer(detail.ID, cname) && s.selfUpdater != nil {
+		state := s.selfUpdater.Status()
+		res.UpdateAvailable = state.Available
+		res.CurrentDigest = state.CurrentImage
+		res.Image = state.Image
+		res.Error = "Use Settings > Update DockTun to check and install published updates."
+		s.saveUpdateToDB(res)
+		return res, nil
+	}
 	// 0. Detect local DockTun image tag (e.g. "docktun:latest" or "docktun" without remote registry repo)
 	if isLocalDocktunImage(detail.Image) {
 		localCommit := getLocalGitCommit(s.cfg.SelfPath, detail)
@@ -2187,12 +2205,23 @@ func (s *DockerContainers) CheckAllUpdates() ([]UpdateCheckResult, error) {
 }
 
 func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (string, error) {
+	if current, e := selfContainer(context.Background()); e == nil && (id == current.ID || id == strings.TrimPrefix(current.Name, "/") || (len(id) >= 12 && strings.HasPrefix(current.ID, id))) {
+		state, err := s.selfUpdater.Start(context.Background())
+		if err == nil && s.audit != nil {
+			s.audit.Log(userID, "self_update", state.Message, ip)
+		}
+		return "self-update: " + state.Message, err
+	}
+
 	detail, err := s.Details(id)
 	if err != nil {
 		return "", fmt.Errorf("failed to get container details: %w", err)
 	}
 
 	cname := strings.TrimPrefix(detail.Name, "/")
+	if s.isSelfContainer(detail.ID, cname) {
+		return "", fmt.Errorf("cannot safely identify DockTun for self-update; use Settings and configure DOCKTUN_CONTAINER if using a custom hostname")
+	}
 	image := detail.Image
 	if image == "" {
 		return "", fmt.Errorf("container has no image specified")
@@ -2342,36 +2371,6 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		}
 		composeArgs = append(composeArgs, "up", "-d", "--no-deps", "--force-recreate", compService)
 
-		if s.isSelfContainer(detail.ID, cname) {
-			appendLog(fmt.Sprintf("✔ [SUCCESS] %s self-update via Docker Compose initiated! Restarting in background...", cname))
-			updaterName := fmt.Sprintf("docktun-updater-%d", time.Now().Unix())
-			var quotedArgs []string
-			for _, a := range composeArgs {
-				if strings.ContainsAny(a, " *?$`'\"") {
-					quotedArgs = append(quotedArgs, fmt.Sprintf("%q", a))
-				} else {
-					quotedArgs = append(quotedArgs, a)
-				}
-			}
-			composeScript := fmt.Sprintf("sleep 2 && docker compose %s", strings.Join(quotedArgs, " "))
-			updaterCmd := exec.Command("docker", "run", "-d", "--rm",
-				"--entrypoint", "/bin/sh",
-				"--network", "none",
-				"-v", "/var/run/docker.sock:/var/run/docker.sock",
-				"-v", fmt.Sprintf("%s:%s", validComposeDir, validComposeDir),
-				"-w", validComposeDir,
-				"--name", updaterName,
-				image,
-				"-c", composeScript,
-			)
-			if uOut, uErr := updaterCmd.CombinedOutput(); uErr != nil {
-				appendLog(fmt.Sprintf("[WARN] Failed to spawn compose updater container (%v: %s). Falling back to direct recreate...", uErr, strings.TrimSpace(string(uOut))))
-			} else {
-				appendLog(fmt.Sprintf("✔ [SUCCESS] Updater container %s started to recreate DockTun via Docker Compose. Refresh your browser in a few seconds.", updaterName))
-				return logOutput.String(), nil
-			}
-		}
-
 		upCmd := exec.Command("docker", append([]string{"compose"}, composeArgs...)...)
 		upCmd.Dir = validComposeDir
 		upOut, upErr := upCmd.CombinedOutput()
@@ -2426,47 +2425,27 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		if fileExists(composeFilePath) {
 			sanitizeComposeFile(composeFilePath)
 			appendLog(fmt.Sprintf("[STEP 3/4] Recreating container %s via Docker Compose in %s...", cname, destDir))
-			if s.isSelfContainer(detail.ID, cname) {
-				updaterName := fmt.Sprintf("docktun-updater-%d", time.Now().Unix())
-				composeScript := fmt.Sprintf("sleep 2 && docker compose --profile all --profile '*' -f %s up -d --force-recreate", composeFilePath)
-				updaterCmd := exec.Command("docker", "run", "-d", "--rm",
-					"--entrypoint", "/bin/sh",
-					"--network", "none",
-					"-v", "/var/run/docker.sock:/var/run/docker.sock",
-					"-v", fmt.Sprintf("%s:%s", destDir, destDir),
-					"-w", destDir,
-					"--name", updaterName,
-					image,
-					"-c", composeScript,
-				)
-				if uOut, uErr := updaterCmd.CombinedOutput(); uErr != nil {
-					appendLog(fmt.Sprintf("[WARN] Failed to spawn compose updater container (%v: %s). Falling back to native recreation...", uErr, strings.TrimSpace(string(uOut))))
+			backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
+			_ = exec.Command("docker", "stop", detail.ID).Run()
+			if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
+				upCmd := exec.Command("docker", "compose", "--profile", "all", "--profile", "*", "-f", composeFilePath, "up", "-d", "--force-recreate")
+				upCmd.Dir = destDir
+				upOut, upErr := upCmd.CombinedOutput()
+				if upErr == nil {
+					recreated = true
+					_ = exec.Command("docker", "rm", "-f", backupName).Run()
+					appendLog(strings.TrimSpace(string(upOut)))
+					appendLog(fmt.Sprintf("✔ [SUCCESS] Container %s recreated cleanly by Docker Compose!", cname))
 				} else {
-					appendLog(fmt.Sprintf("✔ [SUCCESS] Updater container %s started to recreate DockTun via Docker Compose. Refresh your browser in a few seconds.", updaterName))
-					return logOutput.String(), nil
+					_ = exec.Command("docker", "rm", "-f", cname).Run()
+					_ = exec.Command("docker", "rename", backupName, cname).Run()
+					_ = exec.Command("docker", "start", cname).Run()
+					appendLog(fmt.Sprintf("[NOTE] Compose recreation notice: %s. Falling back to native Docker Engine recreation...", strings.TrimSpace(string(upOut))))
 				}
 			} else {
-				backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
-				_ = exec.Command("docker", "stop", detail.ID).Run()
-				if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
-					upCmd := exec.Command("docker", "compose", "--profile", "all", "--profile", "*", "-f", composeFilePath, "up", "-d", "--force-recreate")
-					upCmd.Dir = destDir
-					upOut, upErr := upCmd.CombinedOutput()
-					if upErr == nil {
-						recreated = true
-						_ = exec.Command("docker", "rm", "-f", backupName).Run()
-						appendLog(strings.TrimSpace(string(upOut)))
-						appendLog(fmt.Sprintf("✔ [SUCCESS] Container %s recreated cleanly by Docker Compose!", cname))
-					} else {
-						_ = exec.Command("docker", "rm", "-f", cname).Run()
-						_ = exec.Command("docker", "rename", backupName, cname).Run()
-						_ = exec.Command("docker", "start", cname).Run()
-						appendLog(fmt.Sprintf("[NOTE] Compose recreation notice: %s. Falling back to native Docker Engine recreation...", strings.TrimSpace(string(upOut))))
-					}
-				} else {
-					appendLog(fmt.Sprintf("[NOTE] Could not stage container for Compose recreate: %v. Proceeding to native recreation...", renameErr))
-				}
+				appendLog(fmt.Sprintf("[NOTE] Could not stage container for Compose recreate: %v. Proceeding to native recreation...", renameErr))
 			}
+
 		}
 	}
 
@@ -2645,47 +2624,7 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 	}
 
 	if s.isSelfContainer(detail.ID, cname) {
-		appendLog(fmt.Sprintf("✔ [SUCCESS] %s self-update initiated! Restarting container with image %s via detached updater...", cname, newImage))
-		selfArgs := append([]string{"run", "-d"}, runArgs[1:]...)
-
-		var extraNetCmds []string
-		for _, net := range extraNets {
-			aliasArg := ""
-			if aliases, ok := detail.NetworkAliases[net]; ok {
-				for _, a := range aliases {
-					if a != "" && a != cname && !strings.HasPrefix(detail.ID, a) {
-						aliasArg = fmt.Sprintf("--alias %s ", a)
-						break
-					}
-				}
-			}
-			extraNetCmds = append(extraNetCmds, fmt.Sprintf("docker network connect %s%s %s || true", aliasArg, net, cname))
-		}
-		extraScript := ""
-		if len(extraNetCmds) > 0 {
-			extraScript = " && " + strings.Join(extraNetCmds, " && ")
-		}
-
-		detachScript := fmt.Sprintf("sleep 2 && docker stop %s && docker rm -f %s && docker %s%s",
-			detail.ID, detail.ID, strings.Join(selfArgs, " "), extraScript)
-
-		updaterName := fmt.Sprintf("docktun-updater-%d", time.Now().Unix())
-		updaterCmd := exec.Command("docker", "run", "-d", "--rm",
-			"--entrypoint", "/bin/sh",
-			"--network", "none",
-			"-v", "/var/run/docker.sock:/var/run/docker.sock",
-			"--name", updaterName,
-			newImage,
-			"-c", detachScript,
-		)
-		if uOut, uErr := updaterCmd.CombinedOutput(); uErr != nil {
-			appendLog(fmt.Sprintf("[WARN] Failed to spawn updater container (%v: %s). Falling back to background process...", uErr, strings.TrimSpace(string(uOut))))
-			bgCmd := exec.Command("sh", "-c", detachScript)
-			_ = bgCmd.Start()
-		} else {
-			appendLog(fmt.Sprintf("✔ [SUCCESS] Updater container %s started. DockTun will restart with the latest image in ~3-5 seconds. Refresh your browser shortly.", updaterName))
-		}
-		return nil
+		return fmt.Errorf("use the dedicated DockTun self-updater")
 	}
 
 	backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
@@ -3472,4 +3411,3 @@ func SanitizeComposeFile(composePath string) bool {
 func sanitizeComposeFile(composePath string) bool {
 	return SanitizeComposeFile(composePath)
 }
-
