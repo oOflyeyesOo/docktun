@@ -391,6 +391,7 @@ func (h *StorageHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Access-Control-Expose-Headers", "Content-Disposition")
 	if size > 0 {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
 	}

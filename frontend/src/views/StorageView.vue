@@ -301,8 +301,10 @@ async function openFile(file: any) {
     })
     const res = await apiFetch<any>(`/api/storage/files/read?${params}`)
     if (res.is_binary) {
-      alert(`"${file.name}" is a binary file (${res.size_str}) and cannot be edited in the browser. You can download it instead.`)
       activeEditorFile.value = null
+      if (confirm(`"${file.name}" is a binary file (${res.size_str}) and cannot be edited in the browser.\n\nWould you like to download it now?`)) {
+        downloadStorageFile(file)
+      }
       return
     }
     editorContent.value = res.content || ''
@@ -334,6 +336,51 @@ async function saveActiveFile() {
     showToast(e.message || 'Failed to save file', 'error')
   } finally {
     editorSaving.value = false
+  }
+}
+
+// Download File
+const downloadingFile = ref<string | null>(null)
+
+async function downloadStorageFile(file: any) {
+  if (!file || !selectedTarget.value) return
+  const filePath = file.path
+  downloadingFile.value = filePath
+  try {
+    const params = new URLSearchParams({
+      target_type: selectedTarget.value.type,
+      target_id: selectedTarget.value.id,
+      path: filePath
+    })
+    const headers: Record<string, string> = {}
+    if (authStore.token) {
+      headers['Authorization'] = `Bearer ${authStore.token}`
+    }
+    const res = await fetch(`/api/storage/files/download?${params}`, { headers })
+    if (!res.ok) {
+      const errText = await res.text()
+      let msg = `Download failed (HTTP ${res.status})`
+      try {
+        const parsed = JSON.parse(errText)
+        msg = parsed.error || parsed.message || msg
+      } catch {}
+      throw new Error(msg)
+    }
+
+    const blob = await res.blob()
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file.name || 'download'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    window.URL.revokeObjectURL(url)
+    showToast(`Downloaded ${file.name}`)
+  } catch (e: any) {
+    showToast(e.message || 'Failed to download file', 'error')
+  } finally {
+    downloadingFile.value = null
   }
 }
 
@@ -1214,10 +1261,12 @@ onMounted(async () => {
                         <button
                           v-if="!file.is_dir"
                           @click="downloadStorageFile(file)"
-                          class="p-1 rounded text-slate-600 hover:text-indigo-700 hover:bg-slate-100"
+                          :disabled="downloadingFile === file.path"
+                          class="p-1 rounded text-slate-600 hover:text-indigo-700 hover:bg-slate-100 disabled:opacity-50"
                           title="Download file"
                         >
-                          <Download class="h-3.5 w-3.5" />
+                          <RotateCcw v-if="downloadingFile === file.path" class="h-3.5 w-3.5 animate-spin text-indigo-600" />
+                          <Download v-else class="h-3.5 w-3.5" />
                         </button>
 
                         <button
@@ -1865,11 +1914,13 @@ onMounted(async () => {
           <div class="flex items-center gap-2 shrink-0">
             <button
               @click="downloadStorageFile(activeEditorFile)"
-              class="cyber-btn-secondary !py-1 !px-2.5 text-xs flex items-center gap-1 text-slate-700"
+              :disabled="downloadingFile === activeEditorFile.path"
+              class="cyber-btn-secondary !py-1 !px-2.5 text-xs flex items-center gap-1 text-slate-700 disabled:opacity-50"
               title="Download file"
             >
-              <Download class="h-3.5 w-3.5" />
-              <span>Download</span>
+              <RotateCcw v-if="downloadingFile === activeEditorFile.path" class="h-3.5 w-3.5 animate-spin text-indigo-600" />
+              <Download v-else class="h-3.5 w-3.5" />
+              <span>{{ downloadingFile === activeEditorFile.path ? 'Downloading...' : 'Download' }}</span>
             </button>
 
             <button

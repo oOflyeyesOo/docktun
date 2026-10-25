@@ -673,6 +673,9 @@ func (s *StorageFilesService) GetDownloadStream(targetType, targetID, relPath st
 		if err != nil {
 			return nil, "", 0, err
 		}
+		if fi.IsDir() {
+			return nil, "", 0, fmt.Errorf("cannot download a directory")
+		}
 		f, err := os.Open(fullPath)
 		if err != nil {
 			return nil, "", 0, err
@@ -689,6 +692,9 @@ func (s *StorageFilesService) GetDownloadStream(targetType, targetID, relPath st
 		cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-v", fmt.Sprintf("%s:%s:ro", targetID, volMount), "alpine:3.19", "cat", fullPath)
 		data, err := cmd.Output()
 		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
+				return nil, "", 0, fmt.Errorf("failed to read file from volume: %s", strings.TrimSpace(string(exitErr.Stderr)))
+			}
 			return nil, "", 0, fmt.Errorf("failed to read file: %w", err)
 		}
 
@@ -703,6 +709,9 @@ func (s *StorageFilesService) GetDownloadStream(targetType, targetID, relPath st
 		cmd := exec.CommandContext(ctx, "docker", "exec", targetID, "cat", fullPath)
 		data, err := cmd.Output()
 		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
+				return nil, "", 0, fmt.Errorf("failed to read file from container: %s", strings.TrimSpace(string(exitErr.Stderr)))
+			}
 			return nil, "", 0, fmt.Errorf("failed to read file: %w", err)
 		}
 
