@@ -324,19 +324,39 @@ func (s *StorageService) ListVolumes() ([]VolumeItem, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// 1. Build map of volume -> containers
+	// 1. Build map of volume -> containers and detect dangling volumes
 	volToContainers := make(map[string][]string)
-	psCmd := exec.CommandContext(ctx, "docker", "ps", "-a", "--format", "{{.Names}}\t{{.Mounts}}")
-	if psOut, err := psCmd.Output(); err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(string(psOut)), "\n") {
-			parts := strings.Split(line, "\t")
-			if len(parts) >= 2 {
-				cName := strings.TrimSpace(parts[0])
-				mounts := strings.Split(parts[1], ",")
-				for _, m := range mounts {
-					m = strings.TrimSpace(m)
-					if m != "" {
-						volToContainers[m] = append(volToContainers[m], cName)
+	danglingVols := make(map[string]bool)
+
+	// Use Docker's native ground truth for dangling volumes
+	dangCmd := exec.CommandContext(ctx, "docker", "volume", "ls", "-q", "-f", "dangling=true")
+	if dangOut, err := dangCmd.Output(); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(dangOut)), "\n") {
+			vName := strings.TrimSpace(line)
+			if vName != "" {
+				danglingVols[vName] = true
+			}
+		}
+	}
+
+	// Inspect all containers to extract exact volume names attached
+	idsCmd := exec.CommandContext(ctx, "docker", "ps", "-a", "--format", "{{.ID}}")
+	if idsOut, err := idsCmd.Output(); err == nil {
+		cIDs := strings.Fields(strings.TrimSpace(string(idsOut)))
+		if len(cIDs) > 0 {
+			inspectArgs := append([]string{"inspect", "--format", "{{.Name}}\t{{range .Mounts}}{{if eq .Type \"volume\"}}{{.Name}},{{else if .Name}}{{.Name}},{{end}}{{end}}"}, cIDs...)
+			if inspOut, err := exec.CommandContext(ctx, "docker", inspectArgs...).Output(); err == nil {
+				for _, line := range strings.Split(strings.TrimSpace(string(inspOut)), "\n") {
+					parts := strings.Split(line, "\t")
+					if len(parts) >= 2 {
+						cName := strings.TrimPrefix(strings.TrimSpace(parts[0]), "/")
+						vols := strings.Split(parts[1], ",")
+						for _, v := range vols {
+							v = strings.TrimSpace(v)
+							if v != "" {
+								volToContainers[v] = append(volToContainers[v], cName)
+							}
+						}
 					}
 				}
 			}
@@ -398,6 +418,9 @@ func (s *StorageService) ListVolumes() ([]VolumeItem, error) {
 		attached := volToContainers[name]
 		isAnon := hexRegex.MatchString(name)
 
+		isDang := danglingVols[name]
+		inUse := !isDang || len(attached) > 0
+
 		volumes = append(volumes, VolumeItem{
 			Name:        name,
 			Driver:      driver,
@@ -405,7 +428,7 @@ func (s *StorageService) ListVolumes() ([]VolumeItem, error) {
 			Mountpoint:  mountpoint,
 			CreatedAt:   createdAt,
 			Size:        sz,
-			InUse:       len(attached) > 0,
+			InUse:       inUse,
 			Containers:  attached,
 			IsAnonymous: isAnon,
 		})
