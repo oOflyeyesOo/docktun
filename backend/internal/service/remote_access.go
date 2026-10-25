@@ -429,6 +429,22 @@ func (s *RemoteAccessService) TailscaleSetOptions(advertiseRoutes string, exitNo
 	return nil
 }
 
+func (s *RemoteAccessService) defaultNetwork() string {
+	if net := strings.TrimSpace(os.Getenv("TAILSCALE_NETWORK")); net != "" {
+		return net
+	}
+	if net := strings.TrimSpace(os.Getenv("DOCKER_NETWORK")); net != "" {
+		return net
+	}
+	if err := exec.Command("docker", "network", "inspect", "docktun").Run(); err == nil {
+		return "docktun"
+	}
+	if err := exec.Command("docker", "network", "inspect", "cloudflared").Run(); err == nil {
+		return "cloudflared"
+	}
+	return "docktun"
+}
+
 func (s *RemoteAccessService) TailscaleControl(action string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -447,10 +463,7 @@ func (s *RemoteAccessService) TailscaleControl(action string) error {
 		if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]+$`).MatchString(volume) {
 			return fmt.Errorf("TAILSCALE_STATE_VOLUME must be a Docker volume name, not a container or host path")
 		}
-		network := os.Getenv("TAILSCALE_NETWORK")
-		if network == "" {
-			network = "cloudflared"
-		}
+		network := s.defaultNetwork()
 		runArgs := []string{
 			"run", "-d",
 			"--name", "docktun-tailscale",
@@ -602,7 +615,7 @@ func (s *RemoteAccessService) WireguardControl(action string) error {
 			"--restart", "unless-stopped",
 			"--cap-add", "NET_ADMIN",
 			"--cap-add", "SYS_MODULE",
-			"--network", "cloudflared",
+			"--network", s.defaultNetwork(),
 			"-p", "51820:51820/udp",
 			"-v", fmt.Sprintf("%s:/config", wgDir),
 			"-e", "PUID=1000",

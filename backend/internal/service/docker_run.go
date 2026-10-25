@@ -49,6 +49,19 @@ type DockerRunService struct {
 	nextID      int
 }
 
+func defaultDockerNetwork() string {
+	if net := strings.TrimSpace(os.Getenv("DOCKER_NETWORK")); net != "" {
+		return net
+	}
+	if err := exec.Command("docker", "network", "inspect", "docktun").Run(); err == nil {
+		return "docktun"
+	}
+	if err := exec.Command("docker", "network", "inspect", "cloudflared").Run(); err == nil {
+		return "cloudflared"
+	}
+	return "docktun"
+}
+
 func NewDockerRun(database *db.DB, projectsSvc *Projects) *DockerRunService {
 	return &DockerRunService{
 		db:          database,
@@ -106,7 +119,7 @@ func (s *DockerRunService) StartRun(rawCmd string, mode string, connectCloudflar
 	}
 
 	if connectCloudflared && parsed.Network == "" {
-		parsed.Network = "cloudflared"
+		parsed.Network = defaultDockerNetwork()
 	}
 
 	s.mu.Lock()
@@ -253,17 +266,18 @@ func (s *DockerRunService) executeDirect(jobID int, parsed *ParsedDockerRun, raw
 		}
 	}
 	if !hasNetwork && connectCloudflared {
+		netName := defaultDockerNetwork()
 		// Insert before image name
 		inserted := false
 		for i, a := range cmdArgs {
 			if a == "run" {
-				cmdArgs = append(cmdArgs[:i+1], append([]string{"--network", "cloudflared"}, cmdArgs[i+1:]...)...)
+				cmdArgs = append(cmdArgs[:i+1], append([]string{"--network", netName}, cmdArgs[i+1:]...)...)
 				inserted = true
 				break
 			}
 		}
 		if !inserted {
-			cmdArgs = append([]string{"--network", "cloudflared"}, cmdArgs...)
+			cmdArgs = append([]string{"--network", netName}, cmdArgs...)
 		}
 	}
 
@@ -333,7 +347,7 @@ func ParseDockerRunCommand(raw string) (*ParsedDockerRun, error) {
 
 	res := &ParsedDockerRun{
 		Restart: "unless-stopped",
-		Network: "cloudflared",
+		Network: defaultDockerNetwork(),
 	}
 
 	var positional []string

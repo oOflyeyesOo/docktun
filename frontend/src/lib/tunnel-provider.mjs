@@ -1,8 +1,9 @@
 export function remoteAccessTab(queryTab, mode) {
   const tabs = ['cloudflare', 'tailscale', 'wireguard']
   if (tabs.includes(queryTab)) return queryTab
+  if (mode === 'cloudflare') return 'cloudflare'
   if (mode === 'tailscale' || mode === 'wireguard') return mode
-  return 'cloudflare'
+  return 'tailscale'
 }
 
 export function cloudflareEnabled(status) {

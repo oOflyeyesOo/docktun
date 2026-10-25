@@ -42,7 +42,7 @@ const route = useRoute()
 const router = useRouter()
 
 // Active Top-Level Tab: 'cloudflare' | 'tailscale' | 'wireguard'
-const activeTab = ref<'cloudflare' | 'tailscale' | 'wireguard'>('cloudflare')
+const activeTab = ref<'cloudflare' | 'tailscale' | 'wireguard'>('tailscale')
 
 // Overview Data
 interface OverviewData {
@@ -497,6 +497,15 @@ onMounted(async () => {
   const mesh = await apiFetch<any>('/api/mesh')
   activeTab.value = remoteAccessTab(qTab, mesh.mode)
   await fetchOverview()
+  if (!qTab && overview.value) {
+    if (overview.value.tailscale?.running) {
+      activeTab.value = 'tailscale'
+    } else if (overview.value.wireguard?.running) {
+      activeTab.value = 'wireguard'
+    } else if (overview.value.cloudflare?.running) {
+      activeTab.value = 'cloudflare'
+    }
+  }
   await fetchContainerExposures()
   if (activeTab.value === 'tailscale') await fetchTailscale()
   if (activeTab.value === 'wireguard') await fetchWireguard()

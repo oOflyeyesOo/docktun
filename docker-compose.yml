@@ -14,7 +14,7 @@ services:
     sysctls:
       - net.ipv4.ping_group_range=0 65535
     networks:
-      - cloudflared
+      - docktun
 
   docktun:
     build:
@@ -43,7 +43,8 @@ services:
       CLOUDFLARED_CONTAINER: ${CLOUDFLARED_CONTAINER:-docktun-cloudflared}
       CLOUDFLARED_METRICS: ${CLOUDFLARED_METRICS:-http://docktun-cloudflared:2000/metrics}
       TAILSCALE_STATE_VOLUME: ${TAILSCALE_STATE_VOLUME:-docktun-tailscale-state}
-      TAILSCALE_NETWORK: cloudflared
+      TAILSCALE_NETWORK: ${TAILSCALE_NETWORK:-docktun}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-docktun}
       DB_PATH: ${DB_PATH:-/app/data/app.db}
       LISTEN_ADDR: ${LISTEN_ADDR:-0.0.0.0:3001}
       SELF_PATH: ${SELF_PATH:-/opt/projects/docktun}
@@ -64,7 +65,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${PROJECTS_ROOT:-./projects}:/opt/projects
     networks:
-      cloudflared:
+      docktun:
         aliases:
           - docktun
           - docktun-backend
@@ -100,7 +101,7 @@ services:
     volumes:
       - tailscale-state:/var/lib/tailscale
     networks:
-      - cloudflared
+      - docktun
 
   # Optional WireGuard Point-to-Point VPN Tunnel (run with: docker compose --profile wireguard up -d)
   wireguard:
@@ -126,13 +127,13 @@ services:
     ports:
       - "${WIREGUARD_PORT:-51820}:51820/udp"
     networks:
-      - cloudflared
+      - docktun
 
 volumes:
   tailscale-state:
     name: ${TAILSCALE_STATE_VOLUME:-docktun-tailscale-state}
 
 networks:
-  cloudflared:
-    name: cloudflared
+  docktun:
+    name: ${DOCKER_NETWORK:-docktun}
     driver: bridge

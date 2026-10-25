@@ -251,7 +251,7 @@ func (s *DockerContainers) List() ([]Container, error) {
 
 		if len(fields) >= 9 {
 			networksStr := strings.TrimSpace(fields[8])
-			c.ConnectedToCloudflared = strings.Contains(networksStr, "cloudflared")
+			c.ConnectedToCloudflared = strings.Contains(networksStr, "docktun") || strings.Contains(networksStr, "cloudflared")
 		}
 
 		if len(fields) >= 10 {
@@ -724,9 +724,10 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		}
 	}
 
+	_, hasDocktun := inspect.NetworkSettings.Networks["docktun"]
 	_, hasCloudflared := inspect.NetworkSettings.Networks["cloudflared"]
-	detail.ConnectedToCloudflared = hasCloudflared
-	detail.Container.ConnectedToCloudflared = hasCloudflared
+	detail.ConnectedToCloudflared = hasDocktun || hasCloudflared
+	detail.Container.ConnectedToCloudflared = hasDocktun || hasCloudflared
 
 	compProj := inspect.Config.Labels["com.docker.compose.project"]
 	compDir := inspect.Config.Labels["com.docker.compose.project.working_dir"]
@@ -842,9 +843,24 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 	return detail, nil
 }
 
+func (s *DockerContainers) DefaultNetwork() string {
+	if net := strings.TrimSpace(os.Getenv("DOCKER_NETWORK")); net != "" {
+		return net
+	}
+	// Prefer "docktun" network
+	if err := exec.Command("docker", "network", "inspect", "docktun").Run(); err == nil {
+		return "docktun"
+	}
+	// Fallback to "cloudflared" for backward compatibility with existing setups
+	if err := exec.Command("docker", "network", "inspect", "cloudflared").Run(); err == nil {
+		return "cloudflared"
+	}
+	return "docktun"
+}
+
 func (s *DockerContainers) EnsureNetwork(network string) error {
 	if network == "" {
-		network = "cloudflared"
+		network = s.DefaultNetwork()
 	}
 	cmd := exec.Command("docker", "network", "inspect", network)
 	if err := cmd.Run(); err != nil {
@@ -856,7 +872,7 @@ func (s *DockerContainers) EnsureNetwork(network string) error {
 
 func (s *DockerContainers) ConnectNetwork(id string, network string) error {
 	if network == "" {
-		network = "cloudflared"
+		network = s.DefaultNetwork()
 	}
 	_ = s.EnsureNetwork(network)
 	cmd := exec.Command("docker", "network", "connect", network, id)
@@ -873,7 +889,7 @@ func (s *DockerContainers) ConnectNetwork(id string, network string) error {
 
 func (s *DockerContainers) DisconnectNetwork(id string, network string) error {
 	if network == "" {
-		network = "cloudflared"
+		network = s.DefaultNetwork()
 	}
 	cmd := exec.Command("docker", "network", "disconnect", network, id)
 	out, err := cmd.CombinedOutput()
@@ -1052,17 +1068,18 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 				externalNetworks = append(externalNetworks, net)
 			}
 		}
-		if detail.ExposureMode == "public" {
-			foundCf := false
+		defNet := s.DefaultNetwork()
+		if detail.ExposureMode == "public" || detail.ExposureMode == "private" {
+			foundNet := false
 			for _, n := range svcNetworks {
-				if n == "cloudflared" {
-					foundCf = true
+				if n == defNet || n == "docktun" || n == "cloudflared" {
+					foundNet = true
 					break
 				}
 			}
-			if !foundCf {
-				svcNetworks = append(svcNetworks, "cloudflared")
-				externalNetworks = append(externalNetworks, "cloudflared")
+			if !foundNet {
+				svcNetworks = append(svcNetworks, defNet)
+				externalNetworks = append(externalNetworks, defNet)
 			}
 		}
 
@@ -1280,17 +1297,21 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 		settings.Mode = "internal"
 	}
 
-	// 1. If public or private mode, connect container to cloudflared network; otherwise disconnect
+	// 1. If public or private mode, connect container to default network; otherwise disconnect
+	defaultNet := s.DefaultNetwork()
 	if settings.Mode == "public" || settings.Mode == "private" {
-		if err := s.ConnectNetwork(name, "cloudflared"); err != nil {
-			log.Printf("[docktun] connect network cloudflared for %s: %v", name, err)
+		if err := s.ConnectNetwork(name, defaultNet); err != nil {
+			log.Printf("[docktun] connect network %s for %s: %v", defaultNet, name, err)
 		}
 	} else {
+		_ = s.DisconnectNetwork(name, defaultNet)
 		_ = s.DisconnectNetwork(name, "cloudflared")
 	}
 
-	// 2. Update Cloudflare ingress if mode is public or if changing away from public
-	if s.configMgr != nil {
+	prevExp := s.getExposureFromDB(name)
+
+	// 2. Update Cloudflare ingress ONLY if currently public or was previously public
+	if s.configMgr != nil && (settings.Mode == "public" || prevExp.Mode == "public") {
 		if err := s.syncCloudflareIngress(name, settings); err != nil {
 			return fmt.Errorf("sync ingress config: %w", err)
 		}
@@ -1302,7 +1323,6 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 	if cleanSettings.Mode == "public" {
 		cleanSettings.Target = s.normalizeTarget(name, settings.Target)
 	}
-	prevExp := s.getExposureFromDB(name)
 	if err := s.saveExposureToDB(name, cleanSettings); err != nil {
 		return err
 	}
@@ -1335,8 +1355,18 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 }
 
 func (s *DockerContainers) syncCloudflareIngress(containerName string, settings ExposureSettings) error {
+	if s.configMgr == nil {
+		return nil
+	}
+
 	raw, err := s.configMgr.Read()
 	if err != nil {
+		if os.IsNotExist(err) || strings.Contains(err.Error(), "no such file") {
+			if settings.Mode == "public" {
+				return fmt.Errorf("Cloudflare tunnel is not configured (/etc/cloudflared/config.yml not found). Configure Cloudflare in Remote Access first, or choose Private (Tailscale / WireGuard) mode")
+			}
+			return nil
+		}
 		return err
 	}
 
@@ -2092,9 +2122,10 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 	}
 
 	// Step 4: Network and Exposure
-	if detail.ExposureMode == "public" {
-		appendLog("[NETWORK] Ensuring connection to cloudflared network...")
-		_ = s.ConnectNetwork(cname, "cloudflared")
+	if detail.ExposureMode == "public" || detail.ExposureMode == "private" {
+		netName := s.DefaultNetwork()
+		appendLog(fmt.Sprintf("[NETWORK] Ensuring connection to %s network...", netName))
+		_ = s.ConnectNetwork(cname, netName)
 	}
 
 	s.setContainerUpToDate(id, cname, image)

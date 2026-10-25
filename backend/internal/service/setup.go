@@ -414,9 +414,9 @@ func (s *SetupService) applyConfiguration(req SetupCompleteRequest, adminID int,
 				continue
 			}
 
-			// Connect to cloudflared network if requested
+			// Connect to DockTun network if requested
 			if req.ImportContainers.ConnectNetwork {
-				if err := s.dockerContainers.ConnectNetwork(cID, "cloudflared"); err != nil {
+				if err := s.dockerContainers.ConnectNetwork(cID, ""); err != nil {
 					return SetupCompleteResult{}, err
 				}
 			}
