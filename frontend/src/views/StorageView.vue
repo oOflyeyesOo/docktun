@@ -40,10 +40,12 @@ import {
   FileImage
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
+import { useAuthStore } from '../stores/auth'
 
 const route = useRoute()
 const router = useRouter()
 const { apiFetch } = useApi()
+const authStore = useAuthStore()
 
 // Primary State
 const loading = ref(true)
@@ -355,6 +357,7 @@ async function downloadStorageFile(file: any) {
     const headers: Record<string, string> = {}
     if (authStore.token) {
       headers['Authorization'] = `Bearer ${authStore.token}`
+      params.set('token', authStore.token)
     }
     const res = await fetch(`/api/storage/files/download?${params}`, { headers })
     if (!res.ok) {
@@ -381,6 +384,69 @@ async function downloadStorageFile(file: any) {
     showToast(e.message || 'Failed to download file', 'error')
   } finally {
     downloadingFile.value = null
+  }
+}
+
+// Upload File
+function openUploadModal() {
+  selectedUploadFile.value = null
+  if (uploadFileInput.value) {
+    uploadFileInput.value.value = ''
+  }
+  showUploadModal.value = true
+}
+
+function onFileSelected(e: Event) {
+  const target = e.target as HTMLInputElement
+  if (target && target.files && target.files.length > 0) {
+    selectedUploadFile.value = target.files[0]
+  } else {
+    selectedUploadFile.value = null
+  }
+}
+
+async function executeUpload() {
+  if (!selectedUploadFile.value || !selectedTarget.value) return
+  uploading.value = true
+  try {
+    const formData = new FormData()
+    formData.append('target_type', selectedTarget.value.type)
+    formData.append('target_id', selectedTarget.value.id)
+    formData.append('dir_path', currentPath.value || '')
+    formData.append('file', selectedUploadFile.value)
+
+    const headers: Record<string, string> = {}
+    if (authStore.token) {
+      headers['Authorization'] = `Bearer ${authStore.token}`
+    }
+
+    const res = await fetch('/api/storage/files/upload', {
+      method: 'POST',
+      headers,
+      body: formData
+    })
+
+    if (!res.ok) {
+      const errText = await res.text()
+      let msg = `Upload failed (HTTP ${res.status})`
+      try {
+        const parsed = JSON.parse(errText)
+        msg = parsed.error || parsed.message || msg
+      } catch {}
+      throw new Error(msg)
+    }
+
+    showToast(`Uploaded "${selectedUploadFile.value.name}" successfully`)
+    showUploadModal.value = false
+    selectedUploadFile.value = null
+    if (uploadFileInput.value) {
+      uploadFileInput.value.value = ''
+    }
+    await loadDirectory(currentPath.value)
+  } catch (e: any) {
+    showToast(e.message || 'Failed to upload file', 'error')
+  } finally {
+    uploading.value = false
   }
 }
 
@@ -1128,7 +1194,7 @@ onMounted(async () => {
                 </button>
 
                 <button
-                  @click="showUploadModal = true"
+                  @click="openUploadModal"
                   class="cyber-btn-secondary !py-1.5 !px-2.5 text-xs flex items-center gap-1.5 text-cyan-700"
                   title="Upload a file to this directory"
                 >
@@ -2044,9 +2110,10 @@ onMounted(async () => {
           <div class="space-y-1">
             <label class="text-[11px] text-slate-700 font-semibold">Select File from Computer</label>
             <input
+              ref="uploadFileInput"
               type="file"
               @change="onFileSelected"
-              class="w-full text-xs text-slate-700 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-slate-900 hover:file:bg-indigo-500 cursor-pointer"
+              class="w-full text-xs text-slate-700 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-600 file:text-white hover:file:bg-indigo-500 cursor-pointer"
             />
           </div>
 
