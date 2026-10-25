@@ -39,6 +39,8 @@ type ExposureSettings struct {
 }
 
 type ContainerMount struct {
+	Type        string `json:"type,omitempty"`
+	Name        string `json:"name,omitempty"`
 	Source      string `json:"source"`
 	Destination string `json:"destination"`
 	Mode        string `json:"mode"`
@@ -107,6 +109,7 @@ type ContainerDetail struct {
 	CapAdd                 []string            `json:"cap_add,omitempty"`
 	Labels                 map[string]string   `json:"labels,omitempty"`
 	NetworkAliases         map[string][]string `json:"network_aliases,omitempty"`
+	Cmd                    []string            `json:"cmd,omitempty"`
 }
 
 type cfOriginRequest struct {
@@ -514,6 +517,8 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 			CapAdd     []string `json:"CapAdd"`
 		} `json:"HostConfig"`
 		Mounts []struct {
+			Type        string `json:"Type"`
+			Name        string `json:"Name"`
 			Source      string `json:"Source"`
 			Destination string `json:"Destination"`
 			Mode        string `json:"Mode"`
@@ -672,6 +677,8 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 	mounts := make([]ContainerMount, 0, len(inspect.Mounts))
 	for _, m := range inspect.Mounts {
 		mounts = append(mounts, ContainerMount{
+			Type:        m.Type,
+			Name:        m.Name,
 			Source:      m.Source,
 			Destination: m.Destination,
 			Mode:        m.Mode,
@@ -710,6 +717,7 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 	detail.ExitCode = inspect.State.ExitCode
 	detail.User = inspect.Config.User
 	detail.WorkingDir = inspect.Config.WorkingDir
+	detail.Cmd = inspect.Config.Cmd
 	detail.Labels = inspect.Config.Labels
 	detail.Privileged = inspect.HostConfig.Privileged
 	detail.CapAdd = inspect.HostConfig.CapAdd
@@ -1125,12 +1133,16 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 		if len(detail.Mounts) > 0 {
 			b.WriteString("    volumes:\n")
 			for _, m := range detail.Mounts {
-				if m.Source != "" && m.Destination != "" {
+				src := m.Source
+				if m.Type == "volume" && m.Name != "" {
+					src = m.Name
+				}
+				if src != "" && m.Destination != "" {
 					mode := "rw"
 					if !m.RW {
 						mode = "ro"
 					}
-					b.WriteString(fmt.Sprintf("      - %s:%s:%s\n", m.Source, m.Destination, mode))
+					b.WriteString(fmt.Sprintf("      - %s:%s:%s\n", src, m.Destination, mode))
 				}
 			}
 		}
@@ -2261,13 +2273,27 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 
 	var primaryNet string
 	var extraNets []string
+
+	// Prioritize internal/stack networks (e.g. media_default) over ingress bridge networks (docktun, cloudflared)
+	var stackNets []string
+	var ingressNets []string
 	for _, net := range detail.Networks {
-		if net != "bridge" && net != "host" && net != "none" && net != "" {
-			if primaryNet == "" {
-				primaryNet = net
-			} else {
-				extraNets = append(extraNets, net)
-			}
+		if net == "bridge" || net == "host" || net == "none" || net == "" {
+			continue
+		}
+		if net == "docktun" || net == "cloudflared" {
+			ingressNets = append(ingressNets, net)
+		} else {
+			stackNets = append(stackNets, net)
+		}
+	}
+
+	orderedNets := append(stackNets, ingressNets...)
+	for _, net := range orderedNets {
+		if primaryNet == "" {
+			primaryNet = net
+		} else {
+			extraNets = append(extraNets, net)
 		}
 	}
 
@@ -2277,7 +2303,7 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 	}
 
 	var runArgs []string
-	runArgs = append(runArgs, "run", "-d", "--name", cname, "--restart", restartPol)
+	runArgs = append(runArgs, "create", "--name", cname, "--restart", restartPol)
 	if primaryNet != "" {
 		runArgs = append(runArgs, "--network", primaryNet)
 		if aliases, ok := detail.NetworkAliases[primaryNet]; ok {
@@ -2334,12 +2360,16 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 	}
 
 	for _, m := range detail.Mounts {
-		if m.Source != "" && m.Destination != "" {
+		src := m.Source
+		if m.Type == "volume" && m.Name != "" {
+			src = m.Name
+		}
+		if src != "" && m.Destination != "" {
 			mode := "rw"
 			if !m.RW {
 				mode = "ro"
 			}
-			runArgs = append(runArgs, "-v", fmt.Sprintf("%s:%s:%s", m.Source, m.Destination, mode))
+			runArgs = append(runArgs, "-v", fmt.Sprintf("%s:%s:%s", src, m.Destination, mode))
 		}
 	}
 
@@ -2348,19 +2378,25 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 		envToUse = detail.Env
 	}
 	for _, e := range envToUse {
-		if !strings.Contains(e, "********") && !strings.HasPrefix(e, "PATH=") {
+		if !strings.Contains(e, "********") && !strings.HasPrefix(e, "PATH=") && !strings.HasPrefix(e, "HOSTNAME=") {
 			runArgs = append(runArgs, "-e", e)
 		}
 	}
 
 	runArgs = append(runArgs, newImage)
-	if detail.Command != "" {
-		runArgs = append(runArgs, strings.Fields(detail.Command)...)
+	if len(detail.Cmd) > 0 {
+		runArgs = append(runArgs, detail.Cmd...)
+	} else if detail.Command != "" {
+		cleanedCmd := strings.Trim(strings.TrimSpace(detail.Command), "\"")
+		if cleanedCmd != "" && !strings.HasSuffix(cleanedCmd, "…") && !strings.HasSuffix(cleanedCmd, "...") {
+			runArgs = append(runArgs, strings.Fields(cleanedCmd)...)
+		}
 	}
 
 	if s.isSelfContainer(detail.ID, cname) {
 		appendLog(fmt.Sprintf("✔ [SUCCESS] %s self-update initiated! Restarting container with image %s in background...", cname, newImage))
-		detachScript := fmt.Sprintf("sleep 1 && docker stop %s && docker rm -f %s && docker %s", detail.ID, detail.ID, strings.Join(runArgs, " "))
+		selfArgs := append([]string{"run", "-d"}, runArgs[1:]...)
+		detachScript := fmt.Sprintf("sleep 1 && docker stop %s && docker rm -f %s && docker %s", detail.ID, detail.ID, strings.Join(selfArgs, " "))
 		bgCmd := exec.Command("sh", "-c", detachScript)
 		_ = bgCmd.Start()
 		return nil
@@ -2376,6 +2412,7 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 		_ = exec.Command("docker", "rm", detail.ID).Run()
 	}
 
+	// 1. Create container in Created state with primary network
 	cmd := exec.Command("docker", runArgs...)
 	out, err := cmd.CombinedOutput()
 	appendLog(strings.TrimSpace(string(out)))
@@ -2396,6 +2433,7 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 		return fmt.Errorf("container recreation failed: %s (original container was rolled back and restarted)", strings.TrimSpace(string(out)))
 	}
 
+	// 2. Connect all extra networks (e.g. docktun, cloudflared) BEFORE starting the container!
 	for _, net := range extraNets {
 		netCmd := []string{"network", "connect"}
 		if aliases, ok := detail.NetworkAliases[net]; ok {
@@ -2406,7 +2444,32 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 			}
 		}
 		netCmd = append(netCmd, net, cname)
-		_ = exec.Command("docker", netCmd...).Run()
+		if connectOut, connectErr := exec.Command("docker", netCmd...).CombinedOutput(); connectErr != nil {
+			appendLog(fmt.Sprintf("[NOTE] Connecting network %s notice: %s", net, strings.TrimSpace(string(connectOut))))
+		} else {
+			appendLog(fmt.Sprintf("[NETWORK] Connected network %s prior to container start.", net))
+		}
+	}
+
+	// 3. Start the container with all networks and aliases fully active
+	startCmd := exec.Command("docker", "start", cname)
+	startOut, startErr := startCmd.CombinedOutput()
+	appendLog(strings.TrimSpace(string(startOut)))
+	if startErr != nil {
+		appendLog(fmt.Sprintf("[ERROR] Starting container failed: %s (%v)", strings.TrimSpace(string(startOut)), startErr))
+		appendLog(fmt.Sprintf("[ROLLBACK] Initiating automatic rollback to backup %s...", backupName))
+
+		_ = exec.Command("docker", "rm", "-f", cname).Run()
+
+		if rbRenameErr := exec.Command("docker", "rename", backupName, cname).Run(); rbRenameErr != nil {
+			appendLog(fmt.Sprintf("[FATAL] Rollback rename failed: %v. Old container is still available as %s", rbRenameErr, backupName))
+			_ = exec.Command("docker", "start", backupName).Run()
+			return fmt.Errorf("start failed: %s; rollback rename failed: %v", strings.TrimSpace(string(startOut)), rbRenameErr)
+		}
+
+		_ = exec.Command("docker", "start", cname).Run()
+		appendLog(fmt.Sprintf("[ROLLBACK] Original container %s safely restored and restarted!", cname))
+		return fmt.Errorf("container start failed: %s (original container was rolled back and restarted)", strings.TrimSpace(string(startOut)))
 	}
 
 	_ = exec.Command("docker", "rm", "-f", backupName).Run()
