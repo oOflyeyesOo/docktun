@@ -714,7 +714,8 @@ async function deployComposeStack() {
 }
 
 // Docker Run State
-const dockerRunCmd = ref('docker run -d --name my-app -p 8080:80 nginx:alpine')
+const defaultExampleCmd = 'docker run -d --name my-app -p 8080:80 nginx:alpine'
+const dockerRunCmd = ref('')
 const dockerRunMode = ref<'compose' | 'direct'>('compose')
 const dockerRunCloudflared = ref(false)
 const dockerRunCreateProject = ref(true)
@@ -722,6 +723,30 @@ const dockerRunCustomName = ref('')
 const dockerRunLoading = ref(false)
 const dockerRunJob = ref<any>(null)
 const dockerRunLines = ref<string[]>([])
+
+// Backdrop tracking to prevent modal from force-closing on text selection drag
+let backdropMouseDown = false
+function onBackdropMouseDown(e: MouseEvent) {
+  backdropMouseDown = (e.target === e.currentTarget)
+}
+function onBackdropClick(e: MouseEvent, closeFn: () => void) {
+  if (backdropMouseDown && e.target === e.currentTarget) {
+    closeFn()
+  }
+  backdropMouseDown = false
+}
+
+function onDockerRunFocus() {
+  if (dockerRunCmd.value.trim() === defaultExampleCmd.trim()) {
+    dockerRunCmd.value = ''
+  }
+}
+
+function onDockerRunPaste() {
+  if (dockerRunCmd.value.trim() === defaultExampleCmd.trim()) {
+    dockerRunCmd.value = ''
+  }
+}
 
 // Git / Compose Stack Creator State
 const newProjectForm = ref({
@@ -1547,6 +1572,9 @@ function openLaunchModal() {
 }
 
 function insertDockerSnippet(snip: string) {
+  if (dockerRunCmd.value.trim() === defaultExampleCmd.trim()) {
+    dockerRunCmd.value = ''
+  }
   dockerRunCmd.value = (dockerRunCmd.value.trim() + ' ' + snip).trim()
 }
 
@@ -1573,8 +1601,8 @@ async function runDockerCommand() {
       try {
         const job: any = await apiFetch(`/api/docker/run/output/${jobId}`)
         dockerRunJob.value = job
-        dockerRunLines.value = job.output || []
-        if (job.status === 'completed' || job.status === 'failed') {
+        dockerRunLines.value = job.lines || job.output || []
+        if (job.done || job.status === 'completed' || job.status === 'failed') {
           clearInterval(poll)
           dockerRunLoading.value = false
           await fetchContainers()
@@ -2938,9 +2966,13 @@ onUnmounted(() => {
     <div
       v-if="selectedContainer"
       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-2 sm:p-4 backdrop-blur-md"
-      @click.self="closeContainerModal"
+      @mousedown="onBackdropMouseDown"
+      @click="onBackdropClick($event, closeContainerModal)"
     >
-      <div class="flex max-h-[92vh] w-full max-w-5xl flex-col rounded-xl border border-slate-300 bg-white shadow-sm overflow-hidden">
+      <div
+        class="flex max-h-[92vh] w-full max-w-5xl flex-col rounded-xl border border-slate-300 bg-white shadow-sm overflow-hidden"
+        @mousedown.stop
+      >
         <!-- Modal Top Bar -->
         <div class="flex flex-wrap items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-3 gap-3">
           <div class="flex items-center gap-3">
@@ -4166,9 +4198,10 @@ onUnmounted(() => {
     <div
       v-if="showUpdateConfirmModal"
       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-4 backdrop-blur-md"
-      @click.self="showUpdateConfirmModal = null"
+      @mousedown="onBackdropMouseDown"
+      @click="onBackdropClick($event, () => showUpdateConfirmModal = null)"
     >
-      <div class="w-full max-w-lg rounded-xl border border-amber-500/40 bg-white p-6 shadow-sm space-y-5">
+      <div class="w-full max-w-lg rounded-xl border border-amber-500/40 bg-white p-6 shadow-sm space-y-5" @mousedown.stop>
         <div class="flex items-start justify-between">
           <div class="flex items-center gap-3">
             <div class="rounded-lg bg-amber-500/20 p-2.5 text-amber-600 border border-amber-500/30">
@@ -4229,11 +4262,13 @@ onUnmounted(() => {
     <div
       v-if="updateResultModal"
       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-4 backdrop-blur-md"
-      @click.self="updateResultModal = null"
+      @mousedown="onBackdropMouseDown"
+      @click="onBackdropClick($event, () => updateResultModal = null)"
     >
       <div
         class="w-full max-w-2xl rounded-xl border bg-white p-6 shadow-sm space-y-4"
         :class="updateResultModal.success ? 'border-emerald-500/40' : 'border-red-500/40'"
+        @mousedown.stop
       >
         <div class="flex items-start justify-between">
           <div class="flex items-center gap-3">
@@ -4277,9 +4312,13 @@ onUnmounted(() => {
     <div
       v-if="showLaunchModal"
       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-4 backdrop-blur-md"
-      @click.self="showLaunchModal = false"
+      @mousedown="onBackdropMouseDown"
+      @click="onBackdropClick($event, () => showLaunchModal = false)"
     >
-      <div class="w-full max-w-4xl rounded-xl border border-slate-300 bg-white p-6 shadow-sm space-y-4 max-h-[92vh] flex flex-col">
+      <div
+        class="w-full max-w-4xl rounded-xl border border-slate-300 bg-white p-6 shadow-sm space-y-4 max-h-[92vh] flex flex-col"
+        @mousedown.stop
+      >
         <div class="flex items-start justify-between border-b border-slate-200 pb-3 shrink-0">
           <div>
             <h3 class="text-lg font-bold text-slate-900 flex items-center gap-2">
@@ -4524,14 +4563,35 @@ onUnmounted(() => {
         <!-- TAB 3: Docker Run -->
         <div v-if="launchTab === 'dockerrun'" class="space-y-4 overflow-y-auto pr-1 flex-1">
           <div>
-            <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-              Docker Run Command
-            </label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                Docker Run Command
+              </label>
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  @click="dockerRunCmd = defaultExampleCmd"
+                  class="text-[10px] text-cyan-600 hover:text-cyan-800 underline font-mono"
+                >
+                  Insert Example
+                </button>
+                <button
+                  v-if="dockerRunCmd"
+                  type="button"
+                  @click="dockerRunCmd = ''"
+                  class="text-[10px] text-slate-500 hover:text-rose-600 underline font-mono"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
             <textarea
               v-model="dockerRunCmd"
               rows="3"
               class="cyber-input font-mono text-xs w-full leading-relaxed"
-              placeholder="docker run -d --name my-app -p 8080:80 nginx:alpine"
+              :placeholder="defaultExampleCmd"
+              @focus="onDockerRunFocus"
+              @paste="onDockerRunPaste"
             ></textarea>
           </div>
 
@@ -4571,7 +4631,7 @@ onUnmounted(() => {
           </div>
 
           <!-- Output Log -->
-          <div v-if="dockerRunLines.length > 0" class="max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono text-[11px] text-slate-700 leading-relaxed shadow-inner">
+          <div v-if="dockerRunLines.length > 0 || dockerRunLoading" class="max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono text-[11px] text-slate-700 leading-relaxed shadow-inner">
             <div v-for="(line, idx) in dockerRunLines" :key="idx">{{ line }}</div>
             <div v-if="dockerRunLoading" class="text-cyan-600 animate-pulse mt-1">&rarr; Running command...</div>
           </div>
@@ -4637,9 +4697,10 @@ onUnmounted(() => {
     <div
       v-if="stackOutputModal"
       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-4 backdrop-blur-md"
-      @click.self="stackOutputModal = null"
+      @mousedown="onBackdropMouseDown"
+      @click="onBackdropClick($event, () => stackOutputModal = null)"
     >
-      <div class="w-full max-w-3xl rounded-xl border border-slate-300 bg-white p-6 shadow-sm space-y-4">
+      <div class="w-full max-w-3xl rounded-xl border border-slate-300 bg-white p-6 shadow-sm space-y-4" @mousedown.stop>
         <div class="flex items-start justify-between border-b border-slate-200 pb-3">
           <div class="flex items-center gap-3">
             <div class="rounded-lg p-2 bg-slate-100 text-cyan-600">
@@ -4677,9 +4738,10 @@ onUnmounted(() => {
     <div
       v-if="showDeployPromptModal"
       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-4 backdrop-blur-md"
-      @click.self="showDeployPromptModal = null"
+      @mousedown="onBackdropMouseDown"
+      @click="onBackdropClick($event, () => showDeployPromptModal = null)"
     >
-      <div class="w-full max-w-md rounded-xl border border-violet-500/40 bg-white p-6 shadow-sm space-y-4">
+      <div class="w-full max-w-md rounded-xl border border-violet-500/40 bg-white p-6 shadow-sm space-y-4" @mousedown.stop>
         <div class="flex items-start justify-between border-b border-slate-200 pb-3">
           <div class="flex items-center gap-2 text-violet-300 font-bold">
             <Rocket class="h-5 w-5" />
@@ -4722,9 +4784,10 @@ onUnmounted(() => {
     <div
       v-if="stackHistoryModal"
       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-4 backdrop-blur-md"
-      @click.self="stackHistoryModal = null"
+      @mousedown="onBackdropMouseDown"
+      @click="onBackdropClick($event, () => stackHistoryModal = null)"
     >
-      <div class="w-full max-w-2xl rounded-xl border border-slate-300 bg-white p-6 shadow-sm space-y-4">
+      <div class="w-full max-w-2xl rounded-xl border border-slate-300 bg-white p-6 shadow-sm space-y-4" @mousedown.stop>
         <div class="flex items-start justify-between border-b border-slate-200 pb-3">
           <div class="flex items-center gap-2.5">
             <History class="h-5 w-5 text-cyan-600" />

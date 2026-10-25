@@ -18,7 +18,9 @@ type DockerRunJob struct {
 	Command     string   `json:"command"`
 	Mode        string   `json:"mode"`
 	Lines       []string `json:"lines"`
+	Output      []string `json:"output"` // alias for lines for frontend compatibility
 	Done        bool     `json:"done"`
+	Status      string   `json:"status"` // "running", "completed", "failed"
 	ExitCode    int      `json:"exit_code"`
 	Error       string   `json:"error,omitempty"`
 	Container   string   `json:"container,omitempty"`
@@ -62,6 +64,16 @@ func defaultDockerNetwork() string {
 	return "docktun"
 }
 
+func ensureNetwork(netName string) error {
+	if netName == "" || netName == "host" || netName == "bridge" || netName == "none" {
+		return nil
+	}
+	if err := exec.Command("docker", "network", "inspect", netName).Run(); err == nil {
+		return nil
+	}
+	return exec.Command("docker", "network", "create", netName).Run()
+}
+
 func NewDockerRun(database *db.DB, projectsSvc *Projects) *DockerRunService {
 	return &DockerRunService{
 		db:          database,
@@ -82,6 +94,7 @@ func (s *DockerRunService) GetJob(id int) (*DockerRunJob, bool) {
 	copyJob := *j
 	copyJob.Lines = make([]string, len(j.Lines))
 	copy(copyJob.Lines, j.Lines)
+	copyJob.Output = copyJob.Lines
 	return &copyJob, true
 }
 
@@ -89,6 +102,7 @@ func (s *DockerRunService) appendLine(id int, line string) {
 	s.mu.Lock()
 	if j, ok := s.jobs[id]; ok {
 		j.Lines = append(j.Lines, line)
+		j.Output = j.Lines
 	}
 	s.mu.Unlock()
 }
@@ -99,8 +113,27 @@ func (s *DockerRunService) markDone(id int, exitCode int, errMsg string) {
 		j.Done = true
 		j.ExitCode = exitCode
 		j.Error = errMsg
+		if exitCode == 0 {
+			j.Status = "completed"
+		} else {
+			j.Status = "failed"
+		}
 	}
 	s.mu.Unlock()
+}
+
+func (s *DockerRunService) removeConflictingContainer(jobID int, name string) {
+	if name == "" || name == "docktun" || name == "docktun-cloudflared" || isAuxiliaryDocktunService(name, "") || isDocktunContainer(name, "") {
+		return
+	}
+	if err := exec.Command("docker", "inspect", name).Run(); err == nil {
+		s.appendLine(jobID, fmt.Sprintf("[STEP] Existing container '%s' detected. Removing to allow replacement...", name))
+		if out, rmErr := exec.Command("docker", "rm", "-f", name).CombinedOutput(); rmErr != nil {
+			s.appendLine(jobID, fmt.Sprintf("[WARN] Failed to remove conflicting container '%s': %s", name, strings.TrimSpace(string(out))))
+		} else {
+			s.appendLine(jobID, fmt.Sprintf("[STEP] Removed previous container '%s'", name))
+		}
+	}
 }
 
 func (s *DockerRunService) StartRun(rawCmd string, mode string, connectCloudflared bool, createProject bool, customProjectName string, onDone func(string)) (*DockerRunJob, error) {
@@ -130,7 +163,9 @@ func (s *DockerRunService) StartRun(rawCmd string, mode string, connectCloudflar
 		Command:     trimmed,
 		Mode:        mode,
 		Lines:       []string{},
+		Output:      []string{},
 		Done:        false,
+		Status:      "running",
 		Container:   parsed.ContainerName,
 		ProjectName: parsed.ContainerName,
 		CreatedAt:   time.Now().Format(time.RFC3339),
@@ -150,6 +185,49 @@ func (s *DockerRunService) StartRun(rawCmd string, mode string, connectCloudflar
 }
 
 func (s *DockerRunService) executeAsCompose(jobID int, parsed *ParsedDockerRun, rawCmd string, onDone func(string)) {
+	// Ensure network exists if specified
+	if parsed.Network != "" && parsed.Network != "host" && parsed.Network != "bridge" && parsed.Network != "none" {
+		if err := ensureNetwork(parsed.Network); err != nil {
+			s.appendLine(jobID, fmt.Sprintf("[WARN] Could not ensure network '%s': %v", parsed.Network, err))
+		} else {
+			s.appendLine(jobID, fmt.Sprintf("[STEP] Docker network '%s' ready.", parsed.Network))
+		}
+	}
+
+	// Fetch image in advance with streaming feedback
+	if parsed.Image != "" {
+		s.appendLine(jobID, fmt.Sprintf("[STEP] Fetching container image '%s'...", parsed.Image))
+		pcmd := exec.Command("docker", "pull", parsed.Image)
+		pstdout, perr := pcmd.StdoutPipe()
+		if perr == nil {
+			pcmd.Stderr = pcmd.Stdout
+			if err := pcmd.Start(); err == nil {
+				pbuf := make([]byte, 2048)
+				for {
+					pn, rerr := pstdout.Read(pbuf)
+					if pn > 0 {
+						for _, pl := range strings.Split(strings.TrimRight(string(pbuf[:pn]), "\r\n"), "\n") {
+							if tr := strings.TrimSpace(pl); tr != "" {
+								s.appendLine(jobID, tr)
+							}
+						}
+					}
+					if rerr != nil {
+						break
+					}
+				}
+				if perrWait := pcmd.Wait(); perrWait != nil {
+					s.appendLine(jobID, fmt.Sprintf("[WARN] docker pull: %v (will proceed with compose up)", perrWait))
+				} else {
+					s.appendLine(jobID, fmt.Sprintf("[STEP] Successfully fetched '%s'", parsed.Image))
+				}
+			}
+		}
+	}
+
+	// Remove unmanaged container with the same name if one exists
+	s.removeConflictingContainer(jobID, parsed.ContainerName)
+
 	s.appendLine(jobID, fmt.Sprintf("[STEP] Preparing Compose stack for '%s'...", parsed.ContainerName))
 
 	baseDir := "./projects"
@@ -196,9 +274,9 @@ func (s *DockerRunService) executeAsCompose(jobID int, parsed *ParsedDockerRun, 
 	s.mu.Unlock()
 
 	s.appendLine(jobID, fmt.Sprintf("[STEP] Registered project '%s' (ID: %d)", parsed.ContainerName, projectID))
-	s.appendLine(jobID, "[STEP] Executing: docker compose up -d --build")
+	s.appendLine(jobID, "[STEP] Executing: docker compose up -d")
 
-	cmd := exec.Command("docker", "compose", "-p", parsed.ContainerName, "--project-directory", projDir, "up", "-d", "--build")
+	cmd := exec.Command("docker", "compose", "-p", parsed.ContainerName, "--project-directory", projDir, "up", "-d")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		s.appendLine(jobID, "[ERROR] Pipe error: "+err.Error())
@@ -257,16 +335,27 @@ func (s *DockerRunService) executeDirect(jobID int, parsed *ParsedDockerRun, raw
 	}
 	cmdArgs = append(cmdArgs, tokens[idx:]...)
 
-	// If cloudflared connect requested and --network wasn't supplied, add --network cloudflared
+	// If cloudflared connect requested and --network wasn't supplied, add --network
 	hasNetwork := false
-	for _, a := range cmdArgs {
-		if a == "--network" || strings.HasPrefix(a, "--network=") {
+	netName := ""
+	for i, a := range cmdArgs {
+		if strings.HasPrefix(a, "--network=") {
 			hasNetwork = true
+			netName = strings.TrimPrefix(a, "--network=")
+			break
+		} else if strings.HasPrefix(a, "--net=") {
+			hasNetwork = true
+			netName = strings.TrimPrefix(a, "--net=")
+			break
+		} else if (a == "--network" || a == "--net") && i+1 < len(cmdArgs) {
+			hasNetwork = true
+			netName = cmdArgs[i+1]
 			break
 		}
 	}
+
 	if !hasNetwork && connectCloudflared {
-		netName := defaultDockerNetwork()
+		netName = defaultDockerNetwork()
 		// Insert before image name
 		inserted := false
 		for i, a := range cmdArgs {
@@ -279,7 +368,17 @@ func (s *DockerRunService) executeDirect(jobID int, parsed *ParsedDockerRun, raw
 		if !inserted {
 			cmdArgs = append([]string{"--network", netName}, cmdArgs...)
 		}
+		hasNetwork = true
 	}
+
+	if hasNetwork && netName != "" && netName != "host" && netName != "bridge" && netName != "none" {
+		if err := ensureNetwork(netName); err != nil {
+			s.appendLine(jobID, fmt.Sprintf("[WARN] Could not ensure network '%s': %v", netName, err))
+		}
+	}
+
+	// Remove unmanaged container with the same name if one exists
+	s.removeConflictingContainer(jobID, parsed.ContainerName)
 
 	s.appendLine(jobID, fmt.Sprintf("[STEP] Executing: docker %s", strings.Join(cmdArgs, " ")))
 
@@ -347,65 +446,98 @@ func ParseDockerRunCommand(raw string) (*ParsedDockerRun, error) {
 
 	res := &ParsedDockerRun{
 		Restart: "unless-stopped",
-		Network: defaultDockerNetwork(),
+		Network: "",
 	}
 
-	var positional []string
+	imageFound := false
+
+	// Flags that take an argument as the next token
+	takesArg := map[string]bool{
+		"-p": true, "--publish": true,
+		"-v": true, "--volume": true,
+		"-e": true, "--env": true,
+		"--env-file": true,
+		"--name":     true,
+		"--restart":  true,
+		"--network":  true, "--net": true,
+		"-u": true, "--user": true,
+		"-w": true, "--workdir": true,
+		"-h": true, "--hostname": true,
+		"--platform":   true,
+		"--pull":       true,
+		"-l":           true, "--label": true,
+		"--cpus":       true,
+		"-m":           true, "--memory": true,
+		"--shm-size":   true,
+		"--entrypoint": true,
+		"--dns":        true,
+		"--ip":         true,
+		"--log-driver": true,
+		"--log-opt":    true,
+	}
+
 	for i := idx; i < len(tokens); i++ {
 		t := tokens[i]
+
+		// Once the image has been found, all subsequent tokens are the container's command/args
+		if imageFound {
+			res.Command = append(res.Command, t)
+			continue
+		}
+
 		if strings.HasPrefix(t, "--name=") {
-			res.ContainerName = strings.TrimPrefix(t, "--name=")
+			res.ContainerName = strings.Trim(strings.TrimPrefix(t, "--name="), "\"'")
 		} else if t == "--name" && i+1 < len(tokens) {
 			i++
-			res.ContainerName = tokens[i]
+			res.ContainerName = strings.Trim(tokens[i], "\"'")
 		} else if strings.HasPrefix(t, "-p=") || strings.HasPrefix(t, "--publish=") {
-			val := strings.TrimPrefix(strings.TrimPrefix(t, "--publish="), "-p=")
+			val := strings.Trim(strings.TrimPrefix(strings.TrimPrefix(t, "--publish="), "-p="), "\"'")
 			res.Ports = append(res.Ports, val)
 		} else if (t == "-p" || t == "--publish") && i+1 < len(tokens) {
 			i++
-			res.Ports = append(res.Ports, tokens[i])
+			res.Ports = append(res.Ports, strings.Trim(tokens[i], "\"'"))
 		} else if strings.HasPrefix(t, "-v=") || strings.HasPrefix(t, "--volume=") {
-			val := strings.TrimPrefix(strings.TrimPrefix(t, "--volume="), "-v=")
+			val := strings.Trim(strings.TrimPrefix(strings.TrimPrefix(t, "--volume="), "-v="), "\"'")
 			res.Volumes = append(res.Volumes, val)
 		} else if (t == "-v" || t == "--volume") && i+1 < len(tokens) {
 			i++
-			res.Volumes = append(res.Volumes, tokens[i])
+			res.Volumes = append(res.Volumes, strings.Trim(tokens[i], "\"'"))
 		} else if strings.HasPrefix(t, "-e=") || strings.HasPrefix(t, "--env=") {
-			val := strings.TrimPrefix(strings.TrimPrefix(t, "--env="), "-e=")
+			val := strings.Trim(strings.TrimPrefix(strings.TrimPrefix(t, "--env="), "-e="), "\"'")
 			res.Env = append(res.Env, val)
 		} else if (t == "-e" || t == "--env") && i+1 < len(tokens) {
 			i++
-			res.Env = append(res.Env, tokens[i])
+			res.Env = append(res.Env, strings.Trim(tokens[i], "\"'"))
 		} else if strings.HasPrefix(t, "--restart=") {
-			res.Restart = strings.TrimPrefix(t, "--restart=")
+			res.Restart = strings.Trim(strings.TrimPrefix(t, "--restart="), "\"'")
 		} else if t == "--restart" && i+1 < len(tokens) {
 			i++
-			res.Restart = tokens[i]
-		} else if strings.HasPrefix(t, "--network=") {
-			res.Network = strings.TrimPrefix(t, "--network=")
-		} else if t == "--network" && i+1 < len(tokens) {
+			res.Restart = strings.Trim(tokens[i], "\"'")
+		} else if strings.HasPrefix(t, "--network=") || strings.HasPrefix(t, "--net=") {
+			val := strings.TrimPrefix(strings.TrimPrefix(t, "--network="), "--net=")
+			res.Network = strings.Trim(val, "\"'")
+		} else if (t == "--network" || t == "--net") && i+1 < len(tokens) {
 			i++
-			res.Network = tokens[i]
-		} else if t == "-d" || t == "--detach" {
+			res.Network = strings.Trim(tokens[i], "\"'")
+		} else if t == "-d" || t == "--detach" || t == "-dit" || t == "-itd" {
 			res.Detach = true
 		} else if t == "--rm" {
 			res.Remove = true
+		} else if takesArg[t] && i+1 < len(tokens) {
+			i++
+			res.ExtraArgs = append(res.ExtraArgs, t, tokens[i])
 		} else if strings.HasPrefix(t, "-") {
 			res.ExtraArgs = append(res.ExtraArgs, t)
 		} else {
-			positional = append(positional, t)
+			res.Image = t
+			imageFound = true
 		}
 	}
 
-	if len(positional) > 0 {
-		res.Image = positional[0]
-		if len(positional) > 1 {
-			res.Command = positional[1:]
-		}
-	}
 	if res.Image == "" {
 		return nil, fmt.Errorf("no container image specified in command")
 	}
+
 	if res.ContainerName == "" {
 		base := res.Image
 		if lastSlash := strings.LastIndex(base, "/"); lastSlash != -1 {
@@ -453,7 +585,9 @@ func (p *ParsedDockerRun) GenerateComposeYAML() string {
 			sb.WriteString(fmt.Sprintf("      - %s\n", cmd))
 		}
 	}
-	if p.Network != "" {
+	if p.Network == "host" || p.Network == "none" || p.Network == "bridge" {
+		sb.WriteString(fmt.Sprintf("    network_mode: %s\n", p.Network))
+	} else if p.Network != "" {
 		sb.WriteString("    networks:\n")
 		sb.WriteString(fmt.Sprintf("      - %s\n", p.Network))
 		sb.WriteString("\nnetworks:\n")
@@ -472,15 +606,34 @@ func splitShellArgs(cmd string) []string {
 
 	for i := 0; i < len(cmd); i++ {
 		c := cmd[i]
+
+		// Handle line continuation: \ followed by \r\n or \n
+		if !inQuotes && c == '\\' {
+			if i+1 < len(cmd) && cmd[i+1] == '\n' {
+				i++
+				continue
+			}
+			if i+2 < len(cmd) && cmd[i+1] == '\r' && cmd[i+2] == '\n' {
+				i += 2
+				continue
+			}
+			if i+1 < len(cmd) && cmd[i+1] == '\r' {
+				i++
+				continue
+			}
+		}
+
 		if escaped {
 			current.WriteByte(c)
 			escaped = false
 			continue
 		}
+
 		if c == '\\' {
 			escaped = true
 			continue
 		}
+
 		if inQuotes {
 			if c == quoteChar {
 				inQuotes = false
@@ -489,22 +642,32 @@ func splitShellArgs(cmd string) []string {
 			}
 			continue
 		}
+
 		if c == '"' || c == '\'' {
 			inQuotes = true
 			quoteChar = c
 			continue
 		}
+
 		if unicode.IsSpace(rune(c)) {
 			if current.Len() > 0 {
-				args = append(args, current.String())
+				val := strings.TrimSpace(current.String())
+				if val != "" {
+					args = append(args, val)
+				}
 				current.Reset()
 			}
 			continue
 		}
+
 		current.WriteByte(c)
 	}
+
 	if current.Len() > 0 {
-		args = append(args, current.String())
+		val := strings.TrimSpace(current.String())
+		if val != "" {
+			args = append(args, val)
+		}
 	}
 	return args
 }

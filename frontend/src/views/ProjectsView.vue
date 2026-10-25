@@ -93,7 +93,8 @@ const newItemIsDir = ref(false)
 
 // --- Docker Run State ---
 const showDockerRun = ref(false)
-const dockerRunCmd = ref('docker run -d --name my-app -p 8080:80 nginx:alpine')
+const defaultExampleCmd = 'docker run -d --name my-app -p 8080:80 nginx:alpine'
+const dockerRunCmd = ref('')
 const dockerRunMode = ref<'compose' | 'direct'>('compose')
 const dockerRunCloudflared = ref(false)
 const dockerRunCreateProject = ref(true)
@@ -102,6 +103,29 @@ const dockerRunLoading = ref(false)
 const dockerRunJob = ref<any>(null)
 const dockerRunLines = ref<string[]>([])
 const dockerRunEl = ref<HTMLElement | null>(null)
+
+let backdropMouseDown = false
+function onBackdropMouseDown(e: MouseEvent) {
+  backdropMouseDown = (e.target === e.currentTarget)
+}
+function onBackdropClick(e: MouseEvent, closeFn: () => void) {
+  if (backdropMouseDown && e.target === e.currentTarget) {
+    closeFn()
+  }
+  backdropMouseDown = false
+}
+
+function onDockerRunFocus() {
+  if (dockerRunCmd.value.trim() === defaultExampleCmd.trim()) {
+    dockerRunCmd.value = ''
+  }
+}
+
+function onDockerRunPaste() {
+  if (dockerRunCmd.value.trim() === defaultExampleCmd.trim()) {
+    dockerRunCmd.value = ''
+  }
+}
 
 // -------------------------------------------------------------
 // Core Project Actions
@@ -423,6 +447,9 @@ function openDockerRun() {
 }
 
 function insertSnippet(snip: string) {
+  if (dockerRunCmd.value.trim() === defaultExampleCmd.trim()) {
+    dockerRunCmd.value = ''
+  }
   dockerRunCmd.value = (dockerRunCmd.value.trim() + ' ' + snip).trim()
 }
 
@@ -449,11 +476,11 @@ async function runDockerCommand() {
       try {
         const job: any = await apiFetch(`/api/docker/run/output/${jobId}`)
         dockerRunJob.value = job
-        dockerRunLines.value = job.lines || []
+        dockerRunLines.value = job.lines || job.output || []
         nextTick(() => {
           if (dockerRunEl.value) dockerRunEl.value.scrollTop = dockerRunEl.value.scrollHeight
         })
-        if (job.done) {
+        if (job.done || job.status === 'completed' || job.status === 'failed') {
           clearInterval(poll)
           dockerRunLoading.value = false
           load() // refresh projects
@@ -1170,8 +1197,13 @@ onMounted(async () => {
     <!-- ============================================================= -->
     <!-- DOCKER RUN MODAL                                               -->
     <!-- ============================================================= -->
-    <div v-if="showDockerRun" class="fixed inset-0 z-50 bg-void/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div class="cyber-card w-full max-w-3xl max-h-[90vh] flex flex-col border-neon shadow-neon p-0 overflow-hidden">
+    <div
+      v-if="showDockerRun"
+      class="fixed inset-0 z-50 bg-void/80 backdrop-blur-sm flex items-center justify-center p-4"
+      @mousedown="onBackdropMouseDown"
+      @click="onBackdropClick($event, () => showDockerRun = false)"
+    >
+      <div class="cyber-card w-full max-w-3xl max-h-[90vh] flex flex-col border-neon shadow-neon p-0 overflow-hidden" @mousedown.stop>
         <!-- Modal Header -->
         <div class="p-4 border-b border-border bg-surface flex items-center justify-between">
           <div class="flex items-center gap-2">
@@ -1190,11 +1222,32 @@ onMounted(async () => {
 
           <!-- Command Input -->
           <div>
-            <label class="text-xs text-muted uppercase font-mono block mb-1">Command</label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="text-xs text-muted uppercase font-mono block">Command</label>
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  @click="dockerRunCmd = defaultExampleCmd"
+                  class="text-[10px] text-neon hover:underline font-mono"
+                >
+                  Insert Example
+                </button>
+                <button
+                  v-if="dockerRunCmd"
+                  type="button"
+                  @click="dockerRunCmd = ''"
+                  class="text-[10px] text-muted hover:text-rose-500 hover:underline font-mono"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
             <textarea
               v-model="dockerRunCmd"
               rows="3"
-              placeholder="docker run -d --name my-app -p 8080:80 nginx:alpine"
+              :placeholder="defaultExampleCmd"
+              @focus="onDockerRunFocus"
+              @paste="onDockerRunPaste"
               class="cyber-input w-full font-mono text-xs text-neon bg-void p-3 border border-border focus:border-neon resize-none"
               spellcheck="false"
             ></textarea>
@@ -1285,8 +1338,13 @@ onMounted(async () => {
     <!-- ============================================================= -->
     <!-- APP TEMPLATES CATALOG MODAL (Portainer / Cosmos Style)         -->
     <!-- ============================================================= -->
-    <div v-if="showCatalog" class="fixed inset-0 z-50 flex items-center justify-center bg-void/80 p-4 backdrop-blur-sm" @click.self="showCatalog = false">
-      <div class="cyber-card w-full max-w-4xl max-h-[90vh] flex flex-col p-0 overflow-hidden border-cyan-800 shadow-sm">
+    <div
+      v-if="showCatalog"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-void/80 p-4 backdrop-blur-sm"
+      @mousedown="onBackdropMouseDown"
+      @click="onBackdropClick($event, () => showCatalog = false)"
+    >
+      <div class="cyber-card w-full max-w-4xl max-h-[90vh] flex flex-col p-0 overflow-hidden border-cyan-800 shadow-sm" @mousedown.stop>
         <!-- Catalog Header -->
         <div class="p-5 border-b border-border bg-surface flex items-center justify-between">
           <div class="flex items-center gap-3">
