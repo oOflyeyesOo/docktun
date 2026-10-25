@@ -759,13 +759,20 @@ func (s *RemoteAccessService) ZeroconfControl(action string) error {
 	switch strings.ToLower(action) {
 	case "start":
 		if s.isContainerInstalled("docktun-zeroconf") {
-			return exec.Command("docker", "start", "docktun-zeroconf").Run()
+			if err := exec.Command("docker", "start", "docktun-zeroconf").Run(); err == nil {
+				return nil
+			}
 		}
-		return exec.Command("docker", "compose", "--profile", "zeroconf", "up", "-d").Run()
+		return exec.Command("docker", "compose", "--profile", "zeroconf", "up", "-d", "--build").Run()
 	case "stop":
 		return exec.Command("docker", "stop", "docktun-zeroconf").Run()
 	case "restart":
-		return exec.Command("docker", "restart", "docktun-zeroconf").Run()
+		if err := exec.Command("docker", "restart", "docktun-zeroconf").Run(); err == nil {
+			return nil
+		}
+		return exec.Command("docker", "compose", "--profile", "zeroconf", "up", "-d", "--build", "--force-recreate").Run()
+	case "recreate", "build":
+		return exec.Command("docker", "compose", "--profile", "zeroconf", "up", "-d", "--build", "--force-recreate").Run()
 	default:
 		return fmt.Errorf("unknown action: %s", action)
 	}

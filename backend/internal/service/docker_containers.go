@@ -110,6 +110,7 @@ type ContainerDetail struct {
 	Labels                 map[string]string   `json:"labels,omitempty"`
 	NetworkAliases         map[string][]string `json:"network_aliases,omitempty"`
 	Cmd                    []string            `json:"cmd,omitempty"`
+	NetworkMode            string              `json:"network_mode,omitempty"`
 }
 
 type cfOriginRequest struct {
@@ -540,8 +541,9 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 				Name              string `json:"Name"`
 				MaximumRetryCount int    `json:"MaximumRetryCount"`
 			} `json:"RestartPolicy"`
-			Privileged bool     `json:"Privileged"`
-			CapAdd     []string `json:"CapAdd"`
+			Privileged  bool     `json:"Privileged"`
+			CapAdd      []string `json:"CapAdd"`
+			NetworkMode string   `json:"NetworkMode"`
 		} `json:"HostConfig"`
 		Mounts []struct {
 			Type        string `json:"Type"`
@@ -751,6 +753,15 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 	detail.RestartPolicy = inspect.HostConfig.RestartPolicy.Name
 	if detail.RestartPolicy == "on-failure" && inspect.HostConfig.RestartPolicy.MaximumRetryCount > 0 {
 		detail.RestartPolicy = fmt.Sprintf("on-failure:%d", inspect.HostConfig.RestartPolicy.MaximumRetryCount)
+	}
+	detail.NetworkMode = inspect.HostConfig.NetworkMode
+	if detail.NetworkMode == "" {
+		for _, n := range nets {
+			if n == "host" {
+				detail.NetworkMode = "host"
+				break
+			}
+		}
 	}
 	detail.NetworkAliases = make(map[string][]string)
 	for netName, netInfo := range inspect.NetworkSettings.Networks {
@@ -2132,18 +2143,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		image = "ghcr.io/ooflyeyesoo/docktun:latest"
 	}
 
-	appendLog(fmt.Sprintf("[STEP 1/4] Pulling latest image: %s...", image))
-	pullCtx, pullCancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer pullCancel()
-
-	pullCmd := exec.CommandContext(pullCtx, "docker", "pull", image)
-	pullOut, err := pullCmd.CombinedOutput()
-	appendLog(strings.TrimSpace(string(pullOut)))
-	if err != nil {
-		return logOutput.String(), fmt.Errorf("failed to pull image %s: %s (%w)", image, strings.TrimSpace(string(pullOut)), err)
-	}
-
-	// Step 2: Determine recreation strategy
+	// Step 1: Inspect Compose metadata to determine rebuild strategy
 	compProj := ""
 	compDir := ""
 	compFile := ""
@@ -2206,6 +2206,27 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		}
 	}
 
+	isLocalBuild := !strings.Contains(image, "/")
+
+	if !isLocalBuild {
+		appendLog(fmt.Sprintf("[STEP 1/4] Pulling latest image: %s...", image))
+		pullCtx, pullCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer pullCancel()
+
+		pullCmd := exec.CommandContext(pullCtx, "docker", "pull", image)
+		pullOut, err := pullCmd.CombinedOutput()
+		appendLog(strings.TrimSpace(string(pullOut)))
+		if err != nil {
+			if validComposeDir != "" || compProj != "" {
+				appendLog(fmt.Sprintf("[NOTE] Image pull notice (%s). Proceeding to Compose rebuild...", strings.TrimSpace(string(pullOut))))
+			} else {
+				return logOutput.String(), fmt.Errorf("failed to pull image %s: %s (%w)", image, strings.TrimSpace(string(pullOut)), err)
+			}
+		}
+	} else {
+		appendLog(fmt.Sprintf("[STEP 1/4] Local image %s has no remote registry. Proceeding to Compose rebuild...", image))
+	}
+
 	recreated := false
 
 	// Strategy A: Existing valid compose stack
@@ -2222,6 +2243,24 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		}
 		if composeCandidate != "" && fileExists(composeCandidate) {
 			sanitizeComposeFile(composeCandidate)
+		}
+
+		if isLocalBuild {
+			appendLog(fmt.Sprintf("[BUILD] Building local service %s via Docker Compose in %s...", compService, validComposeDir))
+			var buildArgs []string
+			if composeCandidate != "" && fileExists(composeCandidate) {
+				buildArgs = append(buildArgs, "-f", composeCandidate)
+			} else {
+				buildArgs = append(buildArgs, "--project-directory", validComposeDir)
+			}
+			buildArgs = append(buildArgs, "build", compService)
+			buildCmd := exec.Command("docker", append([]string{"compose"}, buildArgs...)...)
+			buildCmd.Dir = validComposeDir
+			bOut, bErr := buildCmd.CombinedOutput()
+			appendLog(strings.TrimSpace(string(bOut)))
+			if bErr != nil {
+				appendLog(fmt.Sprintf("[WARN] Compose build notice: %v", bErr))
+			}
 		}
 
 		appendLog(fmt.Sprintf("[STEP 2/4] Updating via Docker Compose in %s (service: %s)...", validComposeDir, compService))
@@ -2354,7 +2393,16 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 	}
 
 	// Step 4: Network and Exposure
-	if detail.ExposureMode == "public" || detail.ExposureMode == "private" {
+	isHostNet := detail.NetworkMode == "host"
+	if !isHostNet {
+		for _, net := range detail.Networks {
+			if net == "host" {
+				isHostNet = true
+				break
+			}
+		}
+	}
+	if !isHostNet && (detail.ExposureMode == "public" || detail.ExposureMode == "private") {
 		netName := s.DefaultNetwork()
 		appendLog(fmt.Sprintf("[NETWORK] Ensuring connection to %s network...", netName))
 		_ = s.ConnectNetwork(cname, netName)
@@ -2405,9 +2453,21 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 		restartPol = "unless-stopped"
 	}
 
+	isHostNet := detail.NetworkMode == "host"
+	if !isHostNet {
+		for _, net := range detail.Networks {
+			if net == "host" {
+				isHostNet = true
+				break
+			}
+		}
+	}
+
 	var runArgs []string
 	runArgs = append(runArgs, "create", "--name", cname, "--restart", restartPol)
-	if primaryNet != "" {
+	if isHostNet {
+		runArgs = append(runArgs, "--network", "host")
+	} else if primaryNet != "" {
 		runArgs = append(runArgs, "--network", primaryNet)
 		if aliases, ok := detail.NetworkAliases[primaryNet]; ok {
 			for _, a := range aliases {
@@ -2570,20 +2630,22 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 	}
 
 	// 2. Connect all extra networks (e.g. docktun, cloudflared) BEFORE starting the container!
-	for _, net := range extraNets {
-		netCmd := []string{"network", "connect"}
-		if aliases, ok := detail.NetworkAliases[net]; ok {
-			for _, a := range aliases {
-				if a != "" && a != cname && !strings.HasPrefix(detail.ID, a) {
-					netCmd = append(netCmd, "--alias", a)
+	if !isHostNet {
+		for _, net := range extraNets {
+			netCmd := []string{"network", "connect"}
+			if aliases, ok := detail.NetworkAliases[net]; ok {
+				for _, a := range aliases {
+					if a != "" && a != cname && !strings.HasPrefix(detail.ID, a) {
+						netCmd = append(netCmd, "--alias", a)
+					}
 				}
 			}
-		}
-		netCmd = append(netCmd, net, cname)
-		if connectOut, connectErr := exec.Command("docker", netCmd...).CombinedOutput(); connectErr != nil {
-			appendLog(fmt.Sprintf("[NOTE] Connecting network %s notice: %s", net, strings.TrimSpace(string(connectOut))))
-		} else {
-			appendLog(fmt.Sprintf("[NETWORK] Connected network %s prior to container start.", net))
+			netCmd = append(netCmd, net, cname)
+			if connectOut, connectErr := exec.Command("docker", netCmd...).CombinedOutput(); connectErr != nil {
+				appendLog(fmt.Sprintf("[NOTE] Connecting network %s notice: %s", net, strings.TrimSpace(string(connectOut))))
+			} else {
+				appendLog(fmt.Sprintf("[NETWORK] Connected network %s prior to container start.", net))
+			}
 		}
 	}
 
@@ -2857,24 +2919,37 @@ func fileExists(p string) bool {
 	return err == nil && !fi.IsDir()
 }
 
+func isAuxiliaryDocktunService(name, image string) bool {
+	n := strings.ToLower(strings.TrimPrefix(name, "/"))
+	img := strings.ToLower(strings.TrimSpace(image))
+	return strings.Contains(n, "zeroconf") || strings.Contains(img, "zeroconf") ||
+		strings.Contains(n, "cloudflared") || strings.Contains(img, "cloudflared") ||
+		strings.Contains(n, "wireguard") || strings.Contains(img, "wireguard") ||
+		strings.Contains(n, "tailscale") || strings.Contains(img, "tailscale")
+}
+
 func isDocktunContainer(name, image string) bool {
-	n := strings.ToLower(name)
-	img := strings.ToLower(image)
+	if isAuxiliaryDocktunService(name, image) {
+		return false
+	}
+	n := strings.ToLower(strings.TrimPrefix(name, "/"))
+	img := strings.ToLower(strings.TrimSpace(image))
 	return n == "docktun" || n == "docktun-backend" || n == "docktun-frontend" ||
-		strings.Contains(n, "docktun") ||
+		strings.HasPrefix(n, "docktun-docktun") || strings.HasPrefix(n, "tun-docktun") ||
 		img == "docktun" || img == "docktun:latest" ||
-		strings.HasSuffix(img, "-docktun:latest") ||
-		strings.Contains(img, "docktun")
+		strings.HasSuffix(img, "/docktun:latest") || strings.HasSuffix(img, "/docktun") ||
+		strings.HasSuffix(img, "-docktun:latest") || strings.HasSuffix(img, "_docktun:latest")
 }
 
 func isLocalDocktunImage(image string) bool {
-	img := strings.ToLower(strings.TrimSpace(image))
-	// If it contains a slash or registry domain (e.g. "ghcr.io/ooflyeyesoo/docktun:latest"),
-	// it is a remote registry image, NOT a local-only image!
-	if strings.Contains(img, "/") {
+	if strings.Contains(image, "/") {
 		return false
 	}
-	return img == "docktun" || img == "docktun:latest" || strings.Contains(img, "docktun")
+	if isAuxiliaryDocktunService("", image) {
+		return false
+	}
+	img := strings.ToLower(strings.TrimSpace(image))
+	return img == "docktun" || img == "docktun:latest" || strings.HasSuffix(img, "-docktun:latest") || strings.HasSuffix(img, "_docktun:latest")
 }
 
 func getLocalGitCommit(selfPath string, detail ContainerDetail) string {
