@@ -105,7 +105,9 @@ func (h *Status) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check Zeroconf proxy container status
-	if zcOut, err := exec.Command("docker", "inspect", "-f", "{{.State.Status}}", "docktun-zeroconf").Output(); err == nil {
+	ctxZC, cancelZC := context.WithTimeout(r.Context(), 1*time.Second)
+	defer cancelZC()
+	if zcOut, err := exec.CommandContext(ctxZC, "docker", "inspect", "-f", "{{.State.Status}}", "docktun-zeroconf").Output(); err == nil {
 		resp.ZeroconfStatus = strings.TrimSpace(string(zcOut))
 	} else {
 		resp.ZeroconfStatus = "not found"

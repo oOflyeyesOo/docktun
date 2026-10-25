@@ -18,6 +18,9 @@ import (
 
 type HealthCheck struct {
 	configPath string
+	mu         sync.RWMutex
+	cacheTime  time.Time
+	cacheData  []serviceHealth
 }
 
 func NewHealthCheck(configPath string) *HealthCheck {
@@ -33,6 +36,16 @@ type serviceHealth struct {
 }
 
 func (h *HealthCheck) Check(w http.ResponseWriter, r *http.Request) {
+	force := r.URL.Query().Get("force") == "true"
+	h.mu.RLock()
+	if !force && time.Since(h.cacheTime) < 12*time.Second && len(h.cacheData) > 0 {
+		cached := h.cacheData
+		h.mu.RUnlock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(cached)
+		return
+	}
+	h.mu.RUnlock()
 	var cfg struct {
 		Ingress []struct {
 			Hostname string `yaml:"hostname"`
@@ -111,6 +124,10 @@ func (h *HealthCheck) Check(w http.ResponseWriter, r *http.Request) {
 		}(i, t)
 	}
 	wg.Wait()
+	h.mu.Lock()
+	h.cacheData = results
+	h.cacheTime = time.Now()
+	h.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)

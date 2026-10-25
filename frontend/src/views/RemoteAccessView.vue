@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { remoteAccessTab } from '../lib/tunnel-provider.mjs'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -510,6 +510,17 @@ onMounted(async () => {
   if (activeTab.value === 'tailscale') await fetchTailscale()
   if (activeTab.value === 'wireguard') await fetchWireguard()
 })
+
+watch(
+  () => route.query.tab,
+  (newTab) => {
+    if (newTab && ['cloudflare', 'tailscale', 'wireguard'].includes(newTab as string)) {
+      if (activeTab.value !== newTab) {
+        switchTab(newTab as any)
+      }
+    }
+  }
+)
 
 function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
   activeTab.value = tab

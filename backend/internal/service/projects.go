@@ -261,7 +261,7 @@ func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
 		}
 	}
 
-	cmdArgs := []string{"compose"}
+	cmdArgs := []string{"compose", "--profile", "all", "--profile", "*"}
 	if p, err := s.GetByID(id); err == nil && p.Name != "" {
 		cmdArgs = append(cmdArgs, "-p", p.Name)
 	}

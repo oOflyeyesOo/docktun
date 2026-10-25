@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"docktun/internal/config"
@@ -140,10 +141,11 @@ type DockerContainers struct {
 	cloudflared *Cloudflared
 	cfAPI       *CloudflareAPI
 	audit       *AuditLogger
-	updateMu    sync.RWMutex
-	statsMu     sync.RWMutex
-	statsCache  map[string]liveStats
-	statsTime   time.Time
+	updateMu     sync.RWMutex
+	statsMu      sync.RWMutex
+	statsCache   map[string]liveStats
+	statsTime    time.Time
+	statsRunning int32
 }
 
 func CleanupZombieUpdaters() {
@@ -468,30 +470,47 @@ func (s *DockerContainers) List() ([]Container, error) {
 
 func (s *DockerContainers) getCachedStats() map[string]liveStats {
 	s.statsMu.RLock()
-	if time.Since(s.statsTime) < 3500*time.Millisecond && len(s.statsCache) > 0 {
-		cached := make(map[string]liveStats, len(s.statsCache))
-		for k, v := range s.statsCache {
-			cached[k] = v
-		}
-		s.statsMu.RUnlock()
-		return cached
+	cacheAge := time.Since(s.statsTime)
+	hasCache := len(s.statsCache) > 0
+	cached := make(map[string]liveStats, len(s.statsCache))
+	for k, v := range s.statsCache {
+		cached[k] = v
 	}
 	s.statsMu.RUnlock()
 
-	s.statsMu.Lock()
-	defer s.statsMu.Unlock()
-	if time.Since(s.statsTime) < 3500*time.Millisecond && len(s.statsCache) > 0 {
-		cached := make(map[string]liveStats, len(s.statsCache))
-		for k, v := range s.statsCache {
-			cached[k] = v
+	// If cache is fresh (< 6s), return it immediately
+	if hasCache && cacheAge < 6*time.Second {
+		return cached
+	}
+
+	// If cache exists but is older than 6s, return existing cache immediately
+	// and refresh in the background so API callers are never blocked!
+	if hasCache {
+		if atomic.CompareAndSwapInt32(&s.statsRunning, 0, 1) {
+			go func() {
+				defer atomic.StoreInt32(&s.statsRunning, 0)
+				fresh := s.collectAllStats()
+				s.statsMu.Lock()
+				s.statsCache = fresh
+				s.statsTime = time.Now()
+				s.statsMu.Unlock()
+			}()
 		}
 		return cached
 	}
 
-	fresh := s.collectAllStats()
-	s.statsCache = fresh
-	s.statsTime = time.Now()
-	return fresh
+	// First time ever: collect synchronously
+	if atomic.CompareAndSwapInt32(&s.statsRunning, 0, 1) {
+		defer atomic.StoreInt32(&s.statsRunning, 0)
+		fresh := s.collectAllStats()
+		s.statsMu.Lock()
+		s.statsCache = fresh
+		s.statsTime = time.Now()
+		s.statsMu.Unlock()
+		return fresh
+	}
+
+	return cached
 }
 
 func (s *DockerContainers) collectAllStats() map[string]liveStats {

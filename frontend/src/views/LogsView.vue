@@ -291,12 +291,35 @@ function exportAuditJson() {
 // Lifecycle Hooks
 onMounted(async () => {
   await fetchContainers()
+  const qContainer = (route.query.container as string) || ''
+  if (qContainer) {
+    const found = containers.value.find((c) => c.id === qContainer || c.name === qContainer || c.name === qContainer.replace(/^\//, ''))
+    if (found) {
+      selectedSource.value = found.id
+    }
+  }
   if (activeTab.value === 'stream') {
-    connectWs()
+    if (selectedSource.value === 'cloudflared') {
+      connectWs()
+    } else {
+      fetchContainerLogs()
+      containerPollTimer = setInterval(fetchContainerLogs, 3000)
+    }
   } else {
     fetchAudit()
   }
 })
+
+watch(
+  () => route.query.container,
+  (qContainer) => {
+    if (!qContainer) return
+    const found = containers.value.find((c) => c.id === qContainer || c.name === qContainer || c.name === (qContainer as string).replace(/^\//, ''))
+    if (found && selectedSource.value !== found.id) {
+      selectedSource.value = found.id
+    }
+  }
+)
 
 watch(activeTab, (tab) => {
   if (tab === 'stream') {

@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"docktun/internal/config"
@@ -143,6 +144,9 @@ type RemoteAccessService struct {
 	dataDir             string
 	dockerContainersSvc *DockerContainers
 	runDocker           func(context.Context, ...string) ([]byte, error)
+	overviewMu          sync.RWMutex
+	overviewCache       *RemoteAccessOverview
+	overviewTime        time.Time
 }
 
 func NewRemoteAccessService(
@@ -192,7 +196,20 @@ func (s *RemoteAccessService) isContainerInstalled(name string) bool {
 	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
+func (s *RemoteAccessService) InvalidateOverviewCache() {
+	s.overviewMu.Lock()
+	s.overviewCache = nil
+	s.overviewMu.Unlock()
+}
+
 func (s *RemoteAccessService) GetOverview() (*RemoteAccessOverview, error) {
+	s.overviewMu.RLock()
+	if time.Since(s.overviewTime) < 6*time.Second && s.overviewCache != nil {
+		cached := s.overviewCache
+		s.overviewMu.RUnlock()
+		return cached, nil
+	}
+	s.overviewMu.RUnlock()
 	overview := &RemoteAccessOverview{
 		Cloudflare: CloudflareSummary{
 			Running:    s.cfdSvc != nil && s.cfdSvc.IsRunning(),
@@ -266,6 +283,11 @@ func (s *RemoteAccessService) GetOverview() (*RemoteAccessOverview, error) {
 			overview.Wireguard.Port = wgStatus.Port
 		}
 	}
+
+	s.overviewMu.Lock()
+	s.overviewCache = overview
+	s.overviewTime = time.Now()
+	s.overviewMu.Unlock()
 
 	return overview, nil
 }

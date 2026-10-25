@@ -7,16 +7,12 @@ import {
   Globe,
   Cpu,
   Layers,
-  ArrowUpRight,
   ExternalLink,
   ShieldCheck,
-  Play,
-  Square,
   Activity,
   Wifi,
   FolderOpen,
   Clock,
-  CheckCircle2,
   AlertCircle,
   Copy,
   Check,
@@ -24,16 +20,11 @@ import {
   Zap,
   Radio,
   Sparkles,
-  Search,
   Shield,
-  Filter,
   ArrowRight,
   Box,
   HardDrive,
-  ChevronDown,
-  ChevronRight,
-  Sliders,
-  Code2
+  Plus
 } from 'lucide-vue-next'
 import { cloudflareEnabled as isCloudflareEnabled } from '../lib/tunnel-provider.mjs'
 import { useApi } from '../composables/useApi'
@@ -43,23 +34,16 @@ const router = useRouter()
 
 // Primary State
 const status = ref<any>(null)
-const projects = ref<any[]>([])
 const containers = ref<any[]>([])
 const healthList = ref<any[]>([])
-const remoteAccessOverview = ref<any>(null)
 const recentAudits = ref<any[]>([])
 
-// Loading / Action State
+// Action / Loading State
 const actionLoading = ref('')
-const containerActionLoading = ref<Record<string, string>>({})
 const refreshing = ref(false)
 const dnsSyncing = ref(false)
 const copiedHost = ref('')
 const probingHealth = ref(false)
-
-// UI Filter State
-const searchQuery = ref('')
-const containerFilter = ref<'all' | 'running' | 'stopped' | 'updates'>('all')
 const routesTab = ref<'public' | 'local'>('public')
 
 // Fetch Telemetry Data
@@ -71,14 +55,6 @@ async function fetchStatus() {
   }
 }
 
-async function fetchProjects() {
-  try {
-    projects.value = await apiFetch('/api/projects')
-  } catch (e) {
-    console.error('Failed to fetch projects', e)
-  }
-}
-
 async function fetchContainers() {
   try {
     containers.value = await apiFetch('/api/docker/containers')
@@ -87,45 +63,19 @@ async function fetchContainers() {
   }
 }
 
-const checkingUpdates = ref(false)
-async function checkDashboardUpdates() {
-  checkingUpdates.value = true
-  try {
-    const results = await apiFetch('/api/docker/containers/check-updates', { method: 'POST' })
-    await fetchContainers()
-    const count = (results || []).filter((r: any) => r.update_available).length
-    if (count > 0) {
-      alert(`Update check complete: ${count} container${count > 1 ? 's have' : ' has'} updates available!`)
-    } else {
-      alert('All containers are up to date.')
-    }
-  } catch (err: any) {
-    alert(err.message || 'Failed to check updates')
-  } finally {
-    checkingUpdates.value = false
-  }
-}
-
-async function fetchHealth() {
+async function fetchHealth(force = false) {
   probingHealth.value = true
   try {
-    healthList.value = await apiFetch('/api/health')
-  } catch (e) {
-    // optional
-  } finally {
+    healthList.value = await apiFetch(force ? '/api/health?force=true' : '/api/health')
+  } catch {}
+  finally {
     probingHealth.value = false
   }
 }
 
-async function fetchRemoteAccess() {
-  try {
-    remoteAccessOverview.value = await apiFetch('/api/remote-access/overview')
-  } catch {}
-}
-
 async function fetchRecentAudits() {
   try {
-    const res = await apiFetch<{ entries: any[] }>('/api/audit?limit=8')
+    const res = await apiFetch<{ entries: any[] }>('/api/audit?limit=6')
     recentAudits.value = res.entries || []
   } catch {}
 }
@@ -134,13 +84,11 @@ async function refreshAll() {
   refreshing.value = true
   await Promise.all([
     fetchStatus(),
-    fetchProjects(),
     fetchContainers(),
-    fetchHealth(),
-    fetchRemoteAccess(),
+    fetchHealth(true),
     fetchRecentAudits(),
   ])
-  setTimeout(() => (refreshing.value = false), 400)
+  setTimeout(() => (refreshing.value = false), 300)
 }
 
 // Tunnel Control Actions
@@ -151,7 +99,6 @@ async function controlTunnel(action: string) {
     await apiFetch(`/api/control/${action}`, { method: 'POST' })
     await new Promise((r) => setTimeout(r, 1200))
     await fetchStatus()
-    await fetchRemoteAccess()
   } catch (e: any) {
     alert(e.message)
   } finally {
@@ -190,19 +137,7 @@ function copyUrl(text: string) {
   setTimeout(() => (copiedHost.value = ''), 2000)
 }
 
-async function runContainerAction(container: any, action: 'start' | 'stop' | 'restart') {
-  containerActionLoading.value[container.id] = action
-  try {
-    await apiFetch(`/api/docker/containers/${container.id}/${action}`, { method: 'POST' })
-    await fetchContainers()
-  } catch (e: any) {
-    alert(e.message || `Failed to ${action} container`)
-  } finally {
-    delete containerActionLoading.value[container.id]
-  }
-}
-
-// Helper Parsers
+// Helpers & Parsers
 function parseBytes(str: string): number {
   if (!str) return 0
   const match = str.trim().match(/^([\d.]+)\s*([a-zA-Z]+)$/)
@@ -261,17 +196,11 @@ function getAuditBadge(action: string): { icon: any; color: string; label: strin
 function parseContainerPorts(portsStr?: string): { hostPort: string; targetPort: string } {
   if (!portsStr) return { hostPort: '', targetPort: '80' }
   const hostMatch = portsStr.match(/:(\d+)->(\d+)\/tcp/)
-  if (hostMatch) {
-    return { hostPort: hostMatch[1], targetPort: hostMatch[2] }
-  }
+  if (hostMatch) return { hostPort: hostMatch[1], targetPort: hostMatch[2] }
   const simpleHostMatch = portsStr.match(/:(\d+)->/)
-  if (simpleHostMatch) {
-    return { hostPort: simpleHostMatch[1], targetPort: simpleHostMatch[1] }
-  }
+  if (simpleHostMatch) return { hostPort: simpleHostMatch[1], targetPort: simpleHostMatch[1] }
   const plainMatch = portsStr.match(/(\d+)\/tcp/)
-  if (plainMatch) {
-    return { hostPort: '', targetPort: plainMatch[1] }
-  }
+  if (plainMatch) return { hostPort: '', targetPort: plainMatch[1] }
   return { hostPort: '', targetPort: '80' }
 }
 
@@ -284,27 +213,15 @@ function resolveContainerUrls(c: any) {
   const effectivePort = targetPort || hostPort || '80'
   const localUrl = `http://${c.name}.local${effectivePort !== '80' ? ':' + effectivePort : ''}`
 
-  // Best open URL: prefer public HTTPS if configured -> then direct host port if published -> fallback to local mDNS
   const bestUrl = publicUrl || directUrl || localUrl
-
-  return {
-    publicUrl,
-    directUrl,
-    localUrl,
-    bestUrl,
-    hostPort,
-    targetPort: effectivePort,
-    isWebExposed: !!(publicUrl || directUrl),
-  }
+  return { publicUrl, directUrl, localUrl, bestUrl, hostPort, targetPort: effectivePort }
 }
 
 function extractContainerFromService(service: string): string {
   if (!service) return ''
   try {
     let s = service.trim()
-    if (!s.includes('://')) {
-      s = 'http://' + s
-    }
+    if (!s.includes('://')) s = 'http://' + s
     const u = new URL(s)
     return u.hostname
   } catch {
@@ -313,6 +230,9 @@ function extractContainerFromService(service: string): string {
 }
 
 // Computed Statistics
+const cloudflareEnabled = computed(() => isCloudflareEnabled(status.value))
+const isTunnelRunning = computed(() => Boolean(status.value?.running))
+
 const containerStats = computed(() => {
   const total = containers.value.length
   const running = containers.value.filter((c) => c.running).length
@@ -335,94 +255,23 @@ const containerStats = computed(() => {
     }
   })
 
+  // Count distinct stacks
+  const stackSet = new Set<string>()
+  containers.value.forEach((c) => {
+    if (c.project_name) stackSet.add(c.project_name.trim())
+  })
+
   return {
     total,
     running,
     stopped: total - running,
+    stacksCount: stackSet.size,
     updatesCount: containers.value.filter((c) => c.update_available).length,
     cpuPercent: totalCpu.toFixed(1) + '%',
     cpuNum: Math.min(Math.round(totalCpu), 100),
     totalMemStr: formatBytes(totalMemBytes),
     totalLimitStr: totalLimitBytes > 0 ? formatBytes(totalLimitBytes) : 'Host Limit',
-    memPercent: totalLimitBytes > 0 ? Math.min(Math.round((totalMemBytes / totalLimitBytes) * 100), 100) : 0,
   }
-})
-
-// Stacks Filter & Grouping State
-interface DashboardStackGroup {
-  key: string
-  name: string
-  isStack: boolean
-  projectId?: number
-  projectPath?: string
-  containers: any[]
-  runningCount: number
-  totalCount: number
-  totalCpu: string
-  hasUpdates: boolean
-}
-
-const stackFilter = ref<string>('all')
-const collapsedStacks = ref<Record<string, boolean>>({})
-
-function toggleStackCollapse(key: string) {
-  collapsedStacks.value[key] = !collapsedStacks.value[key]
-}
-
-function expandAllStacks() {
-  collapsedStacks.value = {}
-}
-
-function collapseAllStacks() {
-  const next: Record<string, boolean> = {}
-  dashboardStackGroups.value.forEach((g) => {
-    next[g.key] = true
-  })
-  collapsedStacks.value = next
-}
-
-const areAllCollapsed = computed(() => {
-  if (dashboardStackGroups.value.length === 0) return false
-  return dashboardStackGroups.value.every((g) => collapsedStacks.value[g.key])
-})
-
-const stackActionLoading = ref<Record<number, string>>({})
-
-async function runStackAction(projectId: number, action: 'up' | 'restart' | 'stop') {
-  if (!projectId) return
-  stackActionLoading.value[projectId] = action
-  try {
-    await apiFetch(`/api/projects/${projectId}/action/${action}`, { method: 'POST' })
-    await fetchContainers()
-  } catch (e: any) {
-    alert(e.message || `Failed to ${action} stack`)
-  } finally {
-    delete stackActionLoading.value[projectId]
-  }
-}
-
-const availableStacks = computed(() => {
-  const set = new Set<string>()
-  for (const c of containers.value) {
-    let pName = c.project_name ? c.project_name.trim() : ''
-    const cLower = c.name.toLowerCase()
-    if (!pName && (cLower.startsWith('docktun') || cLower === 'cloudflared' || cLower === 'wireguard' || cLower === 'tailscale')) {
-      pName = 'docktun'
-    }
-    if (pName && pName !== 'public-cloudflare-tunnel-cloudflared' && !pName.includes('cloudflare-tunnel')) {
-      set.add(pName)
-    }
-  }
-  for (const p of projects.value) {
-    if (p.name && p.name !== 'public-cloudflare-tunnel-cloudflared' && !p.name.includes('cloudflare-tunnel') && !p.name.startsWith('docktun-')) {
-      set.add(p.name)
-    }
-  }
-  return Array.from(set).sort((a, b) => {
-    if (a === 'docktun') return -1
-    if (b === 'docktun') return 1
-    return a.localeCompare(b)
-  })
 })
 
 // Origin Health lookup mapped by Hostname
@@ -453,199 +302,48 @@ const originHealthSummary = computed(() => {
   return { total, up, down, allUp: down === 0, avgLatency: avg }
 })
 
-// Unified Public Routes Combining Cloudflare Configured Hostnames & Health Probe Latencies
+// Public Ingress Routes
 const publicRoutes = computed(() => {
-  const hostSet = new Set<string>()
-  if (status.value?.hostnames && Array.isArray(status.value.hostnames)) {
-    status.value.hostnames.forEach((h: string) => {
-      if (h) hostSet.add(h)
-    })
-  }
-  healthList.value.forEach((h: any) => {
-    if (h.hostname) hostSet.add(h.hostname)
-  })
-
-  return Array.from(hostSet).map((hostname) => {
-    const health = healthByHostname.value[hostname]
+  const hosts: string[] = status.value?.hostnames || []
+  return hosts.map((h) => {
+    const health = healthByHostname.value[h]
     return {
-      hostname,
+      hostname: h,
       service: health?.service || '',
       status: health?.status || (isTunnelRunning.value ? 'up' : 'unknown'),
-      latency: health?.latency || '—',
-      container: health?.service ? extractContainerFromService(health.service) : null,
+      latency: health?.latency || 'Edge Active',
+      container: extractContainerFromService(health?.service || ''),
     }
   })
 })
 
-// Filtered Containers with Stack, State, and Search Query
-const filteredContainers = computed(() => {
-  return containers.value.filter((c) => {
-    if (containerFilter.value === 'running' && !c.running) return false
-    if (containerFilter.value === 'stopped' && c.running) return false
-    if (containerFilter.value === 'updates' && !c.update_available) return false
-    
-    // Canonical stack name resolution for filtering
-    let cProj = c.project_name || ''
-    const cLower = c.name.toLowerCase()
-    if (
-      cLower.startsWith('docktun') ||
-      cLower === 'wireguard' ||
-      cLower === 'cloudflared' ||
-      cLower === 'tailscale' ||
-      cLower === 'wg-easy' ||
-      cLower === 'zeroconf' ||
-      cProj === 'docktun' ||
-      cProj === 'tun'
-    ) {
-      cProj = 'docktun'
-    }
-
-    if (stackFilter.value !== 'all') {
-      if (stackFilter.value === '__standalone__' && cProj) return false
-      if (stackFilter.value !== '__standalone__' && cProj !== stackFilter.value) return false
-    }
-    if (!searchQuery.value) return true
-    const q = searchQuery.value.toLowerCase()
-    return (
-      c.name.toLowerCase().includes(q) ||
-      (c.hostname && c.hostname.toLowerCase().includes(q)) ||
-      cProj.toLowerCase().includes(q)
-    )
-  })
-})
-
-// Compute Grouped Stacks for the Dashboard
-const dashboardStackGroups = computed<DashboardStackGroup[]>(() => {
-  const list = filteredContainers.value
-  const map = new Map<string, any[]>()
-
-  list.forEach((c) => {
-    let key = c.project_name ? c.project_name.trim() : ''
-    const lower = c.name.toLowerCase()
-    if (
-      !key ||
-      lower.startsWith('docktun') ||
-      lower === 'wireguard' ||
-      lower === 'cloudflared' ||
-      lower === 'tailscale' ||
-      lower === 'wg-easy' ||
-      lower === 'zeroconf'
-    ) {
-      if (
-        lower.startsWith('docktun') ||
-        lower === 'wireguard' ||
-        lower === 'cloudflared' ||
-        lower === 'tailscale' ||
-        lower === 'wg-easy' ||
-        lower === 'zeroconf' ||
-        key === 'docktun' ||
-        key === 'tun'
-      ) {
-        key = 'docktun'
-      }
-    }
-    if (!key) {
-      key = '__standalone__'
-    }
-    if (!map.has(key)) {
-      map.set(key, [])
-    }
-    map.get(key)!.push(c)
-  })
-
-  const groups: DashboardStackGroup[] = []
-  map.forEach((items, key) => {
-    let cpuSum = 0
-    items.forEach((c) => {
-      if (c.running && c.cpu) {
-        const p = parseFloat(c.cpu.replace('%', ''))
-        if (!isNaN(p)) cpuSum += p
-      }
-    })
-
-    const isStack = key !== '__standalone__'
-    const firstWithProj = items.find((c) => c.project_id)
-    const projectId = firstWithProj?.project_id
-    const projectPath = firstWithProj?.project_path
-
-    let groupName = isStack ? key : 'Standalone Containers'
-    if (key === 'docktun') {
-      groupName = 'DockTun Core'
-    }
-
-    groups.push({
-      key,
-      name: groupName,
-      isStack,
-      projectId,
-      projectPath,
-      containers: items,
-      runningCount: items.filter((c) => c.running).length,
-      totalCount: items.length,
-      totalCpu: cpuSum.toFixed(1) + '%',
-      hasUpdates: items.some((c) => c.update_available),
-    })
-  })
-
-  groups.sort((a, b) => {
-    if (a.key === 'docktun') return -1
-    if (b.key === 'docktun') return 1
-    if (a.isStack && !b.isStack) return -1
-    if (!a.isStack && b.isStack) return 1
-    return a.name.localeCompare(b.name)
-  })
-
-  return groups
-})
-
-// Local & Network accessible container services
+// Local Network Services
 const localServices = computed(() => {
-  return containers.value.filter((c) => c.running).map((c) => {
-    const urls = resolveContainerUrls(c)
-    return {
+  return containers.value
+    .filter((c) => c.running)
+    .map((c) => ({
       id: c.id,
       name: c.name,
-      image: c.image,
-      status: c.status,
-      uptime: c.uptime,
-      exposureMode: c.exposure_mode,
-      hostname: c.hostname,
-      ...urls,
-    }
-  })
+      ...resolveContainerUrls(c),
+    }))
+    .slice(0, 12)
 })
 
-const cloudflareEnabled = computed(() => isCloudflareEnabled(status.value))
-
-const isTunnelRunning = computed(() => {
-  return status.value?.status === 'running' || status.value?.status === 'healthy'
-})
-
-let fastTimer: any = null
-let slowTimer: any = null
+let timer: any = null
 
 onMounted(async () => {
   await refreshAll()
-  // Fast telemetry polling (status & containers with cached stats) every 5s
-  fastTimer = setInterval(() => {
+  // Clean, fast telemetry poll every 6s when tab is active
+  timer = setInterval(() => {
     if (document.visibilityState === 'visible') {
       fetchStatus()
       fetchContainers()
     }
-  }, 5000)
-
-  // Heavy TCP health dials and remote access every 15s
-  slowTimer = setInterval(() => {
-    if (document.visibilityState === 'visible') {
-      fetchHealth()
-      fetchRemoteAccess()
-    }
-  }, 15000)
+  }, 6000)
 })
 
 onUnmounted(() => {
-  if (fastTimer) clearInterval(fastTimer)
-  if (slowTimer) clearInterval(slowTimer)
+  if (timer) clearInterval(timer)
 })
 </script>
 
@@ -668,13 +366,20 @@ onUnmounted(() => {
             <span class="h-1.5 w-1.5 rounded-full" :class="isTunnelRunning ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'"></span>
             <span>{{ isTunnelRunning ? 'Tunnel Active' : 'Tunnel Degraded' }}</span>
           </span>
+          <span
+            v-if="status?.zeroconf_status === 'running'"
+            class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold bg-indigo-500/10 text-indigo-700 border border-indigo-500/30"
+          >
+            <Wifi class="h-3 w-3 text-indigo-600" />
+            <span>.local mDNS Active</span>
+          </span>
         </h1>
       </div>
 
       <div class="flex items-center gap-2 flex-wrap">
         <button
           v-if="cloudflareEnabled"
-          @click="triggerDnsSync"
+          @click="triggerDnsSync()"
           :disabled="dnsSyncing"
           class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-2 px-3 text-slate-800"
           title="Sync all ingress rules directly to Cloudflare DNS CNAME records"
@@ -697,7 +402,7 @@ onUnmounted(() => {
           v-if="cloudflareEnabled"
           @click="controlTunnel('restart')"
           :disabled="!!actionLoading"
-          class="cyber-btn text-xs flex items-center gap-1.5 py-2 px-3 bg-indigo-600 hover:bg-indigo-500"
+          class="cyber-btn text-xs flex items-center gap-1.5 py-2 px-3 bg-indigo-600 hover:bg-indigo-500 text-white"
           title="Restart Cloudflare tunnel container"
         >
           <RotateCcw class="h-3.5 w-3.5" :class="actionLoading === 'restart' ? 'animate-spin' : ''" />
@@ -709,7 +414,7 @@ onUnmounted(() => {
     <!-- Tunnel Degraded Diagnostic Banner -->
     <div
       v-if="cloudflareEnabled && !isTunnelRunning && status"
-      class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-200 flex flex-col sm:flex-row sm:items-start justify-between gap-3 shadow-lg"
+      class="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-700 flex flex-col sm:flex-row sm:items-start justify-between gap-3 shadow-sm"
     >
       <div class="flex items-start gap-3">
         <AlertCircle class="h-5 w-5 text-rose-600 mt-0.5 shrink-0" />
@@ -717,12 +422,12 @@ onUnmounted(() => {
           <p class="font-bold text-rose-700 text-sm">
             Cloudflare Tunnel is {{ status?.status || 'degraded' }}
           </p>
-          <p v-if="status?.last_error" class="font-mono text-[11px] text-rose-200/90 bg-slate-50/80 p-2.5 rounded-lg border border-rose-900/50 whitespace-pre-wrap">
+          <p v-if="status?.last_error" class="font-mono text-[11px] text-rose-800 bg-white/80 p-2.5 rounded-lg border border-rose-200 whitespace-pre-wrap">
             {{ status.last_error }}
           </p>
           <div class="flex items-center gap-3 pt-1 text-[11px]">
             <router-link to="/access?tab=cloudflare" class="text-indigo-600 hover:underline font-semibold flex items-center gap-1">
-              <span>Inspect Tunnel Ingress Config &rarr;</span>
+              <span>Inspect Tunnel Config &rarr;</span>
             </router-link>
             <router-link to="/logs" class="text-slate-700 hover:underline font-semibold flex items-center gap-1">
               <span>View Tunnel Logs &rarr;</span>
@@ -743,7 +448,7 @@ onUnmounted(() => {
     <!-- 4 High-Density Executive Telemetry Metric Cards -->
     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <!-- 1. Cloudflare Tunnel Card -->
-      <div v-if="cloudflareEnabled" class="cyber-card flex flex-col justify-between">
+      <div v-if="cloudflareEnabled" class="cyber-card flex flex-col justify-between hover:border-slate-300 transition">
         <div>
           <div class="flex items-center justify-between text-slate-600">
             <span class="text-[11px] font-semibold uppercase tracking-wider">Cloudflare Tunnel</span>
@@ -786,14 +491,14 @@ onUnmounted(() => {
 
         <div class="mt-3 border-t border-slate-200/80 pt-2 flex items-center justify-between text-xs text-slate-600">
           <span class="truncate">Uptime: {{ status?.uptime || '—' }}</span>
-          <span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-indigo-700 font-mono font-medium">
-            {{ status?.ha_connections ? `${status.ha_connections} HA Links` : (status?.protocol || 'HTTP/2') }}
-          </span>
+          <router-link to="/access?tab=cloudflare" class="text-indigo-600 hover:underline font-medium">
+            Configure &rarr;
+          </router-link>
         </div>
       </div>
 
       <!-- 2. Traffic & Origin Health Card -->
-      <div class="cyber-card flex flex-col justify-between">
+      <div class="cyber-card flex flex-col justify-between hover:border-slate-300 transition">
         <div>
           <div class="flex items-center justify-between text-slate-600">
             <span class="text-[11px] font-semibold uppercase tracking-wider">Traffic & Origins</span>
@@ -824,15 +529,15 @@ onUnmounted(() => {
         </div>
 
         <div class="mt-3 border-t border-slate-200/80 pt-2 flex items-center justify-between text-xs text-slate-600">
-          <span class="text-slate-600">Active edge streams:</span>
-          <span class="font-mono text-emerald-600 font-bold">
-            {{ status?.active_connections || 0 }} live
-          </span>
+          <span class="text-slate-600">Active streams: <strong class="font-mono text-emerald-600">{{ status?.active_connections || 0 }}</strong></span>
+          <button @click="fetchHealth(true)" :disabled="probingHealth" class="text-indigo-600 hover:underline font-medium">
+            {{ probingHealth ? 'Probing…' : 'Probe' }}
+          </button>
         </div>
       </div>
 
       <!-- 3. Container Fleet & Stacks Card -->
-      <div class="cyber-card flex flex-col justify-between">
+      <div class="cyber-card flex flex-col justify-between hover:border-slate-300 transition">
         <div>
           <div class="flex items-center justify-between text-slate-600">
             <span class="text-[11px] font-semibold uppercase tracking-wider">Container Fleet</span>
@@ -846,8 +551,8 @@ onUnmounted(() => {
           </div>
 
           <div class="mt-2 flex items-center gap-2 text-xs">
-            <span class="text-[11px] font-mono text-purple-700 bg-purple-500/10 border border-purple-500/20 px-2 py-0.2 rounded">
-              {{ dashboardStackGroups.length }} Stacks
+            <span class="text-[11px] font-mono text-purple-700 bg-purple-500/10 border border-purple-500/20 px-2 py-0.2 rounded font-semibold">
+              {{ containerStats.stacksCount }} Stacks
             </span>
             <span :class="containerStats.stopped > 0 ? 'text-amber-600 font-medium' : 'text-slate-500'" class="text-[11px] font-mono">
               {{ containerStats.stopped }} stopped
@@ -856,35 +561,20 @@ onUnmounted(() => {
         </div>
 
         <div class="mt-3 border-t border-slate-200/80 pt-2 flex items-center justify-between text-xs text-slate-600">
-          <div>
-            <router-link
-              v-if="containerStats.updatesCount > 0"
-              to="/containers?filter=updates"
-              class="inline-flex items-center gap-1 rounded bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.2 text-[10px] font-bold text-amber-700 animate-pulse hover:bg-amber-500/30"
-              title="Click to view containers with updates available"
-            >
-              <Sparkles class="h-2.5 w-2.5" />
-              {{ containerStats.updatesCount }} update{{ containerStats.updatesCount > 1 ? 's' : '' }}
-            </router-link>
-            <div v-else class="flex items-center gap-1.5">
-              <span class="text-[11px] text-slate-500 font-mono">
-                All up to date
-              </span>
-              <button
-                @click="checkDashboardUpdates"
-                :disabled="checkingUpdates"
-                class="text-[10px] text-indigo-600 hover:text-indigo-800 font-mono underline disabled:opacity-50"
-                title="Check remote registries for updates"
-              >
-                {{ checkingUpdates ? 'Checking…' : 'Check' }}
-              </button>
-            </div>
-          </div>
-          <router-link to="/containers" class="text-indigo-600 hover:underline">Manage &rarr;</router-link>
+          <router-link
+            v-if="containerStats.updatesCount > 0"
+            to="/containers?filter=updates"
+            class="inline-flex items-center gap-1 rounded bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.2 text-[10px] font-bold text-amber-700 animate-pulse hover:bg-amber-500/30"
+          >
+            <Sparkles class="h-2.5 w-2.5" />
+            {{ containerStats.updatesCount }} update{{ containerStats.updatesCount > 1 ? 's' : '' }}
+          </router-link>
+          <span v-else class="text-[11px] text-slate-500 font-mono">All up to date</span>
+          <router-link to="/containers" class="text-indigo-600 hover:underline font-medium">Manage &rarr;</router-link>
         </div>
       </div>
 
-      <!-- 4. Combined Resource Load Card (Clickable to /metrics) -->
+      <!-- 4. Combined Resource Load Card -->
       <router-link
         to="/metrics"
         class="cyber-card flex flex-col justify-between hover:border-indigo-400 hover:shadow-xs transition group cursor-pointer"
@@ -909,16 +599,15 @@ onUnmounted(() => {
           </div>
 
           <div class="mt-2 flex items-center justify-between text-[11px] font-mono text-slate-600">
-            <span>Engine: v{{ status?.docker_system?.server_version || '—' }} ({{ status?.docker_system?.architecture || 'x86_64' }})</span>
+            <span>Engine: v{{ status?.docker_system?.server_version || '—' }}</span>
             <span class="text-purple-700 font-semibold">{{ status?.docker_system?.cpus ? `${status.docker_system.cpus} vCPU` : '' }}</span>
           </div>
         </div>
 
-        <!-- Progress Bar & Link -->
         <div class="mt-3 border-t border-slate-200/80 pt-2 space-y-1">
           <div class="flex items-center justify-between text-[10px] font-mono text-slate-500">
-            <span>Workload</span>
-            <span class="text-indigo-600 group-hover:underline flex items-center gap-0.5">Metrics &rarr;</span>
+            <span>Utilization</span>
+            <span class="text-indigo-600 group-hover:underline flex items-center gap-0.5 font-medium">Metrics &rarr;</span>
           </div>
           <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
             <div
@@ -930,89 +619,124 @@ onUnmounted(() => {
       </router-link>
     </div>
 
-    <!-- Remote Access Multi-Pillar Connectivity Summary Banner -->
-    <div class="cyber-card p-4 bg-white/40 border-slate-200/90">
-      <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-600 border border-indigo-500/20 shrink-0">
-            <Globe class="h-5 w-5" />
-          </div>
-          <div>
-            <div class="flex items-center gap-2">
-              <h3 class="text-xs font-semibold text-slate-900">Remote Access & Mesh Connectivity</h3>
-              <span class="text-[10px] font-mono text-indigo-700 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.2 rounded">
-                Ingress Hub
-              </span>
+    <!-- Unified Core Navigation Command Center -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <!-- 1. Containers & Stacks Hub -->
+      <div class="cyber-card p-4 flex flex-col justify-between hover:border-indigo-300 transition group shadow-xs">
+        <div>
+          <div class="flex items-center justify-between">
+            <div class="p-2 rounded-xl bg-indigo-500/10 text-indigo-600 border border-indigo-500/20">
+              <Server class="h-5 w-5" />
             </div>
-            <p class="text-[11px] text-slate-600 mt-0.5">Unified secure ingress across Cloudflare edge tunnels, Tailscale zero-trust, and WireGuard VPN</p>
+            <span class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+              {{ containerStats.running }} Active
+            </span>
           </div>
+          <h3 class="text-sm font-bold text-slate-900 mt-3 group-hover:text-indigo-600 transition">Containers & Stacks</h3>
+          <p class="text-xs text-slate-600 mt-1 leading-relaxed">
+            Manage Docker containers, deploy Compose stacks, edit environments, and launch new services.
+          </p>
         </div>
-
-        <div class="flex items-center gap-2.5 flex-wrap">
-          <!-- Cloudflare Badge Link -->
-          <router-link
-            to="/access?tab=cloudflare"
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono hover:border-orange-500/50 hover:bg-white transition group"
-            title="Configure Cloudflare Tunnel Ingress Routes"
-          >
-            <span class="h-2 w-2 rounded-full" :class="isTunnelRunning ? 'bg-emerald-400' : 'bg-rose-400'"></span>
-            <span class="text-slate-600 group-hover:text-slate-800">Cloudflare:</span>
-            <span class="text-orange-700 font-semibold">{{ status?.hostnames?.length || 0 }} routes</span>
+        <div class="mt-4 pt-3 border-t border-slate-200/80 flex items-center justify-between text-xs">
+          <router-link to="/containers" class="text-indigo-600 font-semibold hover:underline flex items-center gap-1">
+            <span>Fleet Manager</span>
+            <ArrowRight class="h-3.5 w-3.5" />
           </router-link>
+          <router-link to="/containers?tab=stacks" class="text-slate-600 hover:text-slate-900 font-medium">
+            Stacks
+          </router-link>
+        </div>
+      </div>
 
-          <!-- Tailscale Badge Link -->
-          <router-link
-            to="/access?tab=tailscale"
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono hover:border-purple-500/50 hover:bg-white transition group"
-            title="Configure Tailscale Zero-Trust Mesh"
-          >
-            <span
-              class="h-2 w-2 rounded-full"
-              :class="remoteAccessOverview?.tailscale?.backend_state === 'Running' ? 'bg-emerald-400' : 'bg-slate-500'"
-            ></span>
-            <span class="text-slate-600 group-hover:text-slate-800">Tailscale:</span>
-            <span class="text-purple-700 font-semibold">
-              {{ remoteAccessOverview?.tailscale?.backend_state === 'Running' ? 'Connected' : 'Stopped' }}
+      <!-- 2. Remote Access Hub -->
+      <div class="cyber-card p-4 flex flex-col justify-between hover:border-orange-300 transition group shadow-xs">
+        <div>
+          <div class="flex items-center justify-between">
+            <div class="p-2 rounded-xl bg-orange-500/10 text-orange-600 border border-orange-500/20">
+              <Globe class="h-5 w-5" />
+            </div>
+            <span class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-orange-50 text-orange-700 border border-orange-200">
+              {{ status?.hostnames?.length || 0 }} Domains
             </span>
+          </div>
+          <h3 class="text-sm font-bold text-slate-900 mt-3 group-hover:text-orange-600 transition">Remote Access & Ingress</h3>
+          <p class="text-xs text-slate-600 mt-1 leading-relaxed">
+            Zero-Trust Cloudflare tunnels, Tailscale mesh VPN, and peer-to-peer WireGuard networking.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-200/80 flex items-center justify-between text-xs">
+          <router-link to="/access" class="text-orange-700 font-semibold hover:underline flex items-center gap-1">
+            <span>Access Hub</span>
+            <ArrowRight class="h-3.5 w-3.5" />
           </router-link>
+          <router-link to="/access?tab=cloudflare" class="text-slate-600 hover:text-slate-900 font-medium">
+            Cloudflare
+          </router-link>
+        </div>
+      </div>
 
-          <!-- WireGuard Badge Link -->
-          <router-link
-            to="/access?tab=wireguard"
-            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono hover:border-emerald-500/50 hover:bg-white transition group"
-            title="Configure WireGuard Peer VPN"
-          >
-            <span
-              class="h-2 w-2 rounded-full"
-              :class="remoteAccessOverview?.wireguard?.running ? 'bg-emerald-400' : 'bg-slate-500'"
-            ></span>
-            <span class="text-slate-600 group-hover:text-slate-800">WireGuard:</span>
-            <span class="text-emerald-700 font-semibold">
-              {{ remoteAccessOverview?.wireguard?.running ? `${remoteAccessOverview.wireguard.peers_count} peers` : 'Inactive' }}
+      <!-- 3. Metrics & Health Hub -->
+      <div class="cyber-card p-4 flex flex-col justify-between hover:border-purple-300 transition group shadow-xs">
+        <div>
+          <div class="flex items-center justify-between">
+            <div class="p-2 rounded-xl bg-purple-500/10 text-purple-600 border border-purple-500/20">
+              <Activity class="h-5 w-5" />
+            </div>
+            <span class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">
+              Live CPU & RAM
             </span>
+          </div>
+          <h3 class="text-sm font-bold text-slate-900 mt-3 group-hover:text-purple-600 transition">Telemetry & Metrics</h3>
+          <p class="text-xs text-slate-600 mt-1 leading-relaxed">
+            Real-time charts, container resource consumption, network stream stats, and system limits.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-200/80 flex items-center justify-between text-xs">
+          <router-link to="/metrics" class="text-purple-700 font-semibold hover:underline flex items-center gap-1">
+            <span>Live Charts</span>
+            <ArrowRight class="h-3.5 w-3.5" />
           </router-link>
+          <router-link to="/logs" class="text-slate-600 hover:text-slate-900 font-medium">
+            Logs & Audit
+          </router-link>
+        </div>
+      </div>
 
-          <!-- Reworked Control Button -->
-          <router-link
-            to="/access"
-            class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-3 text-indigo-700 border-indigo-500/30 hover:bg-indigo-600/10 hover:border-indigo-400 transition"
-            title="Open Ingress & Mesh Control Center"
-          >
-            <ShieldCheck class="h-3.5 w-3.5 text-indigo-600" />
-            <span class="font-medium">Configure Ingress & Mesh</span>
-            <ArrowRight class="h-3.5 w-3.5 ml-0.5" />
+      <!-- 4. Storage & Reclamation Hub -->
+      <div class="cyber-card p-4 flex flex-col justify-between hover:border-emerald-300 transition group shadow-xs">
+        <div>
+          <div class="flex items-center justify-between">
+            <div class="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+              <HardDrive class="h-5 w-5" />
+            </div>
+            <span class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+              Volumes & Files
+            </span>
+          </div>
+          <h3 class="text-sm font-bold text-slate-900 mt-3 group-hover:text-emerald-600 transition">Storage & File Center</h3>
+          <p class="text-xs text-slate-600 mt-1 leading-relaxed">
+            Browse container volumes, prune unused images, inspect config files, and reclaim host disk space.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-200/80 flex items-center justify-between text-xs">
+          <router-link to="/storage" class="text-emerald-700 font-semibold hover:underline flex items-center gap-1">
+            <span>Storage Reclaim</span>
+            <ArrowRight class="h-3.5 w-3.5" />
+          </router-link>
+          <router-link to="/settings" class="text-slate-600 hover:text-slate-900 font-medium">
+            Settings
           </router-link>
         </div>
       </div>
     </div>
 
-    <!-- Combined Ingress Routing & Origin Health Directory -->
+    <!-- Streamlined Ingress Routing & Origin Health Directory -->
     <div class="cyber-card space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/80 pb-3">
         <div class="flex items-center gap-2">
           <Layers class="h-4 w-4 text-indigo-600" />
           <h2 class="text-xs font-semibold text-slate-900">
-            Ingress Routing & Origin Health
+            Ingress Routing & Origins Health
           </h2>
         </div>
 
@@ -1022,27 +746,27 @@ onUnmounted(() => {
             <button
               @click="routesTab = 'public'"
               class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition"
-              :class="routesTab === 'public' ? 'bg-slate-100 text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
+              :class="routesTab === 'public' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-800'"
             >
               <Globe class="h-3.5 w-3.5 text-orange-600" />
               <span>Public Hostnames (Cloudflare)</span>
-              <span class="rounded bg-white px-1.5 py-0.2 text-[10px] text-orange-700 font-mono">{{ publicRoutes.length }}</span>
+              <span class="rounded bg-slate-100 px-1.5 py-0.2 text-[10px] text-orange-700 font-mono">{{ publicRoutes.length }}</span>
             </button>
 
             <button
               @click="routesTab = 'local'"
               class="flex items-center gap-1.5 rounded-md px-3 py-1 font-medium transition"
-              :class="routesTab === 'local' ? 'bg-slate-100 text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
+              :class="routesTab === 'local' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-800'"
             >
               <Wifi class="h-3.5 w-3.5 text-indigo-600" />
               <span>Local Network (.local)</span>
-              <span class="rounded bg-white px-1.5 py-0.2 text-[10px] text-indigo-700 font-mono">{{ localServices.length }}</span>
+              <span class="rounded bg-slate-100 px-1.5 py-0.2 text-[10px] text-indigo-700 font-mono">{{ localServices.length }}</span>
             </button>
           </div>
 
           <!-- Actions -->
           <button
-            @click="fetchHealth"
+            @click="fetchHealth(true)"
             :disabled="probingHealth"
             class="cyber-btn-secondary text-xs flex items-center gap-1 py-1 px-2.5 text-slate-700"
             title="Probe live latency of ingress origins"
@@ -1052,7 +776,7 @@ onUnmounted(() => {
           </button>
           <router-link
             to="/access?tab=cloudflare"
-            class="cyber-btn-secondary text-xs flex items-center gap-1 py-1 px-2.5 text-indigo-700 hover:text-slate-900"
+            class="cyber-btn-secondary text-xs flex items-center gap-1 py-1 px-2.5 text-indigo-700 hover:text-slate-900 font-medium"
           >
             <span>Manage Rules</span>
             <ArrowRight class="h-3 w-3" />
@@ -1060,7 +784,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- Tab 1: Public Cloudflare Hostnames with Origin Latency & Target Service -->
+      <!-- Tab 1: Public Cloudflare Hostnames -->
       <div v-if="routesTab === 'public'" class="space-y-3">
         <div v-if="publicRoutes.length === 0" class="py-6 text-center text-xs text-slate-500 font-mono">
           No public ingress routes configured. Add routes in Remote Access &rarr; Cloudflare.
@@ -1069,7 +793,7 @@ onUnmounted(() => {
           <div
             v-for="r in publicRoutes"
             :key="r.hostname"
-            class="flex flex-col justify-between rounded-xl border border-slate-200/90 bg-slate-50 p-3.5 hover:border-slate-300 transition group shadow-sm"
+            class="flex flex-col justify-between rounded-xl border border-slate-200/90 bg-slate-50 p-3.5 hover:border-slate-300 transition group shadow-xs"
           >
             <div>
               <div class="flex items-center justify-between gap-2 mb-1.5">
@@ -1139,7 +863,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- Tab 2: Local & Network Services (.local / Host Port) -->
+      <!-- Tab 2: Local Network Services -->
       <div v-else class="space-y-3">
         <div v-if="localServices.length === 0" class="py-6 text-center text-xs text-slate-500 font-mono">
           No active running containers found.
@@ -1148,7 +872,7 @@ onUnmounted(() => {
           <div
             v-for="svc in localServices"
             :key="svc.id"
-            class="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3 hover:border-slate-300 transition group"
+            class="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3 hover:border-slate-300 transition group shadow-xs"
           >
             <div class="truncate pr-2">
               <div class="flex items-center gap-1.5">
@@ -1156,7 +880,7 @@ onUnmounted(() => {
                 <router-link
                   :to="'/containers?id=' + encodeURIComponent(svc.id)"
                   class="font-mono text-xs font-semibold text-slate-800 hover:text-slate-900 truncate hover:underline"
-                  :title="`Inspect container '${svc.name}' in Control Center`"
+                  :title="`Inspect container '${svc.name}'`"
                 >
                   {{ svc.name }}
                 </router-link>
@@ -1198,365 +922,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- Grouped Container Fleet & Managed Compose Stacks -->
-    <div class="cyber-card space-y-4">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/80 pb-3">
-        <div class="flex items-center gap-2 flex-wrap">
-          <Server class="h-4 w-4 text-emerald-600" />
-          <h2 class="text-xs font-semibold text-slate-900">
-            Container Fleet & Managed Stacks
-          </h2>
-          <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-mono">
-            {{ filteredContainers.length }} / {{ containers.length }} containers
-          </span>
-          <span v-if="dashboardStackGroups.length > 0" class="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-700 border border-purple-500/30 font-mono">
-            {{ dashboardStackGroups.length }} stacks
-          </span>
-        </div>
-
-        <!-- Search & Filter Controls -->
-        <div class="flex items-center gap-2 flex-wrap">
-          <div class="relative w-40 sm:w-48">
-            <Search class="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
-            <input
-              v-model="searchQuery"
-              type="text"
-              placeholder="Search services…"
-              class="w-full pl-8 pr-2.5 py-1 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-800 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
-            />
-          </div>
-
-          <!-- Stack Filter -->
-          <select
-            v-if="availableStacks.length > 0"
-            v-model="stackFilter"
-            class="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-slate-700 focus:outline-none focus:border-indigo-500 font-mono"
-          >
-            <option value="all">All Stacks</option>
-            <option v-for="stk in availableStacks" :key="stk" :value="stk">
-              {{ stk === 'docktun' ? 'DockTun Core' : stk }}
-            </option>
-            <option value="__standalone__">Standalone</option>
-          </select>
-
-          <!-- State Filter -->
-          <select
-            v-model="containerFilter"
-            class="text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-slate-700 focus:outline-none focus:border-indigo-500 font-mono"
-          >
-            <option value="all">All States</option>
-            <option value="running">Running</option>
-            <option value="stopped">Stopped</option>
-            <option value="updates">Updates</option>
-          </select>
-
-          <!-- Expand / Collapse All Toggle -->
-          <button
-            @click="areAllCollapsed ? expandAllStacks() : collapseAllStacks()"
-            class="cyber-btn-secondary text-xs flex items-center gap-1 py-1 px-2.5 text-slate-700"
-            :title="areAllCollapsed ? 'Expand all stacks' : 'Collapse all stacks'"
-          >
-            <component :is="areAllCollapsed ? ChevronRight : ChevronDown" class="h-3.5 w-3.5" />
-            <span>{{ areAllCollapsed ? 'Expand' : 'Collapse' }}</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Empty State -->
-      <div v-if="dashboardStackGroups.length === 0" class="py-8 text-center text-xs text-slate-500 font-mono">
-        No containers or stacks match the current filter or search criteria.
-      </div>
-
-      <!-- Grouped Stacks Accordion Cards -->
-      <div v-else class="space-y-3">
-        <div
-          v-for="group in dashboardStackGroups"
-          :key="group.key"
-          class="rounded-xl border border-slate-200/90 bg-slate-50/70 overflow-hidden transition-all duration-200 hover:border-slate-300/80 shadow-sm"
-        >
-          <!-- Stack Header Bar -->
-          <div
-            @click="toggleStackCollapse(group.key)"
-            class="flex flex-col sm:flex-row sm:items-center justify-between px-3.5 py-2.5 gap-2.5 bg-white/60 cursor-pointer select-none transition hover:bg-white/90"
-          >
-            <!-- Left: Toggle Chevron + Stack Icon + Title + Metrics -->
-            <div class="flex items-center gap-2.5 flex-wrap">
-              <component
-                :is="collapsedStacks[group.key] ? ChevronRight : ChevronDown"
-                class="h-4 w-4 text-slate-600 hover:text-indigo-600 transition-colors"
-              />
-              <component
-                :is="group.key === 'docktun' ? ShieldCheck : (group.isStack ? Layers : Box)"
-                class="h-4 w-4"
-                :class="group.key === 'docktun' ? 'text-cyan-600' : (group.isStack ? 'text-indigo-600' : 'text-slate-600')"
-              />
-              <span class="font-mono text-xs font-bold text-slate-900">
-                {{ group.name }}
-              </span>
-
-              <!-- Badge: Core or Compose -->
-              <span
-                v-if="group.key === 'docktun'"
-                class="rounded bg-cyan-500/10 border border-cyan-500/30 px-1.5 py-0.2 text-[10px] font-mono text-cyan-700 font-semibold"
-              >
-                Core Stack
-              </span>
-              <span
-                v-else-if="group.isStack"
-                class="rounded bg-indigo-500/10 border border-indigo-500/30 px-1.5 py-0.2 text-[10px] font-mono text-indigo-700"
-              >
-                Compose Stack
-              </span>
-
-              <!-- Running count pill -->
-              <span
-                class="rounded-full px-2 py-0.2 text-[10px] font-mono font-semibold"
-                :class="group.runningCount === group.totalCount && group.totalCount > 0
-                  ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30'
-                  : group.runningCount > 0
-                    ? 'bg-amber-500/10 text-amber-600 border border-amber-500/30'
-                    : 'bg-slate-100 text-slate-600 border border-slate-300'"
-              >
-                {{ group.runningCount }}/{{ group.totalCount }} running
-              </span>
-
-              <!-- Stack CPU (Clickable to /metrics) -->
-              <router-link
-                v-if="group.runningCount > 0"
-                to="/metrics"
-                class="text-[10px] font-mono text-indigo-700 bg-white px-1.5 py-0.2 rounded border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 transition"
-                :title="`View live telemetry for ${group.name} stack in Metrics`"
-              >
-                CPU: {{ group.totalCpu }} &rarr;
-              </router-link>
-
-              <!-- Updates pill -->
-              <span
-                v-if="group.hasUpdates"
-                class="rounded-full bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.2 text-[10px] font-bold text-amber-700 animate-pulse"
-              >
-                Update Available
-              </span>
-            </div>
-
-            <!-- Right: Stack Compose Actions -->
-            <div class="flex items-center gap-1.5 self-end sm:self-auto" @click.stop>
-              <!-- Compose link if project exists -->
-              <router-link
-                v-if="group.projectId"
-                :to="'/containers?project=' + group.projectId + '&tab=compose'"
-                class="cyber-btn-secondary text-[11px] flex items-center gap-1 py-1 px-2 text-indigo-700 hover:text-slate-900"
-                title="Edit Compose YAML & environment"
-              >
-                <Code2 class="h-3 w-3" />
-                <span>Compose</span>
-              </router-link>
-
-              <!-- Restart Stack action -->
-              <button
-                v-if="group.projectId"
-                @click="runStackAction(group.projectId, 'restart')"
-                :disabled="!!stackActionLoading[group.projectId]"
-                class="cyber-btn-secondary text-[11px] flex items-center gap-1 py-1 px-2 text-slate-700 hover:text-slate-900"
-                :title="`Restart all services in stack ${group.name}`"
-              >
-                <RotateCcw class="h-3 w-3" :class="stackActionLoading[group.projectId] === 'restart' ? 'animate-spin' : ''" />
-                <span>Restart</span>
-              </button>
-
-              <button
-                @click="toggleStackCollapse(group.key)"
-                class="text-slate-600 hover:text-slate-900 p-1 text-xs"
-                :title="collapsedStacks[group.key] ? 'Expand' : 'Collapse'"
-              >
-                <span class="text-[10px] font-mono uppercase">{{ collapsedStacks[group.key] ? 'Expand' : 'Hide' }}</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Stack Member Containers (Collapsible) -->
-          <div v-show="!collapsedStacks[group.key]" class="divide-y divide-slate-200/50 p-1 bg-slate-50/40">
-            <div
-              v-for="c in group.containers"
-              :key="c.id"
-              class="flex flex-col sm:flex-row sm:items-center justify-between py-2.5 px-3 gap-2 transition hover:bg-white/50 rounded-lg"
-            >
-              <!-- Left: Pulsing status, Name, Exposure badge, Uptime (NO image name to keep it clean!) -->
-              <div class="flex items-center gap-2.5 min-w-0 flex-1">
-                <span
-                  class="h-2.5 w-2.5 flex-shrink-0 rounded-full"
-                  :class="c.running ? 'bg-emerald-400 shadow-sm shadow-emerald-500/50' : 'bg-slate-300'"
-                ></span>
-
-                <div class="min-w-0 flex-1">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <router-link
-                      :to="'/containers?id=' + encodeURIComponent(c.id)"
-                      class="font-mono text-xs font-bold text-slate-900 hover:text-indigo-700 truncate hover:underline"
-                      :title="`Open ${c.name} in Control Center`"
-                    >
-                      {{ c.name }}
-                    </router-link>
-
-                    <!-- Web app link if running -->
-                    <a
-                      v-if="c.running && resolveContainerUrls(c).bestUrl"
-                      :href="resolveContainerUrls(c).bestUrl"
-                      target="_blank"
-                      rel="noopener"
-                      class="p-0.5 rounded text-indigo-600 hover:text-indigo-700 hover:bg-indigo-500/10 transition"
-                      :title="`Open Web Application: ${resolveContainerUrls(c).bestUrl}`"
-                    >
-                      <ExternalLink class="h-3 w-3" />
-                    </a>
-
-                    <!-- Exposure Badge -->
-                    <span
-                      v-if="c.exposure_mode === 'public'"
-                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[9px] font-mono font-semibold bg-orange-500/10 text-orange-700 border border-orange-500/30"
-                    >
-                      <Globe class="h-2.5 w-2.5 text-orange-600" />
-                      <span>Public: {{ c.hostname }}</span>
-                    </span>
-                    <span
-                      v-else-if="c.exposure_mode === 'private'"
-                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[9px] font-mono font-semibold bg-purple-500/10 text-purple-700 border border-purple-500/30"
-                    >
-                      <Shield class="h-2.5 w-2.5 text-purple-600" />
-                      <span>Private Mesh</span>
-                    </span>
-                    <span
-                      v-else-if="c.running"
-                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[9px] font-mono text-slate-600 bg-white border border-slate-200"
-                    >
-                      <Wifi class="h-2.5 w-2.5 text-indigo-600" />
-                      <span>{{ c.name }}.local</span>
-                    </span>
-                    <span
-                      v-else
-                      class="rounded-full px-2 py-0.2 text-[9px] font-mono text-slate-500 bg-white"
-                    >
-                      Internal
-                    </span>
-
-                    <!-- Update Available Badge -->
-                    <span
-                      v-if="c.update_available"
-                      class="rounded-full px-1.5 py-0.2 text-[9px] font-bold bg-amber-500/20 text-amber-700 border border-amber-500/40 animate-pulse"
-                    >
-                      Update
-                    </span>
-                  </div>
-
-                  <!-- Uptime without image (Image is kept in Control Panel) -->
-                  <div class="text-[11px] text-slate-600 font-mono mt-0.5 flex items-center gap-1.5">
-                    <Clock class="h-2.5 w-2.5 text-slate-500" />
-                    <span>{{ c.uptime || c.status }}</span>
-                    <span v-if="c.ports" class="text-slate-500 truncate max-w-[200px]" :title="c.ports">
-                      &bull; {{ c.ports }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Right: Live CPU/RAM & Actions -->
-              <div class="flex items-center justify-between sm:justify-end gap-3 self-end sm:self-auto shrink-0">
-                <!-- Live CPU/RAM Clickable Badge -->
-                <router-link
-                  v-if="c.running"
-                  :to="`/metrics?container=${encodeURIComponent(c.name)}`"
-                  class="text-right font-mono text-[11px] p-1 -m-1 rounded-md hover:bg-indigo-50/70 border border-transparent hover:border-indigo-200 transition group/metric"
-                  :title="`Open real-time metrics for ${c.name}`"
-                >
-                  <span class="text-indigo-600 font-bold mr-2 group-hover/metric:underline">{{ c.cpu || '0.0%' }}</span>
-                  <span class="text-slate-600">{{ c.memory?.split('/')[0] || '' }}</span>
-                </router-link>
-                <div v-else class="text-[11px] text-slate-500 font-mono">
-                  stopped
-                </div>
-
-                <!-- Action Buttons -->
-                <div class="flex items-center gap-1">
-                  <a
-                    v-if="c.running && resolveContainerUrls(c).bestUrl"
-                    :href="resolveContainerUrls(c).bestUrl"
-                    target="_blank"
-                    rel="noopener"
-                    class="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 hover:text-indigo-700 transition"
-                    :title="`Open Web UI: ${resolveContainerUrls(c).bestUrl}`"
-                  >
-                    <ExternalLink class="h-3.5 w-3.5" />
-                  </a>
-
-                  <router-link
-                    :to="'/containers?id=' + encodeURIComponent(c.id)"
-                    class="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 hover:text-indigo-700 transition"
-                    :title="`Inspect container '${c.name}' in Control Center`"
-                  >
-                    <Sliders class="h-3.5 w-3.5" />
-                  </router-link>
-
-                  <button
-                    v-if="!c.running"
-                    @click="runContainerAction(c, 'start')"
-                    :disabled="!!containerActionLoading[c.id]"
-                    class="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 hover:text-emerald-600 transition"
-                    title="Start container"
-                  >
-                    <Play class="h-3.5 w-3.5 fill-current" />
-                  </button>
-                  <button
-                    v-if="c.running"
-                    @click="runContainerAction(c, 'stop')"
-                    :disabled="!!containerActionLoading[c.id]"
-                    class="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 hover:text-rose-600 transition"
-                    title="Stop container"
-                  >
-                    <Square class="h-3.5 w-3.5 fill-current" />
-                  </button>
-                  <button
-                    @click="runContainerAction(c, 'restart')"
-                    :disabled="!!containerActionLoading[c.id]"
-                    class="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition"
-                    title="Restart container"
-                  >
-                    <RotateCcw
-                      class="h-3.5 w-3.5"
-                      :class="containerActionLoading[c.id] === 'restart' ? 'animate-spin' : ''"
-                    />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Footer Bar -->
-      <div class="pt-3 border-t border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-        <span class="text-slate-600 font-mono text-[11px]">
-          Showing {{ dashboardStackGroups.length }} stacks ({{ filteredContainers.length }} containers)
-        </span>
-        <div class="flex items-center gap-3">
-          <router-link
-            to="/containers?tab=stacks"
-            class="text-purple-600 hover:text-purple-700 font-medium flex items-center gap-1"
-          >
-            <FolderOpen class="h-3.5 w-3.5" />
-            <span>Manage Stacks &rarr;</span>
-          </router-link>
-          <router-link
-            to="/containers"
-            class="cyber-btn-secondary text-xs flex items-center gap-1.5 py-1.5 px-3"
-          >
-            <span>Open All Containers</span>
-            <ArrowUpRight class="h-3.5 w-3.5" />
-          </router-link>
-        </div>
-      </div>
-    </div>
-
-    <!-- Recent System Events (Simplified List View) -->
+    <!-- Recent System Events -->
     <div class="cyber-card space-y-3">
       <div class="flex items-center justify-between border-b border-slate-200/80 pb-2.5">
         <div class="flex items-center gap-2">
@@ -1564,7 +930,7 @@ onUnmounted(() => {
           <h2 class="text-xs font-semibold text-slate-900">Recent System Events</h2>
           <span v-if="recentAudits.length > 0" class="text-[10px] text-slate-500 font-mono">({{ recentAudits.length }})</span>
         </div>
-        <router-link to="/audit" class="text-xs text-indigo-600 hover:text-indigo-700 hover:underline flex items-center gap-1 font-medium">
+        <router-link to="/logs?tab=audit" class="text-xs text-indigo-600 hover:text-indigo-700 hover:underline flex items-center gap-1 font-medium">
           <span>View Full Audit Log</span>
           <ArrowRight class="h-3 w-3" />
         </router-link>
@@ -1574,7 +940,6 @@ onUnmounted(() => {
         No recent system events logged yet.
       </div>
 
-      <!-- Scannable Vertical List -->
       <div v-else class="divide-y divide-slate-200/60">
         <div
           v-for="item in recentAudits"
@@ -1582,7 +947,6 @@ onUnmounted(() => {
           class="py-2.5 px-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs hover:bg-white/40 rounded-lg transition group"
         >
           <div class="flex items-start sm:items-center gap-2.5 min-w-0 flex-1">
-            <!-- Event Type Badge -->
             <span
               class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md border shrink-0"
               :class="getAuditBadge(item.action).color"
@@ -1591,7 +955,6 @@ onUnmounted(() => {
               <span>{{ getAuditBadge(item.action).label }}</span>
             </span>
 
-            <!-- Action & Detail Description -->
             <div class="min-w-0 flex-1">
               <span class="font-semibold text-slate-800 capitalize">
                 {{ (item.action || '').replace(/_/g, ' ') }}
@@ -1602,7 +965,6 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- Meta (IP & Time) -->
           <div class="flex items-center gap-2 shrink-0 self-end sm:self-auto text-[11px] text-slate-500 font-mono">
             <span v-if="item.ip_address" class="px-1.5 py-0.2 rounded bg-slate-50 border border-slate-200/80 text-slate-600">
               {{ item.ip_address }}
