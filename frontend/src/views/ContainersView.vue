@@ -2020,13 +2020,20 @@ onUnmounted(() => {
         <div class="mt-2 text-2xl font-bold text-cyan-600 font-mono">{{ summary.publicCount }}</div>
       </div>
 
-      <div class="cyber-card flex flex-col justify-between p-3.5">
+      <router-link
+        to="/metrics"
+        class="cyber-card flex flex-col justify-between p-3.5 hover:border-amber-400 hover:shadow-xs transition group cursor-pointer"
+        title="View full host & container resource metrics"
+      >
         <div class="flex items-center justify-between text-xs text-amber-600">
-          <span>Host CPU Load</span>
+          <span class="group-hover:underline">Host CPU Load</span>
           <Cpu class="h-4 w-4 text-amber-600" />
         </div>
-        <div class="mt-2 text-2xl font-bold text-amber-600 font-mono">{{ summary.cpuUsage }}</div>
-      </div>
+        <div class="mt-2 flex items-baseline justify-between">
+          <div class="text-2xl font-bold text-amber-600 font-mono">{{ summary.cpuUsage }}</div>
+          <span class="text-[10px] text-amber-700/80 font-mono group-hover:underline">Metrics &rarr;</span>
+        </div>
+      </router-link>
     </div>
 
     <!-- Filter & Search Bar -->
@@ -2658,11 +2665,15 @@ onUnmounted(() => {
           class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 rounded-lg border border-slate-200/80 bg-slate-50/60 p-3 cursor-pointer hover:border-slate-300 transition-colors"
           @click="openContainerModal(container, 'overview')"
         >
-          <!-- CPU -->
-          <div class="space-y-1">
+          <!-- CPU (Click to view in Metrics) -->
+          <div
+            class="space-y-1 hover:bg-slate-100/80 p-1 -m-1 rounded transition group/cpu"
+            @click.stop="router.push(`/metrics?container=${encodeURIComponent(container.name)}`)"
+            :title="`Open real-time metrics for ${container.name}`"
+          >
             <div class="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-              <span class="flex items-center gap-1"><Cpu class="h-3 w-3 text-cyan-600" /> CPU</span>
-              <span class="font-mono text-slate-800">{{ container.cpu || (container.running ? '0.0%' : '—') }}</span>
+              <span class="flex items-center gap-1 group-hover/cpu:text-indigo-600 transition"><Cpu class="h-3 w-3 text-cyan-600" /> CPU &rarr;</span>
+              <span class="font-mono text-slate-800 group-hover/cpu:text-indigo-600 font-bold transition">{{ container.cpu || (container.running ? '0.0%' : '—') }}</span>
             </div>
             <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
               <div
@@ -3083,11 +3094,15 @@ onUnmounted(() => {
           <div v-else-if="selectedTab === 'overview'" class="space-y-5">
             <!-- Telemetry Gauges -->
             <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <!-- CPU -->
-              <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <!-- CPU (Click to view full Metrics) -->
+              <router-link
+                :to="`/metrics?container=${encodeURIComponent(selectedContainer.name)}`"
+                class="rounded-lg border border-slate-200 bg-slate-50 p-3 hover:border-cyan-400 hover:shadow-xs transition group block"
+                :title="`Open live telemetry in Metrics for ${selectedContainer.name}`"
+              >
                 <div class="flex items-center justify-between text-xs text-slate-600 mb-1">
-                  <span class="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-[10px]">
-                    <Cpu class="h-3.5 w-3.5 text-cyan-600" /> CPU Usage
+                  <span class="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-[10px] group-hover:text-cyan-600 transition">
+                    <Cpu class="h-3.5 w-3.5 text-cyan-600" /> CPU Usage &rarr;
                   </span>
                   <span class="font-mono text-cyan-600 font-bold">{{ selectedContainer.cpu || '0.0%' }}</span>
                 </div>
@@ -3097,7 +3112,7 @@ onUnmounted(() => {
                     :style="{ width: `${parseCpuPercent(selectedContainer.cpu)}%` }"
                   ></div>
                 </div>
-              </div>
+              </router-link>
 
               <!-- RAM -->
               <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">

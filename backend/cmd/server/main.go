@@ -73,7 +73,7 @@ func main() {
   tcpHandler := handler.NewTcpAccess(cfdSvc)
   auditHandler := handler.NewAudit(auditSvc)
   healthHandler := handler.NewHealthCheck(cfg.CloudflaredConfig)
-  metricsHandler := handler.NewMetrics(cfg)
+  metricsHandler := handler.NewMetrics(cfg, dockerContainersSvc)
   settingsHandler := handler.NewSettings(database, auditSvc)
   notifHandler := handler.NewNotifications(dataDir)
   projectsHandler := handler.NewProjects(projectsSvc, auditSvc)
