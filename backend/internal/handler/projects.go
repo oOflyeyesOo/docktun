@@ -200,6 +200,8 @@ func (h *Projects) Action(w http.ResponseWriter, r *http.Request) {
 		h.svc.ComposeAction(id, p.Path, onDone, "up", "-d")
 	case "down":
 		h.svc.ComposeAction(id, p.Path, onDone, "down")
+	case "stop":
+		h.svc.ComposeAction(id, p.Path, onDone, "stop")
 	case "restart":
 		h.svc.ComposeAction(id, p.Path, onDone, "restart")
 	case "deploy":

@@ -156,6 +156,7 @@ func main() {
     r.Get("/api/projects/{id}/history", projectsHandler.History)
     r.Get("/api/projects/{id}/output", projectsHandler.Output)
     r.Post("/api/projects/{id}/{action}", projectsHandler.Action)
+    r.Post("/api/projects/{id}/action/{action}", projectsHandler.Action)
 
     r.Get("/api/projects/{id}/compose", projectsHandler.ComposeGet)
     r.Put("/api/projects/{id}/compose", projectsHandler.ComposeSave)

@@ -1482,6 +1482,10 @@ function startStackOutputPolling(projectId: number, title: string) {
 }
 
 async function runStackAction(projectId: number, action: 'up' | 'down' | 'restart') {
+  if (!projectId) {
+    alert('This stack does not have an active compose project ID linked yet.')
+    return
+  }
   if (!confirm(`Are you sure you want to run compose "${action}" on this stack?`)) return
   stackActionLoading.value[projectId] = true
   try {

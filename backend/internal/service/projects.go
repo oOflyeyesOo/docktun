@@ -268,6 +268,9 @@ func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
 	cmdArgs = append(cmdArgs, "--project-directory", path)
 	cmdArgs = append(cmdArgs, args...)
 	cmd := exec.Command("docker", cmdArgs...)
+	if path != "" {
+		cmd.Dir = path
+	}
 
 	stdout, _ := cmd.StdoutPipe()
 	cmd.Stderr = cmd.Stdout

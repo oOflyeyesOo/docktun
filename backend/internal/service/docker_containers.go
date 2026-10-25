@@ -280,9 +280,36 @@ func (s *DockerContainers) List() ([]Container, error) {
 				c.ProjectID = p.ID
 				c.ProjectName = p.Name
 				c.ProjectPath = p.Path
-			} else if compProj != "" {
+			} else if compProj != "" || compDir != "" {
 				c.ProjectName = compProj
 				c.ProjectPath = compDir
+				if s.db != nil {
+					pName := compProj
+					if pName == "" {
+						pName = filepath.Base(compDir)
+					}
+					pPath := compDir
+					if pPath == "" {
+						pPath = "/opt/projects/" + pName
+					}
+					_, _ = s.db.Exec(`INSERT OR IGNORE INTO projects (name, path) VALUES (?, ?)`, pName, pPath)
+					var newID int
+					if compDir != "" {
+						_ = s.db.QueryRow(`SELECT id FROM projects WHERE path = ?`, compDir).Scan(&newID)
+					}
+					if newID == 0 {
+						_ = s.db.QueryRow(`SELECT id FROM projects WHERE lower(name) = ?`, strings.ToLower(pName)).Scan(&newID)
+					}
+					if newID > 0 {
+						c.ProjectID = newID
+						c.ProjectName = pName
+						c.ProjectPath = pPath
+						projectsByName[strings.ToLower(pName)] = projRef{ID: newID, Name: pName, Path: pPath}
+						if pPath != "" {
+							projectsByPath[pPath] = projRef{ID: newID, Name: pName, Path: pPath}
+						}
+					}
+				}
 			}
 		}
 		if c.ProjectID == 0 {
