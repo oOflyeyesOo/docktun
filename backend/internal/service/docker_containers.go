@@ -2017,33 +2017,33 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		upCmd := exec.Command("docker", append([]string{"compose"}, composeArgs...)...)
 		upCmd.Dir = validComposeDir
 		upOut, upErr := upCmd.CombinedOutput()
-		appendLog(strings.TrimSpace(string(upOut)))
 		if upErr == nil {
+			appendLog(strings.TrimSpace(string(upOut)))
 			recreated = true
 		} else {
 			outStr := string(upOut)
 			if strings.Contains(outStr, "Conflict") && strings.Contains(outStr, "already in use") {
-				appendLog(fmt.Sprintf("[AUTO-RESOLVE] Existing container %s has non-matching Compose labels. Safely staging container to clear name conflict...", cname))
+				appendLog(fmt.Sprintf("[AUTO-RESOLVE] Staging existing container %s to adopt into Compose without conflict...", cname))
 				backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
 				_ = exec.Command("docker", "stop", detail.ID).Run()
 				if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
 					retryCmd := exec.Command("docker", append([]string{"compose"}, composeArgs...)...)
 					retryCmd.Dir = validComposeDir
 					retryOut, retryErr := retryCmd.CombinedOutput()
-					appendLog(strings.TrimSpace(string(retryOut)))
 					if retryErr == nil {
 						recreated = true
 						_ = exec.Command("docker", "rm", "-f", backupName).Run()
+						appendLog(strings.TrimSpace(string(retryOut)))
 						appendLog(fmt.Sprintf("✔ [SUCCESS] Container %s adopted and recreated cleanly by Docker Compose!", cname))
 					} else {
 						_ = exec.Command("docker", "rm", "-f", cname).Run()
 						_ = exec.Command("docker", "rename", backupName, cname).Run()
 						_ = exec.Command("docker", "start", cname).Run()
-						appendLog(fmt.Sprintf("[WARN] Compose retry notice: %s. Attempting scaffolded / direct recreation...", strings.TrimSpace(string(retryOut))))
+						appendLog(fmt.Sprintf("[NOTE] Compose retry notice: %s. Attempting direct recreation...", strings.TrimSpace(string(retryOut))))
 					}
 				}
 			} else {
-				appendLog(fmt.Sprintf("[WARN] Compose up encountered an issue: %s. Attempting scaffolded / direct recreation...", strings.TrimSpace(string(upOut))))
+				appendLog(fmt.Sprintf("[NOTE] Compose notice: %s. Attempting direct recreation...", strings.TrimSpace(string(upOut))))
 			}
 		}
 	}
@@ -2067,38 +2067,26 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 
 		if fileExists(composeFilePath) {
 			sanitizeComposeFile(composeFilePath)
-			appendLog(fmt.Sprintf("[STEP 3/4] Recreating container via Docker Compose in %s...", destDir))
-			upCmd := exec.Command("docker", "compose", "-f", composeFilePath, "up", "-d", "--force-recreate")
-			upCmd.Dir = destDir
-			upOut, upErr := upCmd.CombinedOutput()
-			appendLog(strings.TrimSpace(string(upOut)))
-			if upErr == nil {
-				recreated = true
-			} else {
-				outStr := string(upOut)
-				if strings.Contains(outStr, "Conflict") && strings.Contains(outStr, "already in use") {
-					appendLog(fmt.Sprintf("[AUTO-RESOLVE] Resolving container name conflict for %s in scaffolded compose...", cname))
-					backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
-					_ = exec.Command("docker", "stop", detail.ID).Run()
-					if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
-						retryCmd := exec.Command("docker", "compose", "-f", composeFilePath, "up", "-d", "--force-recreate")
-						retryCmd.Dir = destDir
-						retryOut, retryErr := retryCmd.CombinedOutput()
-						appendLog(strings.TrimSpace(string(retryOut)))
-						if retryErr == nil {
-							recreated = true
-							_ = exec.Command("docker", "rm", "-f", backupName).Run()
-							appendLog(fmt.Sprintf("✔ [SUCCESS] Container %s adopted and recreated cleanly by Docker Compose!", cname))
-						} else {
-							_ = exec.Command("docker", "rm", "-f", cname).Run()
-							_ = exec.Command("docker", "rename", backupName, cname).Run()
-							_ = exec.Command("docker", "start", cname).Run()
-							appendLog(fmt.Sprintf("[WARN] Compose recreation notice: %s. Falling back to native Docker Engine recreation...", strings.TrimSpace(string(retryOut))))
-						}
-					}
+			appendLog(fmt.Sprintf("[STEP 3/4] Recreating container %s via Docker Compose in %s...", cname, destDir))
+			backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
+			_ = exec.Command("docker", "stop", detail.ID).Run()
+			if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
+				upCmd := exec.Command("docker", "compose", "-f", composeFilePath, "up", "-d", "--force-recreate")
+				upCmd.Dir = destDir
+				upOut, upErr := upCmd.CombinedOutput()
+				if upErr == nil {
+					recreated = true
+					_ = exec.Command("docker", "rm", "-f", backupName).Run()
+					appendLog(strings.TrimSpace(string(upOut)))
+					appendLog(fmt.Sprintf("✔ [SUCCESS] Container %s recreated cleanly by Docker Compose!", cname))
 				} else {
-					appendLog(fmt.Sprintf("[WARN] Compose recreation notice: %s. Falling back to native Docker Engine recreation...", strings.TrimSpace(string(upOut))))
+					_ = exec.Command("docker", "rm", "-f", cname).Run()
+					_ = exec.Command("docker", "rename", backupName, cname).Run()
+					_ = exec.Command("docker", "start", cname).Run()
+					appendLog(fmt.Sprintf("[NOTE] Compose recreation notice: %s. Falling back to native Docker Engine recreation...", strings.TrimSpace(string(upOut))))
 				}
+			} else {
+				appendLog(fmt.Sprintf("[NOTE] Could not stage container for Compose recreate: %v. Proceeding to native recreation...", renameErr))
 			}
 		}
 	}
