@@ -186,6 +186,7 @@ func main() {
     r.Get("/api/docker/system/df", dockerContainersHandler.SystemDF)
     r.Post("/api/docker/system/prune", dockerContainersHandler.SystemPrune)
     r.Post("/api/docker/probe", dockerContainersHandler.ProbeTarget)
+    r.Post("/api/docker/network/reconcile", dockerContainersHandler.ReconcileNetworks)
 
     // Storage Management & Reclaim Center
     r.Get("/api/storage/overview", storageHandler.GetOverview)
@@ -294,7 +295,11 @@ func main() {
 
   // Automatically sync all ingress hostnames & wildcard route with Cloudflare DNS on startup
   go func() {
-    time.Sleep(3 * time.Second)
+    time.Sleep(2 * time.Second)
+    if _, err := dockerContainersSvc.ReconcileNetworks(); err != nil {
+      log.Printf("[docktun] network reconciliation notice: %v", err)
+    }
+    time.Sleep(1 * time.Second)
     cfAPISvc.AutoSyncIngressDNS(configSvc)
   }()
 

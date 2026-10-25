@@ -31,7 +31,11 @@ services:
       start_period: 30s
       retries: 3
     networks:
-      - docktun
+      docktun:
+        aliases:
+          - docktun
+          - docktun-backend
+          - docktun-frontend
 
   # Optional: start after configuring Cloudflare tunnel credentials and ingress
   # with: docker compose --profile cloudflare up -d

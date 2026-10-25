@@ -53,6 +53,12 @@ func defaultDockerNetwork() string {
 	if net := strings.TrimSpace(os.Getenv("DOCKER_NETWORK")); net != "" {
 		return net
 	}
+	if err := exec.Command("docker", "network", "inspect", "docktun").Run(); err == nil {
+		return "docktun"
+	}
+	if err := exec.Command("docker", "network", "inspect", "cloudflared").Run(); err == nil {
+		return "cloudflared"
+	}
 	return "docktun"
 }
 

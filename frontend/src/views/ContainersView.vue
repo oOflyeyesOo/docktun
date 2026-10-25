@@ -1157,6 +1157,21 @@ async function checkSingleUpdate(container: ContainerItem) {
   }
 }
 
+const reconcilingNetwork = ref(false)
+async function reconcileNetworkDNS() {
+  reconcilingNetwork.value = true
+  try {
+    const res: any = await apiFetch('/api/docker/network/reconcile', { method: 'POST' })
+    await fetchContainers()
+    const logDetails = (res.logs && res.logs.length > 0) ? '\n\n' + res.logs.join('\n') : ''
+    alert(`✔ Docker networks reconciled & DNS refreshed successfully!${logDetails}`)
+  } catch (err: any) {
+    alert(`Network reconciliation failed: ${err.message}`)
+  } finally {
+    reconcilingNetwork.value = false
+  }
+}
+
 function confirmUpdate(container: ContainerItem) {
   showUpdateConfirmModal.value = { container }
 }
@@ -1931,6 +1946,16 @@ onUnmounted(() => {
           >
             {{ availableUpdatesCount }}
           </span>
+        </button>
+
+        <button
+          @click="reconcileNetworkDNS"
+          :disabled="reconcilingNetwork || loading"
+          class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-cyan-700 hover:border-cyan-500/60 hover:bg-cyan-50/30"
+          title="Bridge Docker networks, connect cloudflared, and flush DNS caches"
+        >
+          <Network class="h-3.5 w-3.5 text-cyan-600" :class="reconcilingNetwork ? 'animate-spin' : ''" />
+          <span>{{ reconcilingNetwork ? 'Reconciling…' : 'Repair Network & DNS' }}</span>
         </button>
 
         <button

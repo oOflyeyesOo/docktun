@@ -114,7 +114,22 @@ func pickBestPort(ports []dockerPort) (int, int) {
 		return 80, 0
 	}
 
-	commonPorts := []int{80, 8080, 3000, 5000, 8000, 8888, 9000, 443}
+	// 1. Strongly prefer published Host Ports (PublicPort > 0) so host networking routes directly to 127.0.0.1:PublicPort
+	commonPorts := []int{80, 8080, 3000, 3001, 5000, 8000, 8888, 9000, 443}
+	for _, cp := range commonPorts {
+		for _, p := range ports {
+			if p.PublicPort > 0 && p.PrivatePort == cp && (p.Type == "tcp" || p.Type == "") {
+				return p.PrivatePort, p.PublicPort
+			}
+		}
+	}
+	for _, p := range ports {
+		if p.PublicPort > 0 && (p.Type == "tcp" || p.Type == "") {
+			return p.PrivatePort, p.PublicPort
+		}
+	}
+
+	// 2. Fallback to private ports if no published host port
 	for _, cp := range commonPorts {
 		for _, p := range ports {
 			if p.PrivatePort == cp && (p.Type == "tcp" || p.Type == "") {
@@ -150,10 +165,17 @@ func (m *mDNSManager) refreshContainers(client *http.Client) {
 
 	for _, c := range list {
 		var internalIP string
-		for _, netw := range c.NetworkSettings.Networks {
-			if netw.IPAddress != "" {
-				internalIP = netw.IPAddress
-				break
+		// Prefer docktun or cloudflared bridge network IP if available
+		if netw, ok := c.NetworkSettings.Networks["docktun"]; ok && netw.IPAddress != "" {
+			internalIP = netw.IPAddress
+		} else if netw, ok := c.NetworkSettings.Networks["cloudflared"]; ok && netw.IPAddress != "" {
+			internalIP = netw.IPAddress
+		} else {
+			for _, netw := range c.NetworkSettings.Networks {
+				if netw.IPAddress != "" {
+					internalIP = netw.IPAddress
+					break
+				}
 			}
 		}
 

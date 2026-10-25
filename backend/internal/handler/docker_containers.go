@@ -295,3 +295,13 @@ func (h *DockerContainers) Update(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *DockerContainers) ReconcileNetworks(w http.ResponseWriter, r *http.Request) {
+	res, err := h.svc.ReconcileNetworks()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
+}
+

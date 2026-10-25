@@ -847,7 +847,123 @@ func (s *DockerContainers) DefaultNetwork() string {
 	if net := strings.TrimSpace(os.Getenv("DOCKER_NETWORK")); net != "" {
 		return net
 	}
+	if err := exec.Command("docker", "network", "inspect", "docktun").Run(); err == nil {
+		return "docktun"
+	}
+	if err := exec.Command("docker", "network", "inspect", "cloudflared").Run(); err == nil {
+		return "cloudflared"
+	}
 	return "docktun"
+}
+
+func (s *DockerContainers) isSelfContainer(id string, name string) bool {
+	cname := strings.ToLower(strings.TrimPrefix(name, "/"))
+	if cname == "docktun" {
+		return true
+	}
+	if host, err := os.Hostname(); err == nil && host != "" {
+		if strings.HasPrefix(id, host) || strings.HasPrefix(host, id) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
+	result := make(map[string]interface{})
+	var logs []string
+	addLog := func(msg string) {
+		log.Printf("[network-reconcile] %s", msg)
+		logs = append(logs, msg)
+	}
+
+	defNet := s.DefaultNetwork()
+	_ = s.EnsureNetwork(defNet)
+	addLog(fmt.Sprintf("Primary network: %s", defNet))
+
+	hasDocktunNet := exec.Command("docker", "network", "inspect", "docktun").Run() == nil
+	hasCloudflaredNet := exec.Command("docker", "network", "inspect", "cloudflared").Run() == nil
+
+	networksToBridge := []string{defNet}
+	if hasDocktunNet && defNet != "docktun" {
+		networksToBridge = append(networksToBridge, "docktun")
+	}
+	if hasCloudflaredNet && defNet != "cloudflared" {
+		networksToBridge = append(networksToBridge, "cloudflared")
+	}
+
+	// 1. Identify DockTun core container and connect to all bridge networks
+	docktunContainers := []string{"docktun"}
+	if host, err := os.Hostname(); err == nil && host != "" {
+		docktunContainers = append(docktunContainers, host)
+	}
+
+	for _, c := range docktunContainers {
+		if exec.Command("docker", "inspect", c).Run() == nil {
+			for _, net := range networksToBridge {
+				if err := s.ConnectNetwork(c, net); err == nil {
+					addLog(fmt.Sprintf("Connected DockTun container %s to network %s", c, net))
+				}
+			}
+			break
+		}
+	}
+
+	// 2. Bridge Cloudflared tunnel container
+	cfdContainer := s.cfg.CloudflaredContainer
+	if cfdContainer == "" {
+		cfdContainer = "docktun-cloudflared"
+	}
+	cfdConnected := false
+	if exec.Command("docker", "inspect", cfdContainer).Run() == nil {
+		for _, net := range networksToBridge {
+			if err := s.ConnectNetwork(cfdContainer, net); err == nil {
+				addLog(fmt.Sprintf("Connected %s to network %s", cfdContainer, net))
+				cfdConnected = true
+			}
+		}
+	}
+
+	// 3. Bridge Tailscale container if present
+	tsContainer := "docktun-tailscale"
+	if exec.Command("docker", "inspect", tsContainer).Run() == nil {
+		for _, net := range networksToBridge {
+			_ = s.ConnectNetwork(tsContainer, net)
+		}
+	}
+
+	// 4. Ensure all exposed containers are connected to bridged networks
+	if s.db != nil {
+		rows, err := s.db.Query(`SELECT container_name FROM container_exposure WHERE mode IN ('public', 'private')`)
+		if err == nil && rows != nil {
+			defer rows.Close()
+			for rows.Next() {
+				var cName string
+				if err := rows.Scan(&cName); err == nil && cName != "" {
+					for _, net := range networksToBridge {
+						_ = s.ConnectNetwork(cName, net)
+					}
+					addLog(fmt.Sprintf("Verified network connectivity for exposed container %s", cName))
+				}
+			}
+		}
+	}
+
+	// 5. Refresh DNS by restarting cloudflared to flush DNS cache and re-establish connection pools
+	if s.cloudflared != nil && s.cloudflared.IsRunning() {
+		addLog("Restarting cloudflared to flush DNS cache and re-establish connection pools...")
+		if err := s.cloudflared.Restart(); err != nil {
+			addLog(fmt.Sprintf("Cloudflared restart notice: %v", err))
+		} else {
+			addLog("✔ Cloudflared successfully restarted with refreshed DNS!")
+		}
+	}
+
+	result["success"] = true
+	result["logs"] = logs
+	result["networks"] = networksToBridge
+	result["cloudflared_bridged"] = cfdConnected
+	return result, nil
 }
 
 func (s *DockerContainers) EnsureNetwork(network string) error {
@@ -1295,6 +1411,9 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 		if err := s.ConnectNetwork(name, defaultNet); err != nil {
 			log.Printf("[docktun] connect network %s for %s: %v", defaultNet, name, err)
 		}
+		if exec.Command("docker", "network", "inspect", "cloudflared").Run() == nil && defaultNet != "cloudflared" {
+			_ = s.ConnectNetwork(name, "cloudflared")
+		}
 	} else {
 		_ = s.DisconnectNetwork(name, defaultNet)
 		_ = s.DisconnectNetwork(name, "cloudflared")
@@ -1342,6 +1461,11 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 			}
 		}(prevExp.ZeroTrustAppID)
 	}
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		_, _ = s.ReconcileNetworks()
+	}()
 
 	return nil
 }
@@ -2068,25 +2192,38 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		if fileExists(composeFilePath) {
 			sanitizeComposeFile(composeFilePath)
 			appendLog(fmt.Sprintf("[STEP 3/4] Recreating container %s via Docker Compose in %s...", cname, destDir))
-			backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
-			_ = exec.Command("docker", "stop", detail.ID).Run()
-			if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
+			if s.isSelfContainer(detail.ID, cname) {
 				upCmd := exec.Command("docker", "compose", "-f", composeFilePath, "up", "-d", "--force-recreate")
 				upCmd.Dir = destDir
 				upOut, upErr := upCmd.CombinedOutput()
 				if upErr == nil {
 					recreated = true
-					_ = exec.Command("docker", "rm", "-f", backupName).Run()
 					appendLog(strings.TrimSpace(string(upOut)))
 					appendLog(fmt.Sprintf("✔ [SUCCESS] Container %s recreated cleanly by Docker Compose!", cname))
 				} else {
-					_ = exec.Command("docker", "rm", "-f", cname).Run()
-					_ = exec.Command("docker", "rename", backupName, cname).Run()
-					_ = exec.Command("docker", "start", cname).Run()
-					appendLog(fmt.Sprintf("[NOTE] Compose recreation notice: %s. Falling back to native Docker Engine recreation...", strings.TrimSpace(string(upOut))))
+					appendLog(fmt.Sprintf("[NOTE] Compose recreation notice: %s. Falling back to native recreation...", strings.TrimSpace(string(upOut))))
 				}
 			} else {
-				appendLog(fmt.Sprintf("[NOTE] Could not stage container for Compose recreate: %v. Proceeding to native recreation...", renameErr))
+				backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
+				_ = exec.Command("docker", "stop", detail.ID).Run()
+				if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
+					upCmd := exec.Command("docker", "compose", "-f", composeFilePath, "up", "-d", "--force-recreate")
+					upCmd.Dir = destDir
+					upOut, upErr := upCmd.CombinedOutput()
+					if upErr == nil {
+						recreated = true
+						_ = exec.Command("docker", "rm", "-f", backupName).Run()
+						appendLog(strings.TrimSpace(string(upOut)))
+						appendLog(fmt.Sprintf("✔ [SUCCESS] Container %s recreated cleanly by Docker Compose!", cname))
+					} else {
+						_ = exec.Command("docker", "rm", "-f", cname).Run()
+						_ = exec.Command("docker", "rename", backupName, cname).Run()
+						_ = exec.Command("docker", "start", cname).Run()
+						appendLog(fmt.Sprintf("[NOTE] Compose recreation notice: %s. Falling back to native Docker Engine recreation...", strings.TrimSpace(string(upOut))))
+					}
+				} else {
+					appendLog(fmt.Sprintf("[NOTE] Could not stage container for Compose recreate: %v. Proceeding to native recreation...", renameErr))
+				}
 			}
 		}
 	}
@@ -2219,6 +2356,14 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 	runArgs = append(runArgs, newImage)
 	if detail.Command != "" {
 		runArgs = append(runArgs, strings.Fields(detail.Command)...)
+	}
+
+	if s.isSelfContainer(detail.ID, cname) {
+		appendLog(fmt.Sprintf("✔ [SUCCESS] %s self-update initiated! Restarting container with image %s in background...", cname, newImage))
+		detachScript := fmt.Sprintf("sleep 1 && docker stop %s && docker rm -f %s && docker %s", detail.ID, detail.ID, strings.Join(runArgs, " "))
+		bgCmd := exec.Command("sh", "-c", detachScript)
+		_ = bgCmd.Start()
+		return nil
 	}
 
 	backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
