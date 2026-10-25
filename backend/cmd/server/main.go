@@ -91,6 +91,7 @@ func main() {
   authLimiter := middleware.NewRateLimiter(10, time.Minute)
   r.With(authLimiter.Limit).Post("/api/setup/complete", setupHandler.Complete)
   r.With(authLimiter.Limit).Post("/auth/login", authHandler.Login)
+  r.Post("/auth/refresh", authHandler.Refresh)
   r.Get("/api/logs/ws", logsHandler.Stream)
 
   r.Group(func(r chi.Router) {
@@ -217,6 +218,8 @@ func main() {
 
     r.Get("/api/cloudflare/settings", cloudflareHandler.GetSettings)
     r.Post("/api/cloudflare/settings", cloudflareHandler.SaveSettings)
+    r.Get("/api/cloudflare/dns-check", cloudflareHandler.CheckDNS)
+    r.Post("/api/cloudflare/dns-replace", cloudflareHandler.ReplaceDNS)
     r.Post("/api/cloudflare/sync-all", cloudflareHandler.SyncAllRoutes)
     r.Post("/api/cloudflare/create-wildcard", cloudflareHandler.CreateWildcard)
     r.Get("/api/cloudflare/tunnel", cloudflareHandler.GetTunnelStatus)

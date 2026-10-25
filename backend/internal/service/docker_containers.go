@@ -967,6 +967,13 @@ func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
 		}
 	}
 
+	// 6. Automatically sync/reconcile Cloudflare DNS records for all public ingress routes
+	if s.cfAPI != nil && s.configMgr != nil {
+		addLog("Re-verifying and syncing Cloudflare DNS routes for public services...")
+		s.cfAPI.AutoSyncIngressDNS(s.configMgr)
+		addLog("✔ Cloudflare DNS sync check dispatched")
+	}
+
 	result["success"] = true
 	result["logs"] = logs
 	result["networks"] = networksToBridge

@@ -140,11 +140,24 @@ async function controlTunnel(action: string) {
   }
 }
 
-async function triggerDnsSync() {
+async function triggerDnsSync(force = false) {
   dnsSyncing.value = true
   try {
-    const res = await apiFetch('/api/cloudflare/sync-all', { method: 'POST' })
-    alert(`Cloudflare DNS Synced! ${res.synced?.length || 0} routes verified in Cloudflare DNS.`)
+    const url = force ? '/api/cloudflare/sync-all?force=true' : '/api/cloudflare/sync-all'
+    const res: any = await apiFetch(url, { method: 'POST' })
+    const syncedList: any[] = res.synced || []
+    const successList = syncedList.filter((s) => s.success)
+    const failList = syncedList.filter((s) => !s.success)
+
+    if (failList.length > 0) {
+      const errDetails = failList.map((f) => `• ${f.hostname}: ${f.error}`).join('\n')
+      if (confirm(`DNS Sync Notice:\n${successList.length} route(s) verified.\n${failList.length} route(s) had conflicts or errors:\n${errDetails}\n\nWould you like to force overwrite old DNS records and re-sync?`)) {
+        await triggerDnsSync(true)
+        return
+      }
+    } else {
+      alert(`Cloudflare DNS Synced! All ${successList.length} public route(s) verified in Cloudflare DNS.`)
+    }
   } catch (e: any) {
     alert(e.message || 'DNS sync failed. Check API Token in Remote Access.')
   } finally {

@@ -108,6 +108,7 @@ func (h *CloudflareHandler) SyncAllRoutes(w http.ResponseWriter, r *http.Request
 		Error    string `json:"error,omitempty"`
 	}
 
+	force := r.URL.Query().Get("force") == "true"
 	var results []syncResult
 	for _, rule := range doc.Ingress {
 		host := strings.TrimSpace(rule.Hostname)
@@ -115,7 +116,13 @@ func (h *CloudflareHandler) SyncAllRoutes(w http.ResponseWriter, r *http.Request
 			continue
 		}
 
-		err := h.cfAPI.SyncDNSRecord(host, doc.Tunnel)
+		var err error
+		if force {
+			_, err = h.cfAPI.ForceReplaceDNSRecord(host, doc.Tunnel)
+		} else {
+			err = h.cfAPI.SyncDNSRecord(host, doc.Tunnel)
+		}
+
 		if err != nil {
 			results = append(results, syncResult{Hostname: host, Success: false, Error: err.Error()})
 		} else {
@@ -129,6 +136,62 @@ func (h *CloudflareHandler) SyncAllRoutes(w http.ResponseWriter, r *http.Request
 		"tunnel":  doc.Tunnel,
 		"synced":  results,
 	})
+}
+
+func (h *CloudflareHandler) CheckDNS(w http.ResponseWriter, r *http.Request) {
+	hostname := strings.TrimSpace(r.URL.Query().Get("hostname"))
+	if hostname == "" {
+		http.Error(w, `{"error":"hostname query parameter required"}`, http.StatusBadRequest)
+		return
+	}
+
+	rawYaml, err := h.configMgr.Read()
+	if err != nil {
+		http.Error(w, `{"error":"failed to read config"}`, http.StatusInternalServerError)
+		return
+	}
+	var doc struct {
+		Tunnel string `yaml:"tunnel"`
+	}
+	_ = yaml.Unmarshal([]byte(rawYaml), &doc)
+
+	check, err := h.cfAPI.CheckDNSRecord(hostname, doc.Tunnel)
+	if err != nil {
+		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(check)
+}
+
+func (h *CloudflareHandler) ReplaceDNS(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Hostname string `json:"hostname"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Hostname) == "" {
+		http.Error(w, `{"error":"valid hostname required"}`, http.StatusBadRequest)
+		return
+	}
+
+	rawYaml, err := h.configMgr.Read()
+	if err != nil {
+		http.Error(w, `{"error":"failed to read config"}`, http.StatusInternalServerError)
+		return
+	}
+	var doc struct {
+		Tunnel string `yaml:"tunnel"`
+	}
+	_ = yaml.Unmarshal([]byte(rawYaml), &doc)
+
+	res, err := h.cfAPI.ForceReplaceDNSRecord(req.Hostname, doc.Tunnel)
+	if err != nil {
+		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
 }
 
 func (h *CloudflareHandler) CreateWildcard(w http.ResponseWriter, r *http.Request) {

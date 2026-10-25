@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -55,8 +56,8 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	access, _ := h.GenerateToken(id, req.Username, 15*time.Minute)
-	refresh, _ := h.GenerateToken(id, req.Username, 7*24*time.Hour)
+	access, _ := h.GenerateToken(id, req.Username, 24*time.Hour)
+	refresh, _ := h.GenerateToken(id, req.Username, 30*24*time.Hour)
 
 	h.audit.Log(id, "login", "", r.RemoteAddr)
 
@@ -64,7 +65,7 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(tokenResponse{
 		AccessToken:  access,
 		RefreshToken: refresh,
-		ExpiresIn:    900,
+		ExpiresIn:    86400,
 	})
 }
 
@@ -75,16 +76,62 @@ func (h *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"ok":true}`))
 }
 
-func (h *Auth) Refresh(w http.ResponseWriter, r *http.Request) {
-	userID, _ := r.Context().Value("user_id").(int)
-	username, _ := r.Context().Value("username").(string)
+type refreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
 
-	access, _ := h.GenerateToken(userID, username, 15*time.Minute)
+func (h *Auth) Refresh(w http.ResponseWriter, r *http.Request) {
+	var req refreshRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	tokenStr := strings.TrimSpace(req.RefreshToken)
+	if tokenStr == "" {
+		if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+			tokenStr = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	var userID int
+	var username string
+
+	if tokenStr != "" {
+		token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
+			return []byte(h.cfg.JWTSecret), nil
+		}, jwt.WithValidMethods([]string{"HS256"}))
+		if err == nil && token.Valid {
+			if claims, ok := token.Claims.(jwt.MapClaims); ok {
+				if sub, ok := claims["sub"].(float64); ok && sub > 0 {
+					userID = int(sub)
+				}
+				if u, ok := claims["username"].(string); ok {
+					username = u
+				}
+			}
+		}
+	}
+
+	if userID == 0 || username == "" {
+		if uid, ok := r.Context().Value("user_id").(int); ok && uid > 0 {
+			userID = uid
+		}
+		if uname, ok := r.Context().Value("username").(string); ok && uname != "" {
+			username = uname
+		}
+	}
+
+	if userID == 0 || username == "" {
+		http.Error(w, `{"error":"invalid or expired refresh token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	access, _ := h.GenerateToken(userID, username, 24*time.Hour)
+	refresh, _ := h.GenerateToken(userID, username, 30*24*time.Hour)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(tokenResponse{
-		AccessToken: access,
-		ExpiresIn:   900,
+		AccessToken:  access,
+		RefreshToken: refresh,
+		ExpiresIn:    86400,
 	})
 }
 

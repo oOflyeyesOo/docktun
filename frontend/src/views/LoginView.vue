@@ -32,11 +32,11 @@ async function handleLogin() {
   error.value = ''
   loading.value = true
   try {
-    const data = await apiFetch<{ access_token: string }>('/auth/login', {
+    const data = await apiFetch<{ access_token: string; refresh_token?: string }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify(form),
     })
-    authStore.setAuth(data.access_token, form.username)
+    authStore.setAuth(data.access_token, form.username, data.refresh_token)
     router.push('/')
   } catch (e: any) {
     error.value = e.message || 'Invalid username or password'

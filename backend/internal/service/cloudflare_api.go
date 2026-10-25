@@ -336,7 +336,219 @@ func (s *CloudflareAPI) FindZoneID(token, hostname string) (string, error) {
 	return "", fmt.Errorf("could not find active Cloudflare zone for %s", hostname)
 }
 
-// SyncDNSRecord creates or updates a CNAME DNS record in Cloudflare pointing to <tunnelID>.cfargotunnel.com
+type DNSCheckResult struct {
+	Hostname            string        `json:"hostname"`
+	CleanHost           string        `json:"clean_host"`
+	ZoneID              string        `json:"zone_id"`
+	TunnelID            string        `json:"tunnel_id"`
+	ExpectedTarget      string        `json:"expected_target"`
+	Exists              bool          `json:"exists"`
+	IsConfiguredCorrect bool          `json:"is_configured_correct"`
+	HasConflict         bool          `json:"has_conflict"`
+	ConflictDetails     string        `json:"conflict_details,omitempty"`
+	Records             []cfDNSRecord `json:"records"`
+}
+
+type DNSReplaceResult struct {
+	Hostname       string   `json:"hostname"`
+	ZoneID         string   `json:"zone_id"`
+	DeletedRecords []string `json:"deleted_records"`
+	CreatedTarget  string   `json:"created_target"`
+	Success        bool     `json:"success"`
+	Message        string   `json:"message"`
+}
+
+// CheckDNSRecord checks live Cloudflare DNS records for a given hostname
+func (s *CloudflareAPI) CheckDNSRecord(hostname, tunnelID string) (*DNSCheckResult, error) {
+	cleanHost := cleanHostname(hostname)
+	if cleanHost == "" {
+		return nil, fmt.Errorf("invalid hostname: %s", hostname)
+	}
+
+	creds := s.GetCredentials()
+	if creds.APIToken == "" {
+		return nil, fmt.Errorf("Cloudflare API Token required to inspect DNS records")
+	}
+
+	zoneID, err := s.FindZoneID(creds.APIToken, cleanHost)
+	if err != nil || zoneID == "" {
+		zoneID = creds.ZoneID
+	}
+	if zoneID == "" {
+		return nil, fmt.Errorf("could not resolve Cloudflare Zone for %s", cleanHost)
+	}
+
+	expectedTarget := fmt.Sprintf("%s.cfargotunnel.com", tunnelID)
+
+	queryURL := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records?name=%s", zoneID, cleanHost)
+	req, err := http.NewRequest("GET", queryURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+creds.APIToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("query dns records: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var cfResp cfApiResponse
+	if err := json.NewDecoder(resp.Body).Decode(&cfResp); err != nil {
+		return nil, fmt.Errorf("parse cf response: %w", err)
+	}
+	if !cfResp.Success {
+		errMsg := "unknown api error"
+		if len(cfResp.Errors) > 0 {
+			errMsg = cfResp.Errors[0].Message
+		}
+		return nil, fmt.Errorf("cloudflare api error: %s", errMsg)
+	}
+
+	var existingRecords []cfDNSRecord
+	_ = json.Unmarshal(cfResp.Result, &existingRecords)
+
+	res := &DNSCheckResult{
+		Hostname:       hostname,
+		CleanHost:      cleanHost,
+		ZoneID:         zoneID,
+		TunnelID:       tunnelID,
+		ExpectedTarget: expectedTarget,
+		Exists:         len(existingRecords) > 0,
+		Records:        existingRecords,
+	}
+
+	if len(existingRecords) == 0 {
+		res.ConflictDetails = "No existing DNS record found in Cloudflare."
+		return res, nil
+	}
+
+	for _, rec := range existingRecords {
+		if rec.Type == "CNAME" && strings.EqualFold(rec.Content, expectedTarget) && rec.Proxied {
+			res.IsConfiguredCorrect = true
+		} else {
+			res.HasConflict = true
+			if strings.HasSuffix(strings.ToLower(rec.Content), ".cfargotunnel.com") {
+				res.ConflictDetails = fmt.Sprintf("Points to another Cloudflare Tunnel (%s) [%s]", rec.Content, rec.Type)
+			} else {
+				res.ConflictDetails = fmt.Sprintf("Points to another destination (%s) [%s]", rec.Content, rec.Type)
+			}
+		}
+	}
+
+	return res, nil
+}
+
+// ForceReplaceDNSRecord deletes any existing conflicting DNS records and creates the fresh CNAME
+func (s *CloudflareAPI) ForceReplaceDNSRecord(hostname, tunnelID string) (*DNSReplaceResult, error) {
+	cleanHost := cleanHostname(hostname)
+	if cleanHost == "" || tunnelID == "" || tunnelID == "your-tunnel-uuid" {
+		return nil, fmt.Errorf("invalid hostname (%s) or tunnel ID (%s)", cleanHost, tunnelID)
+	}
+
+	target := fmt.Sprintf("%s.cfargotunnel.com", tunnelID)
+	creds := s.GetCredentials()
+	if creds.APIToken == "" {
+		return nil, fmt.Errorf("Cloudflare API Token required to replace DNS records")
+	}
+
+	zoneID, err := s.FindZoneID(creds.APIToken, cleanHost)
+	if err != nil || zoneID == "" {
+		zoneID = creds.ZoneID
+	}
+	if zoneID == "" {
+		return nil, fmt.Errorf("could not resolve Cloudflare Zone for %s", cleanHost)
+	}
+
+	// 1. Fetch all existing records for this hostname
+	queryURL := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records?name=%s", zoneID, cleanHost)
+	req, _ := http.NewRequest("GET", queryURL, nil)
+	req.Header.Set("Authorization", "Bearer "+creds.APIToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("query dns records: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var cfResp cfApiResponse
+	_ = json.NewDecoder(resp.Body).Decode(&cfResp)
+	var existingRecords []cfDNSRecord
+	_ = json.Unmarshal(cfResp.Result, &existingRecords)
+
+	deletedList := make([]string, 0)
+	// 2. Delete all existing records
+	for _, rec := range existingRecords {
+		delURL := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records/%s", zoneID, rec.ID)
+		delReq, _ := http.NewRequest("DELETE", delURL, nil)
+		delReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
+		delResp, delErr := s.client.Do(delReq)
+		if delErr == nil {
+			delResp.Body.Close()
+			deletedList = append(deletedList, fmt.Sprintf("%s (%s -> %s)", rec.ID, rec.Type, rec.Content))
+			log.Printf("[docktun] Force deleted old Cloudflare DNS record: %s (%s -> %s)", cleanHost, rec.Type, rec.Content)
+		}
+	}
+
+	// 3. Create fresh CNAME pointing to DockTun tunnel
+	recordPayload := map[string]interface{}{
+		"type":    "CNAME",
+		"name":    cleanHost,
+		"content": target,
+		"proxied": true,
+		"ttl":     1, // Auto
+		"comment": "Managed by DockTun",
+	}
+	bodyBytes, _ := json.Marshal(recordPayload)
+
+	createURL := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records", zoneID)
+	postReq, _ := http.NewRequest("POST", createURL, bytes.NewReader(bodyBytes))
+	postReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
+	postReq.Header.Set("Content-Type", "application/json")
+
+	postResp, err := s.client.Do(postReq)
+	if err != nil {
+		return nil, fmt.Errorf("create replacement dns record: %w", err)
+	}
+	defer postResp.Body.Close()
+
+	var postCfResp cfApiResponse
+	_ = json.NewDecoder(postResp.Body).Decode(&postCfResp)
+	if !postCfResp.Success {
+		errMsg := "failed to create replacement record"
+		if len(postCfResp.Errors) > 0 {
+			errMsg = postCfResp.Errors[0].Message
+		}
+		return nil, fmt.Errorf("cloudflare dns create: %s", errMsg)
+	}
+
+	// Optional CLI fallback with overwrite flag
+	certPaths := []string{"/etc/cloudflared/cert.pem", "/root/.cloudflared/cert.pem"}
+	for _, cp := range certPaths {
+		if _, err := os.Stat(cp); err == nil {
+			out, _ := exec.Command("cloudflared", "tunnel", "route", "dns", "--overwrite-dns", tunnelID, cleanHost).CombinedOutput()
+			log.Printf("[docktun] cloudflared route dns --overwrite-dns note: %s", strings.TrimSpace(string(out)))
+			break
+		}
+	}
+
+	msg := fmt.Sprintf("Successfully configured %s -> %s (Proxied). Purged %d previous conflicting record(s).", cleanHost, target, len(deletedList))
+	log.Printf("[docktun] %s", msg)
+
+	return &DNSReplaceResult{
+		Hostname:       cleanHost,
+		ZoneID:         zoneID,
+		DeletedRecords: deletedList,
+		CreatedTarget:  target,
+		Success:        true,
+		Message:        msg,
+	}, nil
+}
+
+// SyncDNSRecord creates or updates a CNAME DNS record in Cloudflare pointing to <tunnelID>.cfargotunnel.com.
+// If an existing record points to an older tunnel or conflicting IP, it automatically overwrites or replaces it.
 func (s *CloudflareAPI) SyncDNSRecord(hostname, tunnelID string) error {
 	cleanHost := cleanHostname(hostname)
 	if cleanHost == "" || tunnelID == "" || tunnelID == "your-tunnel-uuid" {
@@ -348,13 +560,13 @@ func (s *CloudflareAPI) SyncDNSRecord(hostname, tunnelID string) error {
 
 	// 1. If API Token is available, use Cloudflare v4 REST API
 	if creds.APIToken != "" {
-		zoneID := creds.ZoneID
-		var err error
+		// Resolve zone dynamically for cleanHost first so multi-domain accounts work properly
+		zoneID, err := s.FindZoneID(creds.APIToken, cleanHost)
+		if err != nil || zoneID == "" {
+			zoneID = creds.ZoneID
+		}
 		if zoneID == "" {
-			zoneID, err = s.FindZoneID(creds.APIToken, cleanHost)
-			if err != nil {
-				return fmt.Errorf("resolve zone ID for %s: %w", cleanHost, err)
-			}
+			return fmt.Errorf("resolve zone ID for %s: %w", cleanHost, err)
 		}
 
 		// Check for existing record
@@ -393,40 +605,80 @@ func (s *CloudflareAPI) SyncDNSRecord(hostname, tunnelID string) error {
 			"content": target,
 			"proxied": true,
 			"ttl":     1, // Auto
+			"comment": "Managed by DockTun",
 		}
 		bodyBytes, _ := json.Marshal(recordPayload)
 
 		if len(existingRecords) > 0 {
-			// Record exists: update it
-			rec := existingRecords[0]
-			if rec.Type == "CNAME" && rec.Content == target && rec.Proxied {
-				// Already correctly configured
-				log.Printf("[docktun] Cloudflare DNS record %s already points to %s", cleanHost, target)
-				return nil
+			// Check if single existing record already matches our target
+			if len(existingRecords) == 1 {
+				rec := existingRecords[0]
+				if rec.Type == "CNAME" && strings.EqualFold(rec.Content, target) && rec.Proxied {
+					log.Printf("[docktun] Cloudflare DNS record %s already points to %s", cleanHost, target)
+					return nil
+				}
 			}
 
+			// Try updating via PUT on the first record
+			rec := existingRecords[0]
 			updateURL := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records/%s", zoneID, rec.ID)
 			putReq, _ := http.NewRequest("PUT", updateURL, bytes.NewReader(bodyBytes))
 			putReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
 			putReq.Header.Set("Content-Type", "application/json")
 
-			putResp, err := s.client.Do(putReq)
-			if err != nil {
-				return fmt.Errorf("update dns record: %w", err)
-			}
-			defer putResp.Body.Close()
-
-			var putCfResp cfApiResponse
-			_ = json.NewDecoder(putResp.Body).Decode(&putCfResp)
-			if !putCfResp.Success {
-				errMsg := "failed to update dns record"
-				if len(putCfResp.Errors) > 0 {
-					errMsg = putCfResp.Errors[0].Message
+			putResp, putErr := s.client.Do(putReq)
+			putSuccess := false
+			if putErr == nil {
+				defer putResp.Body.Close()
+				var putCfResp cfApiResponse
+				_ = json.NewDecoder(putResp.Body).Decode(&putCfResp)
+				if putCfResp.Success {
+					putSuccess = true
+					log.Printf("[docktun] Cloudflare DNS record updated via PUT: %s -> %s", cleanHost, target)
+					return nil
 				}
-				return fmt.Errorf("cloudflare dns update: %s", errMsg)
 			}
-			log.Printf("[docktun] Cloudflare DNS record updated: %s -> %s", cleanHost, target)
-			return nil
+
+			// If PUT failed (e.g. record managed by another tunnel, multiple records, or type conflict):
+			// Delete all existing conflicting records for this hostname, then recreate
+			if !putSuccess {
+				log.Printf("[docktun] PUT update failed for %s; deleting %d old conflicting record(s) and recreating fresh CNAME...", cleanHost, len(existingRecords))
+				for _, oldRec := range existingRecords {
+					delURL := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records/%s", zoneID, oldRec.ID)
+					delReq, _ := http.NewRequest("DELETE", delURL, nil)
+					delReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
+					delResp, delErr := s.client.Do(delReq)
+					if delErr == nil {
+						delResp.Body.Close()
+						log.Printf("[docktun] Purged old DNS record %s (%s -> %s)", oldRec.ID, oldRec.Type, oldRec.Content)
+					}
+				}
+
+				// Re-create the clean record
+				createURL := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records", zoneID)
+				postReq, _ := http.NewRequest("POST", createURL, bytes.NewReader(bodyBytes))
+				postReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
+				postReq.Header.Set("Content-Type", "application/json")
+
+				postResp, err := s.client.Do(postReq)
+				if err != nil {
+					return fmt.Errorf("recreate dns record: %w", err)
+				}
+				defer postResp.Body.Close()
+
+				var postCfResp cfApiResponse
+				_ = json.NewDecoder(postResp.Body).Decode(&postCfResp)
+				if !postCfResp.Success {
+					errMsg := "failed to recreate dns record"
+					if len(postCfResp.Errors) > 0 {
+						errMsg = postCfResp.Errors[0].Message
+					}
+					return fmt.Errorf("cloudflare dns recreate: %s", errMsg)
+				}
+
+				log.Printf("[docktun] Replaced old Cloudflare DNS record: %s -> %s (Proxied)", cleanHost, target)
+				return nil
+			}
 		}
 
 		// Record does not exist: create it
@@ -469,9 +721,9 @@ func (s *CloudflareAPI) SyncDNSRecord(hostname, tunnelID string) error {
 	}
 
 	if hasCert {
-		out, err := exec.Command("cloudflared", "tunnel", "route", "dns", tunnelID, cleanHost).CombinedOutput()
+		out, err := exec.Command("cloudflared", "tunnel", "route", "dns", "--overwrite-dns", tunnelID, cleanHost).CombinedOutput()
 		if err == nil {
-			log.Printf("[docktun] CLI route dns succeeded: %s -> %s", cleanHost, tunnelID)
+			log.Printf("[docktun] CLI route dns --overwrite-dns succeeded: %s -> %s", cleanHost, tunnelID)
 			return nil
 		}
 		log.Printf("[docktun] CLI route dns note: %s", strings.TrimSpace(string(out)))

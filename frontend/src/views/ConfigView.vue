@@ -30,7 +30,8 @@ import {
   Network,
   Gamepad2,
   Info,
-  Radio
+  Radio,
+  Search
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
@@ -444,16 +445,68 @@ async function saveCfApiCredentials() {
   }
 }
 
-async function syncAllDnsRoutes() {
+const dnsInspectHost = ref('')
+const dnsInspectLoading = ref(false)
+const dnsInspectResult = ref<any>(null)
+const dnsReplaceLoading = ref(false)
+
+async function inspectDnsRecord() {
+  const host = dnsInspectHost.value.trim()
+  if (!host) {
+    alert('Please enter or select a hostname to inspect')
+    return
+  }
+  dnsInspectLoading.value = true
+  dnsInspectResult.value = null
+  try {
+    const res = await apiFetch<any>(`/api/cloudflare/dns-check?hostname=${encodeURIComponent(host)}`)
+    dnsInspectResult.value = res
+  } catch (err: any) {
+    alert(err.message || 'Failed to inspect Cloudflare DNS record')
+  } finally {
+    dnsInspectLoading.value = false
+  }
+}
+
+async function forceReplaceDnsRecord() {
+  const host = dnsInspectHost.value.trim()
+  if (!host) return
+  if (!confirm(`Are you sure you want to delete any existing old DNS records for ${host} and point it to this DockTun tunnel?`)) return
+  dnsReplaceLoading.value = true
+  try {
+    const res = await apiFetch<any>('/api/cloudflare/dns-replace', {
+      method: 'POST',
+      body: JSON.stringify({ hostname: host }),
+    })
+    alert(res.message || 'DNS record successfully replaced!')
+    await inspectDnsRecord()
+  } catch (err: any) {
+    alert(err.message || 'Failed to replace DNS record')
+  } finally {
+    dnsReplaceLoading.value = false
+  }
+}
+
+async function syncAllDnsRoutes(force = false) {
   syncLoading.value = true
   syncResults.value = null
   try {
-    const res = await apiFetch<any>('/api/cloudflare/sync-all', { method: 'POST' })
+    const url = force ? '/api/cloudflare/sync-all?force=true' : '/api/cloudflare/sync-all'
+    const res = await apiFetch<any>(url, { method: 'POST' })
     syncResults.value = res.synced || []
     const successCount = res.synced?.filter((s: any) => s.success).length || 0
-    message.value = {
-      type: 'success',
-      text: `Successfully synced ${successCount} DNS routes in Cloudflare!`,
+    const failList = res.synced?.filter((s: any) => !s.success) || []
+
+    if (failList.length > 0) {
+      message.value = {
+        type: 'error',
+        text: `DNS Sync: ${successCount} verified, ${failList.length} failed. Click "Force Overwrite" to delete conflicting old records.`,
+      }
+    } else {
+      message.value = {
+        type: 'success',
+        text: `Successfully synced ${successCount} DNS routes in Cloudflare!`,
+      }
     }
     setTimeout(() => (message.value = null), 6000)
   } catch (err: any) {
@@ -1383,13 +1436,114 @@ onUnmounted(() => {
 
           <div class="flex flex-wrap items-center gap-3 pt-1">
             <button
-              @click="syncAllDnsRoutes"
+              @click="syncAllDnsRoutes(false)"
               :disabled="syncLoading || (!cfApiToken && !cfApiHasToken)"
               class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/60 disabled:opacity-50"
+              title="Verify and update DNS records for all configured ingress routes"
             >
               <RefreshCw class="h-3.5 w-3.5" :class="syncLoading ? 'animate-spin' : ''" />
-              <span>{{ syncLoading ? 'Syncing DNS…' : 'Sync All Ingress Routes to Cloudflare DNS' }}</span>
+              <span>{{ syncLoading ? 'Syncing DNS…' : 'Sync All Ingress Routes' }}</span>
             </button>
+
+            <button
+              @click="syncAllDnsRoutes(true)"
+              :disabled="syncLoading || (!cfApiToken && !cfApiHasToken)"
+              class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-amber-700 border-amber-300 hover:bg-amber-50 disabled:opacity-50"
+              title="Purge conflicting old DNS records from other tunnels and recreate fresh CNAMEs"
+            >
+              <RotateCcw class="h-3.5 w-3.5 text-amber-600" />
+              <span>Force Overwrite & Purge Old Records</span>
+            </button>
+          </div>
+
+          <!-- DNS Record Conflict Inspector & Overwrite Tool -->
+          <div class="pt-3 border-t border-cyan-900/30 space-y-3">
+            <div class="text-[11px] font-semibold text-slate-800 flex items-center gap-1.5">
+              <Search class="h-3.5 w-3.5 text-cyan-600" />
+              <span>Subdomain DNS Record Inspector & Conflict Resolver:</span>
+            </div>
+            <p class="text-[11px] text-slate-600">
+              Check live Cloudflare DNS records for any subdomain (e.g. <code class="font-mono text-cyan-700">mediastorm.domain.com</code>). If an old tunnel or previous record still holds the hostname, you can purge it and route to this DockTun tunnel in 1 click.
+            </p>
+
+            <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+              <input
+                v-model="dnsInspectHost"
+                type="text"
+                placeholder="e.g. mediastorm.yourdomain.com"
+                class="cyber-input text-xs font-mono max-w-sm flex-1"
+                @keyup.enter="inspectDnsRecord"
+              />
+              <button
+                @click="inspectDnsRecord"
+                :disabled="dnsInspectLoading || !dnsInspectHost.trim()"
+                class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/60 disabled:opacity-50"
+              >
+                <Search class="h-3.5 w-3.5" :class="dnsInspectLoading ? 'animate-spin' : ''" />
+                <span>{{ dnsInspectLoading ? 'Checking…' : 'Inspect DNS' }}</span>
+              </button>
+            </div>
+
+            <!-- Inspection Result Card -->
+            <div
+              v-if="dnsInspectResult"
+              class="rounded-lg border p-3 text-xs font-mono space-y-2.5 transition"
+              :class="dnsInspectResult.is_configured_correct ? 'border-emerald-200 bg-emerald-50/40' : dnsInspectResult.has_conflict ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200 bg-slate-50'"
+            >
+              <div class="flex items-center justify-between">
+                <span class="font-bold text-slate-800">{{ dnsInspectResult.clean_host }}</span>
+                <span
+                  class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
+                  :class="dnsInspectResult.is_configured_correct ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : dnsInspectResult.has_conflict ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-slate-200 text-slate-700'"
+                >
+                  {{ dnsInspectResult.is_configured_correct ? 'Active on This Tunnel' : dnsInspectResult.has_conflict ? 'Conflict Detected' : 'No Record Found' }}
+                </span>
+              </div>
+
+              <div class="space-y-1 text-[11px] text-slate-600">
+                <div class="flex items-center gap-2">
+                  <span class="text-slate-500">Expected DockTun Target:</span>
+                  <span class="font-bold text-indigo-700">{{ dnsInspectResult.expected_target }}</span>
+                </div>
+                <div v-if="dnsInspectResult.conflict_details" class="text-amber-800 font-medium">
+                  Status: {{ dnsInspectResult.conflict_details }}
+                </div>
+              </div>
+
+              <!-- Found Records in Cloudflare -->
+              <div v-if="dnsInspectResult.records?.length > 0" class="pt-1 border-t border-slate-200/60 space-y-1">
+                <div class="text-[10px] uppercase font-semibold text-slate-500">Records currently in Cloudflare zone:</div>
+                <div
+                  v-for="rec in dnsInspectResult.records"
+                  :key="rec.id"
+                  class="flex items-center justify-between p-1.5 rounded bg-white/80 border border-slate-200 text-[11px]"
+                >
+                  <div>
+                    <span class="px-1 py-0.2 rounded font-bold text-[9px] bg-slate-100 text-slate-700 mr-2">{{ rec.type }}</span>
+                    <span class="text-slate-900 font-bold mr-1">{{ rec.name }}</span>
+                    <span class="text-slate-500">&rarr;</span>
+                    <span class="text-slate-700 ml-1 font-mono">{{ rec.content }}</span>
+                  </div>
+                  <span class="text-[10px] text-slate-400">{{ rec.proxied ? 'Proxied' : 'DNS Only' }}</span>
+                </div>
+              </div>
+
+              <!-- Overwrite / Replace Action Button -->
+              <div class="pt-2 flex items-center justify-between">
+                <span class="text-[11px] text-slate-500">
+                  {{ dnsInspectResult.is_configured_correct ? 'Everything is correctly routed to this tunnel.' : 'Replace with this DockTun tunnel?' }}
+                </span>
+                <button
+                  v-if="!dnsInspectResult.is_configured_correct"
+                  @click="forceReplaceDnsRecord"
+                  :disabled="dnsReplaceLoading"
+                  class="cyber-btn text-xs flex items-center gap-1.5 text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg font-sans font-medium"
+                >
+                  <RotateCcw class="h-3 w-3" :class="dnsReplaceLoading ? 'animate-spin' : ''" />
+                  <span>{{ dnsReplaceLoading ? 'Replacing…' : 'Delete Old Record & Route to DockTun' }}</span>
+                </button>
+              </div>
+            </div>
           </div>
 
           <!-- Wildcard Route Creator -->
