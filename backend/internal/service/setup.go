@@ -163,32 +163,28 @@ func (s *SetupService) GetStatus(force bool) (SetupStatus, error) {
 	}
 
 	// 3. Check existing tunnel config
-	if _, err := os.Stat(s.cfg.CloudflaredConfig); err == nil {
-		status.TunnelConfigured = true
-		status.TunnelType = "cloudflare"
-	} else {
-		var cfTok string
-		_ = s.db.QueryRow(`SELECT value FROM system_settings WHERE key = 'cloudflare_tunnel_token'`).Scan(&cfTok)
-		if cfTok != "" {
-			status.TunnelConfigured = true
-			status.TunnelType = "cloudflare"
-			status.HasCloudflareToken = true
-		} else {
-			status.TunnelType = "none"
-		}
+	status.TunnelType = "none"
+	status.TunnelConfigured = false
+
+	var cfTok string
+	_ = s.db.QueryRow(`SELECT value FROM system_settings WHERE key = 'cloudflare_tunnel_token'`).Scan(&cfTok)
+	if cfTok != "" {
+		status.HasCloudflareToken = true
 	}
 
-	// Persisted selection takes precedence over leftover Cloudflare files/tokens.
+	// Persisted selection takes precedence
 	if s.meshSvc != nil {
 		mesh, err := s.meshSvc.Load()
 		if err != nil {
 			return SetupStatus{}, err
 		}
-		status.TunnelType = mesh.Mode
-		if mesh.Mode == "public" {
-			status.TunnelType = "cloudflare"
+		if mesh.Mode != "" && mesh.Mode != "none" {
+			status.TunnelType = mesh.Mode
+			if mesh.Mode == "public" {
+				status.TunnelType = "cloudflare"
+			}
+			status.TunnelConfigured = true
 		}
-		status.TunnelConfigured = mesh.Mode != "none"
 	}
 
 	// 4. Discover existing containers & stacks

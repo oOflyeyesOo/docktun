@@ -847,14 +847,6 @@ func (s *DockerContainers) DefaultNetwork() string {
 	if net := strings.TrimSpace(os.Getenv("DOCKER_NETWORK")); net != "" {
 		return net
 	}
-	// Prefer "docktun" network
-	if err := exec.Command("docker", "network", "inspect", "docktun").Run(); err == nil {
-		return "docktun"
-	}
-	// Fallback to "cloudflared" for backward compatibility with existing setups
-	if err := exec.Command("docker", "network", "inspect", "cloudflared").Run(); err == nil {
-		return "cloudflared"
-	}
 	return "docktun"
 }
 
