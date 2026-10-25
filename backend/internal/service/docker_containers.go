@@ -1793,15 +1793,24 @@ func (s *DockerContainers) SystemDF() (map[string]interface{}, error) {
 }
 
 func (s *DockerContainers) SystemPrune() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "docker", "system", "prune", "-f")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("docker prune failed: %s (%w)", strings.TrimSpace(string(out)), err)
+	var b strings.Builder
+	// 1. Prune dangling and unused images safely (preserves all containers and volumes)
+	imgOut, err := exec.CommandContext(ctx, "docker", "image", "prune", "-f").CombinedOutput()
+	if err == nil && len(imgOut) > 0 {
+		b.WriteString("Images:\n" + strings.TrimSpace(string(imgOut)) + "\n\n")
 	}
-	return string(out), nil
+	// 2. Prune build cache safely
+	bcOut, err := exec.CommandContext(ctx, "docker", "builder", "prune", "-f").CombinedOutput()
+	if err == nil && len(bcOut) > 0 {
+		b.WriteString("Build Cache:\n" + strings.TrimSpace(string(bcOut)) + "\n")
+	}
+	if b.Len() == 0 {
+		return "Total reclaimed space: 0B (all containers and volumes safely preserved)", nil
+	}
+	return b.String(), nil
 }
 
 func (s *DockerContainers) ProbeTarget(targetURL string) (map[string]interface{}, error) {

@@ -653,12 +653,47 @@ func (s *StorageService) PruneContainers() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "docker", "container", "prune", "-f")
-	out, err := cmd.CombinedOutput()
+	psCmd := exec.CommandContext(ctx, "docker", "ps", "-a", "--filter", "status=exited", "--filter", "status=created", "--format", "{{.ID}}\t{{.Names}}\t{{.Labels}}")
+	out, err := psCmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("prune containers failed: %s (%w)", strings.TrimSpace(string(out)), err)
+		return "", fmt.Errorf("failed to list stopped containers: %w", err)
 	}
-	return strings.TrimSpace(string(out)), nil
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var removed []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) >= 2 {
+			cID := strings.TrimSpace(parts[0])
+			cName := strings.TrimPrefix(strings.TrimSpace(parts[1]), "/")
+			labels := ""
+			if len(parts) >= 3 {
+				labels = parts[2]
+			}
+
+			// Strictly protect DockTun infrastructure containers (e.g. docktun-wireguard, docktun-cloudflared, docktun-tailscale)
+			if strings.HasPrefix(cName, "docktun") {
+				continue
+			}
+			// Strictly protect Docker Compose services
+			if strings.Contains(labels, "com.docker.compose.project") {
+				continue
+			}
+
+			if _, rmErr := exec.CommandContext(ctx, "docker", "rm", cID).CombinedOutput(); rmErr == nil {
+				removed = append(removed, cName)
+			}
+		}
+	}
+
+	if len(removed) == 0 {
+		return "0 containers removed (all managed services, WireGuard, and Compose stacks safely preserved)", nil
+	}
+	return fmt.Sprintf("Removed %d unmanaged stopped containers: %s", len(removed), strings.Join(removed, ", ")), nil
 }
 
 // -----------------------------------------------------------------------------

@@ -104,7 +104,7 @@ const reclaimResults = ref<string[]>([])
 const reclaimOptions = ref({
   prune_images_dangling: true,
   prune_images_all: false,
-  prune_containers: true,
+  prune_containers: false,
   prune_volumes: false,
   prune_build_cache: true
 })
@@ -1855,7 +1855,7 @@ onMounted(async () => {
               @click="pruneSystem"
               :disabled="systemPruning"
               class="cyber-btn-danger text-xs flex items-center gap-1.5 py-1.5 px-3"
-              title="Remove stopped containers, unused networks, dangling images, and build cache"
+              title="Remove dangling images and build cache safely"
             >
               <RotateCcw v-if="systemPruning" class="h-3.5 w-3.5 animate-spin" />
               <Trash2 v-else class="h-3.5 w-3.5" />
@@ -1864,7 +1864,7 @@ onMounted(async () => {
           </div>
 
           <p class="text-xs text-slate-600 leading-relaxed">
-            Quickly frees up host disk space by removing all stopped containers, unused networks, and dangling image layers in a single pass. Active running containers and named volumes are safely preserved.
+            Quickly frees up host disk space by safely removing dangling image layers and build cache. All containers (running and stopped, including WireGuard and Compose stacks) and named volumes are safely preserved.
           </p>
         </div>
       </div>
@@ -2182,8 +2182,8 @@ onMounted(async () => {
           <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-white cursor-pointer">
             <input type="checkbox" v-model="reclaimOptions.prune_containers" class="mt-0.5 rounded bg-slate-100 text-indigo-600" />
             <div>
-              <span class="font-bold text-slate-900 block">Prune Stopped & Exited Containers</span>
-              <span class="text-slate-600 text-[11px]">Cleans up old container execution instances that are stopped.</span>
+              <span class="font-bold text-slate-900 block">Prune Unmanaged Stopped Containers</span>
+              <span class="text-slate-600 text-[11px]">Disabled by default. DockTun services (WireGuard, etc.) and Compose stacks are strictly protected.</span>
             </div>
           </label>
 
