@@ -374,7 +374,7 @@ func (s *RemoteAccessService) TailscaleUp(authKey, hostname string) error {
 		hostname = "docktun"
 	}
 
-	args := []string{"exec", "docktun-tailscale", "tailscale", "up", "--hostname", hostname, "--accept-routes"}
+	args := []string{"exec", "docktun-tailscale", "tailscale", "up", "--reset", "--hostname", hostname, "--accept-routes"}
 	if authKey != "" {
 		args = append(args, "--authkey", authKey)
 	}
