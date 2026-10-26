@@ -1,6 +1,7 @@
 """Authenticated TCP forwarding against a disposable local Headscale tailnet.
-No user's Tailscale account or auth keys are used. Requires docktun-tailscale unused.
+No user's Tailscale account or auth keys are used. Creates two separate app devices; no shared DockTun device is needed.
 """
+import hashlib
 import json
 import os
 import subprocess
@@ -14,7 +15,8 @@ from pathlib import Path
 prefix = 'docktun-forward-test-' + uuid.uuid4().hex[:8]
 network = prefix + '-net'
 app, control, client, web = [prefix + '-' + x for x in ['app', 'control', 'client', 'web']]
-tailscale = 'docktun-tailscale'
+tailscale = ''
+node_networks = []
 containers, volumes = [], []
 token, base = '', ''
 
@@ -34,9 +36,6 @@ def request(path, body=None, expected=200):
         data = response.read()
         assert response.status == expected, (response.status, data[:1000])
         return json.loads(data) if data and response.headers.get_content_type() == 'application/json' else None
-
-if tailscale in docker('ps', '-a', '--format', '{{.Names}}').splitlines():
-    raise RuntimeError('docktun-tailscale already exists; use an isolated engine')
 
 try:
     docker('network', 'create', network)
@@ -83,43 +82,85 @@ try:
             time.sleep(1)
     setup = docker('exec', app, 'cat', '/app/data/setup.token')
     token = request('/api/setup/complete', {'setup_token': setup, 'admin_username': 'tester', 'admin_password': 'integration-password-123', 'tunnel': {'type': 'tailscale'}})['access_token']
-    containers.append(tailscale)
-    docker('run', '-d', '--name', tailscale, '--network', network, '-v', volumes[3] + ':/var/lib/tailscale', '-v', volumes[1] + ':/testcert:ro', '-e', 'SSL_CERT_FILE=/testcert/cert.pem', '--entrypoint', 'tailscaled', 'tailscale/tailscale:latest', '--tun=userspace-networking', '--state=/var/lib/tailscale/tailscaled.state')
-    time.sleep(2)
-    docker('exec', tailscale, 'tailscale', 'up', '--login-server=https://headscale:443', '--authkey=' + key, '--hostname=docktun', '--accept-dns=false', '--reset')
     containers.append(client)
     docker('run', '-d', '--name', client, '--network', network, '-v', volumes[1] + ':/testcert:ro', '-e', 'SSL_CERT_FILE=/testcert/cert.pem', '--entrypoint', 'tailscaled', 'tailscale/tailscale:latest', '--tun=userspace-networking', '--state=mem:', '--socks5-server=0.0.0.0:1055')
     time.sleep(2)
     docker('exec', client, 'tailscale', 'up', '--login-server=https://headscale:443', '--authkey=' + key, '--hostname=test-client', '--accept-dns=false')
-    containers.append(web)
-    docker('run', '-d', '--name', web, '--network', network, 'busybox:1.37', 'sh', '-c', 'mkdir /www; echo forwarding-verified > /www/index.html; httpd -f -p 80 -h /www')
-    settings = {'mode': 'private', 'private_type': 'tailscale', 'private_port': 18080, 'target': web + ':80'}
-    request('/api/docker/containers/' + web + '/exposure', settings)
-    tsip = json.loads(docker('exec', tailscale, 'tailscale', 'status', '--json'))['TailscaleIPs'][0]
-    for _ in range(20):
-        try:
-            reply = docker('run', '--rm', '--network', network, '--entrypoint', 'curl', os.environ.get('DOCKTUN_TEST_IMAGE', 'docktun:reconciled'), '--max-time', '8', '-fsS', '--socks5-hostname', client + ':1055', 'http://' + tsip + ':18080', timeout=12)
-            assert 'forwarding-verified' in reply, reply
-            break
-        except (RuntimeError, subprocess.TimeoutExpired, AssertionError) as error:
-            last_error = str(error)
-            time.sleep(1)
-    else:
-        raise AssertionError('tailnet forwarding never became reachable: ' + last_error + '\n' + docker('logs', tailscale)[-2500:])
-    # Same private port cannot silently replace a different app's forwarding.
-    request('/api/docker/containers/' + app + '/exposure', {**settings, 'target': app + ':3001'}, expected=500)
-    docker('restart', tailscale)
-    time.sleep(3)
-    rules = json.loads(docker('exec', tailscale, 'tailscale', 'serve', 'status', '--json'))
-    assert rules['TCP']['18080']['TCPForward'] == web + ':80', rules
-    request('/api/docker/containers/' + web + '/exposure', {'mode': 'internal'})
-    rules = json.loads(docker('exec', tailscale, 'tailscale', 'serve', 'status', '--json'))
-    assert '18080' not in (rules or {}).get('TCP', {}), rules
+    app_nodes = []
+    for index in range(2):
+        web_app = web + str(index)
+        containers.append(web_app)
+        docker('run', '-d', '--name', web_app, '--network', network, 'busybox:1.37', 'sh', '-c', 'mkdir /www; echo app-' + str(index) + ' > /www/index.html; httpd -f -p 80 -h /www')
+        node = 'docktun-ts-' + hashlib.sha256(web_app.encode()).hexdigest()[:20]
+        containers.append(node); node_networks.append(node); volumes.append(node + '-state')
+        status = request('/api/docker/containers/' + web_app + '/tailscale', {})
+        assert node == status['node']
+        inspect = json.loads(docker('inspect', node))[0]
+        assert list(inspect['NetworkSettings']['Networks']) == [node], inspect['NetworkSettings']
+        assert not inspect['HostConfig']['Privileged'] and not inspect['HostConfig']['PortBindings']
+        assert inspect['HostConfig']['CapDrop'] == ['ALL']
+        assert len(inspect['Mounts']) == 1 and inspect['Mounts'][0]['Type'] == 'volume'
+        # Test-only access to our disposable control plane and CA.
+        docker('network', 'connect', network, node)
+        with tempfile.TemporaryDirectory() as directory:
+            cert = str(Path(directory) / 'headscale.crt')
+            docker('cp', control + ':/etc/headscale/cert.pem', cert)
+            docker('cp', cert, node + ':/usr/local/share/ca-certificates/headscale.crt')
+        docker('exec', node, 'update-ca-certificates')
+        docker('restart', node)
+        time.sleep(2)
+        docker('exec', node, 'tailscale', 'up', '--login-server=https://headscale:443', '--authkey=' + key, '--hostname=app-' + str(index), '--accept-dns=false', '--accept-routes=false', '--reset')
+        settings = {'mode': 'private', 'private_type': 'tailscale', 'private_port': 8080, 'target': web_app + ':80'}
+        request('/api/docker/containers/' + web_app + '/exposure', settings)
+        identity = json.loads(docker('exec', node, 'tailscale', 'status', '--json'))
+        app_nodes.append((web_app, node, identity['TailscaleIPs'][0], identity['Self']['ID']))
+        prefs = json.loads(docker('exec', node, 'tailscale', 'debug', 'prefs'))
+        assert not prefs.get('AdvertiseRoutes') and not prefs.get('RunSSH'), prefs
+    assert app_nodes[0][2] != app_nodes[1][2] and app_nodes[0][3] != app_nodes[1][3]
+
+    def fetch_node(index, port=8080, expected=True):
+        node_ip = app_nodes[index][2]
+        for attempt in range(15 if expected else 1):
+            try:
+                reply = docker('run', '--rm', '--network', network, '--entrypoint', 'curl', os.environ.get('DOCKTUN_TEST_IMAGE', 'docktun:per-app'), '--max-time', '5', '-fsS', '--socks5-hostname', client + ':1055', 'http://' + node_ip + ':' + str(port), timeout=10)
+                if not expected: raise AssertionError('unselected port unexpectedly reachable')
+                assert 'app-' + str(index) in reply, reply
+                return
+            except (RuntimeError, subprocess.TimeoutExpired):
+                if not expected: return
+                time.sleep(1)
+        raise AssertionError('app device never became reachable')
+
+    fetch_node(0); fetch_node(1)
+    fetch_node(0, 80, expected=False)
+    first, node, address, identity = app_nodes[0]
+    docker('restart', node); time.sleep(3)
+    fetch_node(0)
+    assert json.loads(docker('exec', node, 'tailscale', 'status', '--json'))['Self']['ID'] == identity
+    # A Compose-style recreation drops dynamic network attachments. Reconcile only this selected app.
+    docker('rm', '-f', first)
+    docker('run', '-d', '--name', first, '--network', network, 'busybox:1.37', 'sh', '-c', 'mkdir /www; echo app-0 > /www/index.html; httpd -f -p 80 -h /www')
+    fetch_node(0)
+    assert json.loads(docker('exec', node, 'tailscale', 'status', '--json'))['Self']['ID'] == identity
+    request('/api/docker/containers/' + first + '/exposure', {'mode': 'internal'})
+    assert not json.loads(docker('inspect', node))[0]['State']['Running']
+    fetch_node(0, expected=False); fetch_node(1)
+    for _ in range(10):
+        status = request('/api/docker/containers/' + first + '/tailscale', {})
+        if status['state'] == 'Running': break
+        time.sleep(1)
+    assert status['state'] == 'Running', status
+    request('/api/docker/containers/' + first + '/exposure', {'mode': 'private', 'private_type': 'tailscale', 'private_port': 8080, 'target': first + ':80'})
+    fetch_node(0)
+    assert json.loads(docker('exec', node, 'tailscale', 'status', '--json'))['Self']['ID'] == identity
     assert request('/api/status')['status'] == 'disabled'
-    print('Authenticated Tailscale forwarding passed: HTTP over tailnet TCP, conflict protection, restart persistence, unexpose, no Cloudflare requirement', flush=True)
+    assert 'docktun-tailscale' not in docker('ps', '-a', '--format', '{{.Names}}').splitlines()
+    print('Per-app Tailscale passed: distinct devices and IPs, same ports, no subnet routes, selected-port isolation, persistent identity across app recreation, independent disable/re-enable, no shared DockTun device', flush=True)
+
 finally:
     for name in reversed(containers):
         subprocess.run(['docker', 'rm', '-f', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for volume in volumes:
         subprocess.run(['docker', 'volume', 'rm', volume], stdout=subprocess.DEVNULL)
-    subprocess.run(['docker', 'network', 'rm', network], stdout=subprocess.DEVNULL)
+    for item in node_networks + [network]:
+        subprocess.run(['docker', 'network', 'rm', item], stdout=subprocess.DEVNULL)

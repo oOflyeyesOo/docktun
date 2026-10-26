@@ -178,6 +178,8 @@ func main() {
     r.Get("/api/docker/containers", dockerContainersHandler.List)
     r.Get("/api/docker/containers/{id}", dockerContainersHandler.Details)
     r.Get("/api/docker/containers/{id}/exposure", dockerContainersHandler.Exposure)
+    r.Get("/api/docker/containers/{id}/tailscale", dockerContainersHandler.TailscaleNode)
+    r.Post("/api/docker/containers/{id}/tailscale", dockerContainersHandler.TailscaleNode)
     r.Post("/api/docker/containers/{id}/exposure", dockerContainersHandler.UpdateExposure)
     r.Post("/api/docker/containers/batch", dockerContainersHandler.Batch)
     r.Post("/api/docker/containers/{id}/network/connect", dockerContainersHandler.ConnectNetwork)
@@ -298,6 +300,17 @@ func main() {
   defer stop()
 
   go func() {
+    ticker := time.NewTicker(15 * time.Second)
+    defer ticker.Stop()
+    for {
+      select {
+      case <-ctx.Done(): return
+      case <-ticker.C: dockerContainersSvc.ReconcileTailscaleAppNetworks()
+      }
+    }
+  }()
+
+  go func() {
     log.Printf("server listening on %s", cfg.ListenAddr)
     if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
       log.Fatalf("server error: %v", err)
@@ -308,7 +321,7 @@ func main() {
   go func() {
     time.Sleep(2 * time.Second)
     mesh, err := meshSvc.Load()
-    if err != nil || !mesh.Enabled || mesh.Mode == "none" { return }
+    if err != nil || !mesh.Enabled || mesh.Mode != "public" { return }
     if _, err := dockerContainersSvc.ReconcileNetworks(); err != nil {
       log.Printf("[docktun] network reconciliation notice: %v", err)
     }

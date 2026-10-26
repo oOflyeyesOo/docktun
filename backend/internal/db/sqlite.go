@@ -112,6 +112,7 @@ func (d *DB) migrate() error {
 		return err
 	}
 
+	_, _ = d.Exec(`ALTER TABLE container_exposures ADD COLUMN tailscale_node TEXT DEFAULT ''`)
 	// Safe column additions for Zero Trust Access support on container_exposures
 	_, _ = d.Exec(`ALTER TABLE container_exposures ADD COLUMN zero_trust_enabled INTEGER DEFAULT 0`)
 	_, _ = d.Exec(`ALTER TABLE container_exposures ADD COLUMN zero_trust_emails TEXT DEFAULT ''`)
@@ -121,4 +122,3 @@ func (d *DB) migrate() error {
 
 	return nil
 }
-

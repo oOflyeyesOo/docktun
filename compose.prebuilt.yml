@@ -52,7 +52,8 @@ services:
     networks:
       - docktun
 
-  # Optional; the UI uses the same volume when it creates this container.
+  # Optional legacy shared device. Individual app devices are created by the UI
+  # and do not need this profile or a shared DockTun Tailscale login.
   tailscale:
     profiles: ["tailscale"]
     image: tailscale/tailscale:latest

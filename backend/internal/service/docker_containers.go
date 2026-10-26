@@ -25,6 +25,7 @@ import (
 )
 
 type ExposureSettings struct {
+	TailscaleNode     string `json:"tailscale_node,omitempty"`
 	Mode              string `json:"mode"`
 	Hostname          string `json:"hostname,omitempty"`
 	Target            string `json:"target,omitempty"`
@@ -1008,17 +1009,9 @@ func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
 		}
 	}
 
-	// 3. Bridge Tailscale container if present
-	tsContainer := "docktun-tailscale"
-	if exec.Command("docker", "inspect", tsContainer).Run() == nil {
-		for _, net := range networksToBridge {
-			_ = s.ConnectNetwork(tsContainer, net)
-		}
-	}
-
-	// 4. Ensure all exposed containers are connected to bridged networks
+	// Only public apps join the Cloudflare networks. Private apps have independent networking.
 	if s.db != nil {
-		rows, err := s.db.Query(`SELECT container_name FROM container_exposures WHERE mode IN ('public', 'private')`)
+		rows, err := s.db.Query(`SELECT container_name FROM container_exposures WHERE mode = 'public'`)
 		if err == nil && rows != nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -1526,12 +1519,7 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 	}
 	// Only automatic forwarding needs the tunnel network. Removing a rule must not break existing Docker connectivity.
 	defaultNet := s.DefaultNetwork()
-	if tailscaleExposure(settings) {
-		if network := os.Getenv("TAILSCALE_NETWORK"); network != "" {
-			defaultNet = network
-		}
-	}
-	if settings.Mode == "public" || tailscaleExposure(settings) {
+	if settings.Mode == "public" {
 		if err := s.ConnectNetwork(name, defaultNet); err != nil {
 			return fmt.Errorf("connect container to %s: %w", defaultNet, err)
 		}
@@ -1541,11 +1529,6 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 	}
 
 	prevExp := s.getExposureFromDB(name)
-	if tailscaleExposure(settings) {
-		if err := s.ConnectNetwork("docktun-tailscale", defaultNet); err != nil {
-			return fmt.Errorf("connect Tailscale to container network: %w", err)
-		}
-	}
 	undo, err := s.syncTailscaleExposure(name, prevExp, &settings)
 	if err != nil {
 		return err
@@ -1728,7 +1711,7 @@ func (s *DockerContainers) loadAllExposuresFromDB() map[string]ExposureSettings 
 		return res
 	}
 
-	rows, err := s.db.Query(`SELECT container_name, mode, hostname, target, private_type, private_host, private_port, notes, COALESCE(zero_trust_enabled, 0), COALESCE(zero_trust_emails, ''), COALESCE(zero_trust_app_id, ''), COALESCE(zero_trust_auth_type, 'email'), COALESCE(zero_trust_session, '24h') FROM container_exposures`)
+	rows, err := s.db.Query(`SELECT container_name, mode, hostname, target, private_type, private_host, private_port, notes, COALESCE(zero_trust_enabled, 0), COALESCE(zero_trust_emails, ''), COALESCE(zero_trust_app_id, ''), COALESCE(zero_trust_auth_type, 'email'), COALESCE(zero_trust_session, '24h'), COALESCE(tailscale_node, '') FROM container_exposures`)
 	if err != nil {
 		return res
 	}
@@ -1739,7 +1722,7 @@ func (s *DockerContainers) loadAllExposuresFromDB() map[string]ExposureSettings 
 		var exp ExposureSettings
 		var pPort sql.NullInt64
 		var ztInt int
-		if err := rows.Scan(&name, &exp.Mode, &exp.Hostname, &exp.Target, &exp.PrivateType, &exp.PrivateHost, &pPort, &exp.Notes, &ztInt, &exp.ZeroTrustEmails, &exp.ZeroTrustAppID, &exp.ZeroTrustAuthType, &exp.ZeroTrustSession); err == nil {
+		if err := rows.Scan(&name, &exp.Mode, &exp.Hostname, &exp.Target, &exp.PrivateType, &exp.PrivateHost, &pPort, &exp.Notes, &ztInt, &exp.ZeroTrustEmails, &exp.ZeroTrustAppID, &exp.ZeroTrustAuthType, &exp.ZeroTrustSession, &exp.TailscaleNode); err == nil {
 			if pPort.Valid {
 				exp.PrivatePort = int(pPort.Int64)
 			}
@@ -1759,9 +1742,9 @@ func (s *DockerContainers) getExposureFromDB(name string) ExposureSettings {
 	var pPort sql.NullInt64
 	var ztInt int
 	err := s.db.QueryRow(
-		`SELECT mode, hostname, target, private_type, private_host, private_port, notes, COALESCE(zero_trust_enabled, 0), COALESCE(zero_trust_emails, ''), COALESCE(zero_trust_app_id, ''), COALESCE(zero_trust_auth_type, 'email'), COALESCE(zero_trust_session, '24h') FROM container_exposures WHERE container_name = ?`,
+		`SELECT mode, hostname, target, private_type, private_host, private_port, notes, COALESCE(zero_trust_enabled, 0), COALESCE(zero_trust_emails, ''), COALESCE(zero_trust_app_id, ''), COALESCE(zero_trust_auth_type, 'email'), COALESCE(zero_trust_session, '24h'), COALESCE(tailscale_node, '') FROM container_exposures WHERE container_name = ?`,
 		name,
-	).Scan(&exp.Mode, &exp.Hostname, &exp.Target, &exp.PrivateType, &exp.PrivateHost, &pPort, &exp.Notes, &ztInt, &exp.ZeroTrustEmails, &exp.ZeroTrustAppID, &exp.ZeroTrustAuthType, &exp.ZeroTrustSession)
+	).Scan(&exp.Mode, &exp.Hostname, &exp.Target, &exp.PrivateType, &exp.PrivateHost, &pPort, &exp.Notes, &ztInt, &exp.ZeroTrustEmails, &exp.ZeroTrustAppID, &exp.ZeroTrustAuthType, &exp.ZeroTrustSession, &exp.TailscaleNode)
 	if err != nil {
 		return ExposureSettings{Mode: "internal"}
 	}
@@ -1790,8 +1773,8 @@ func (s *DockerContainers) saveExposureToDB(name string, exp ExposureSettings) e
 	}
 
 	_, err := s.db.Exec(`
-		INSERT INTO container_exposures (container_name, mode, hostname, target, private_type, private_host, private_port, notes, zero_trust_enabled, zero_trust_emails, zero_trust_app_id, zero_trust_auth_type, zero_trust_session, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO container_exposures (container_name, mode, hostname, target, private_type, private_host, private_port, notes, zero_trust_enabled, zero_trust_emails, zero_trust_app_id, zero_trust_auth_type, zero_trust_session, tailscale_node, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(container_name) DO UPDATE SET
 			mode = excluded.mode,
 			hostname = excluded.hostname,
@@ -1805,8 +1788,9 @@ func (s *DockerContainers) saveExposureToDB(name string, exp ExposureSettings) e
 			zero_trust_app_id = CASE WHEN excluded.zero_trust_app_id != '' THEN excluded.zero_trust_app_id ELSE container_exposures.zero_trust_app_id END,
 			zero_trust_auth_type = excluded.zero_trust_auth_type,
 			zero_trust_session = excluded.zero_trust_session,
+			tailscale_node = excluded.tailscale_node,
 			updated_at = CURRENT_TIMESTAMP
-	`, name, exp.Mode, exp.Hostname, exp.Target, exp.PrivateType, exp.PrivateHost, exp.PrivatePort, exp.Notes, ztInt, exp.ZeroTrustEmails, exp.ZeroTrustAppID, exp.ZeroTrustAuthType, exp.ZeroTrustSession)
+	`, name, exp.Mode, exp.Hostname, exp.Target, exp.PrivateType, exp.PrivateHost, exp.PrivatePort, exp.Notes, ztInt, exp.ZeroTrustEmails, exp.ZeroTrustAppID, exp.ZeroTrustAuthType, exp.ZeroTrustSession, exp.TailscaleNode)
 	return err
 }
 

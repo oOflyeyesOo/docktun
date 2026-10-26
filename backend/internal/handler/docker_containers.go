@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/go-chi/chi/v5"
 	"docktun/internal/service"
+	"github.com/go-chi/chi/v5"
 )
 
 type DockerContainers struct {
@@ -15,6 +15,17 @@ type DockerContainers struct {
 
 func NewDockerContainers(svc *service.DockerContainers) *DockerContainers {
 	return &DockerContainers{svc: svc}
+}
+
+func (h *DockerContainers) TailscaleNode(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value("user_id").(int)
+	status, err := h.svc.ContainerTailscale(chi.URLParam(r, "id"), r.Method == http.MethodPost, userID, r.RemoteAddr)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(status)
 }
 
 func (h *DockerContainers) List(w http.ResponseWriter, r *http.Request) {
@@ -304,4 +315,3 @@ func (h *DockerContainers) ReconcileNetworks(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(res)
 }
-
