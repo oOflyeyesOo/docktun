@@ -75,7 +75,7 @@ const protocol = ref('http2')
 const rawYaml = ref('')
 const isRawEditor = ref(false)
 const saving = ref(false)
-const message = ref<{ type: 'success' | 'error'; text: string } | null>(null)
+const message = ref<{ type: 'success' | 'error'; text: string; action?: string } | null>(null)
 
 // Metrics & Health State
 const metrics = ref<MetricsData | null>(null)
@@ -498,17 +498,19 @@ async function syncAllDnsRoutes(force = false) {
     const failList = res.synced?.filter((s: any) => !s.success) || []
 
     if (failList.length > 0) {
+      const errDetails = failList.map((f: any) => f.error ? `${f.hostname}: ${f.error}` : f.hostname).join('; ')
       message.value = {
         type: 'error',
-        text: `DNS Sync: ${successCount} verified, ${failList.length} failed. Click "Force Overwrite" to delete conflicting old records.`,
+        text: `DNS Sync: ${successCount} verified, ${failList.length} failed (${errDetails}).`,
+        action: 'force_overwrite',
       }
     } else {
       message.value = {
         type: 'success',
         text: `Successfully synced ${successCount} DNS routes in Cloudflare!`,
       }
+      setTimeout(() => (message.value = null), 6000)
     }
-    setTimeout(() => (message.value = null), 6000)
   } catch (err: any) {
     message.value = { type: 'error', text: 'Cloudflare DNS sync failed: ' + err.message }
   } finally {
@@ -716,17 +718,29 @@ onUnmounted(() => {
     <!-- Alert / Toast Feedback -->
     <div
       v-if="message"
-      class="rounded-lg border p-3 text-xs font-mono flex items-center justify-between"
+      class="rounded-lg border p-3 text-xs font-mono flex flex-col sm:flex-row sm:items-center justify-between gap-2"
       :class="message.type === 'success' ? 'border-emerald-500/40 bg-emerald-50/30 text-emerald-700' : 'border-red-500/40 bg-red-50/30 text-red-700'"
     >
       <div class="flex items-center gap-2">
-        <CheckCircle2 v-if="message.type === 'success'" class="h-4 w-4 text-emerald-600" />
-        <AlertCircle v-else class="h-4 w-4 text-red-600" />
+        <CheckCircle2 v-if="message.type === 'success'" class="h-4 w-4 text-emerald-600 shrink-0" />
+        <AlertCircle v-else class="h-4 w-4 text-red-600 shrink-0" />
         <span>{{ message.text }}</span>
       </div>
-      <button @click="message = null" class="text-slate-600 hover:text-slate-800">
-        &times;
-      </button>
+      <div class="flex items-center gap-2 shrink-0">
+        <button
+          v-if="message.action === 'force_overwrite'"
+          @click="syncAllDnsRoutes(true)"
+          :disabled="syncLoading"
+          class="cyber-btn-secondary text-[11px] px-2.5 py-1 text-red-700 border-red-300 bg-red-100/60 hover:bg-red-200/60 font-sans font-bold flex items-center gap-1"
+          title="Delete conflicting old records and recreate clean CNAME for this tunnel"
+        >
+          <RotateCcw class="h-3 w-3 text-red-600" :class="syncLoading ? 'animate-spin' : ''" />
+          <span>Force Overwrite Now</span>
+        </button>
+        <button @click="message = null" class="text-slate-600 hover:text-slate-800">
+          &times;
+        </button>
+      </div>
     </div>
 
     <!-- Navigation Tabs -->
@@ -1018,13 +1032,22 @@ onUnmounted(() => {
             <span>Add Rule</span>
           </button>
           <button
-            @click="syncAllDnsRoutes"
+            @click="syncAllDnsRoutes(false)"
             :disabled="syncLoading"
             class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-800 bg-cyan-50/30 hover:bg-cyan-100/50"
             title="Automatically create or verify DNS CNAME records in Cloudflare for all hostnames above"
           >
             <RefreshCw class="h-3.5 w-3.5" :class="syncLoading ? 'animate-spin' : ''" />
             <span>{{ syncLoading ? 'Syncing DNS…' : 'Sync to Cloudflare DNS' }}</span>
+          </button>
+          <button
+            @click="syncAllDnsRoutes(true)"
+            :disabled="syncLoading"
+            class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-amber-700 border-amber-300 bg-amber-50/40 hover:bg-amber-100/60"
+            title="Force overwrite and delete any conflicting old DNS records in Cloudflare"
+          >
+            <RotateCcw class="h-3.5 w-3.5 text-amber-600" :class="syncLoading ? 'animate-spin' : ''" />
+            <span>Force Overwrite DNS</span>
           </button>
           <button
             @click="save(true)"
