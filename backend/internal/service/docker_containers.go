@@ -1034,6 +1034,18 @@ func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
 		}
 	}
 
+	// 4b. Auto-heal any containers currently crashing or restarting
+	restartingCmd := exec.Command("docker", "ps", "-a", "--filter", "status=restarting", "--format", "{{.Names}}")
+	if rOut, err := restartingCmd.Output(); err == nil {
+		for _, name := range strings.Split(string(rOut), "\n") {
+			name = strings.TrimSpace(name)
+			if name != "" && !strings.HasPrefix(name, "docktun-updater-") {
+				_ = s.EnsureDatabaseLinks(name)
+				addLog(fmt.Sprintf("Auto-healed database links for restarting container %s", name))
+			}
+		}
+	}
+
 	// 5. Refresh DNS by restarting cloudflared to flush DNS cache and re-establish connection pools
 	if s.cloudflared != nil && s.cloudflared.Status().Status != "disabled" && s.cloudflared.IsRunning() {
 		addLog("Restarting cloudflared to flush DNS cache and re-establish connection pools...")

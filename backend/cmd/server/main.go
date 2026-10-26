@@ -305,16 +305,31 @@ func main() {
     }
   }()
 
-  // Reconcile only a provider explicitly selected in setup.
+  // Reconcile network and database health on startup and periodically in background
   go func() {
     time.Sleep(2 * time.Second)
     mesh, err := meshSvc.Load()
-    if err != nil || !mesh.Enabled || mesh.Mode == "none" { return }
-    if _, err := dockerContainersSvc.ReconcileNetworks(); err != nil {
-      log.Printf("[docktun] network reconciliation notice: %v", err)
+    if err == nil && mesh.Enabled && mesh.Mode != "none" {
+      if _, err := dockerContainersSvc.ReconcileNetworks(); err != nil {
+        log.Printf("[docktun] network reconciliation notice: %v", err)
+      }
+      time.Sleep(1 * time.Second)
+      if mesh.Mode == "public" { cfAPISvc.AutoSyncIngressDNS(configSvc) }
     }
-    time.Sleep(1 * time.Second)
-    if mesh.Mode == "public" { cfAPISvc.AutoSyncIngressDNS(configSvc) }
+
+    ticker := time.NewTicker(10 * time.Minute)
+    defer ticker.Stop()
+    for {
+      select {
+      case <-ctx.Done():
+        return
+      case <-ticker.C:
+        mesh, err := meshSvc.Load()
+        if err == nil && mesh.Enabled && mesh.Mode != "none" {
+          _, _ = dockerContainersSvc.ReconcileNetworks()
+        }
+      }
+    }
   }()
 
   // Periodically check for container updates in background

@@ -1257,24 +1257,6 @@ async function runAction(container: ContainerItem, action: 'start' | 'stop' | 'r
   }
 }
 
-const relinkingDb = ref<Record<string, boolean>>({})
-async function relinkDatabase(container: ContainerItem) {
-  relinkingDb.value[container.id] = true
-  try {
-    const res: any = await apiFetch(`/api/docker/containers/${container.id}/relink-database`, { method: 'POST' })
-    alert(res.message || 'Database link and network aliases successfully verified!')
-    await fetchContainers()
-    if (selectedContainer.value && selectedContainer.value.id === container.id) {
-      const updated = await apiFetch(`/api/docker/containers/${container.id}`)
-      selectedContainer.value = updated
-    }
-  } catch (error: any) {
-    alert(error.message || 'Failed to relink database')
-  } finally {
-    delete relinkingDb.value[container.id]
-  }
-}
-
 async function removeContainer(container: ContainerItem) {
   if (!confirm(`Are you sure you want to permanently delete container "${container.name}"?`)) return
   actionLoading.value[container.id] = 'remove'
@@ -3194,15 +3176,6 @@ onUnmounted(() => {
             >
               <RotateCcw class="h-3 w-3" :class="actionLoading[selectedContainer.id] === 'restart' ? 'animate-spin' : ''" />
               <span>Restart</span>
-            </button>
-            <button
-              @click="relinkDatabase(selectedContainer)"
-              :disabled="!!relinkingDb[selectedContainer.id]"
-              class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-indigo-700 hover:text-indigo-900 border-indigo-200"
-              title="Auto-detect companion database container, restore missing network bridges, and configure aliases"
-            >
-              <Database class="h-3 w-3" :class="relinkingDb[selectedContainer.id] ? 'animate-spin' : ''" />
-              <span>Relink DB</span>
             </button>
             <button
               @click="closeContainerModal"
