@@ -167,16 +167,51 @@ function getExpose(id?: string): ExposureSettings {
       notes: '',
     }
   }
-  if (!exposeForm.value[id]) {
-    exposeForm.value[id] = {
-      mode: 'internal',
-      hostname: '',
-      target: '',
-      private_type: '',
-      private_host: '',
-      private_port: 80,
-      notes: '',
+
+  // 1. Direct match
+  if (exposeForm.value[id]) {
+    return exposeForm.value[id]
+  }
+
+  // 2. Prefix match (e.g. 12-char short ID vs 64-char full SHA256 ID)
+  for (const k of Object.keys(exposeForm.value)) {
+    if (k.startsWith(id) || id.startsWith(k)) {
+      return exposeForm.value[k]
     }
+  }
+
+  // 3. Fallback: resolve from selectedContainer or containers list
+  const c = (selectedContainer.value && (selectedContainer.value.id === id || selectedContainer.value.id.startsWith(id) || id.startsWith(selectedContainer.value.id) || selectedContainer.value.name === id))
+    ? selectedContainer.value
+    : containers.value.find((item) => item.id === id || item.id.startsWith(id) || id.startsWith(item.id) || item.name === id)
+
+  if (c) {
+    const pPort = getPrimaryPort(c.ports)
+    const settings: ExposureSettings = {
+      mode: c.exposure_mode || c.exposure?.mode || 'internal',
+      hostname: c.hostname || c.exposure?.hostname || '',
+      target: c.target || c.exposure?.target || `http://${c.name}:${pPort}`,
+      private_type: c.private_type || c.exposure?.private_type || '',
+      private_host: c.private_host || c.exposure?.private_host || '',
+      private_port: c.private_port || c.exposure?.private_port || parseInt(pPort, 10) || 80,
+      notes: c.notes || c.exposure?.notes || '',
+      zero_trust_enabled: c.zero_trust_enabled || c.exposure?.zero_trust_enabled || false,
+      zero_trust_emails: c.zero_trust_emails || c.exposure?.zero_trust_emails || '',
+      zero_trust_auth_type: c.zero_trust_auth_type || c.exposure?.zero_trust_auth_type || 'email',
+      zero_trust_session: c.zero_trust_session || c.exposure?.zero_trust_session || '24h',
+    }
+    exposeForm.value[id] = settings
+    return settings
+  }
+
+  exposeForm.value[id] = {
+    mode: 'internal',
+    hostname: '',
+    target: '',
+    private_type: '',
+    private_host: '',
+    private_port: 80,
+    notes: '',
   }
   return exposeForm.value[id]
 }
@@ -1461,6 +1496,25 @@ async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' |
     selectedContainer.value = detail
     if (detail.connected_to_cloudflared !== undefined) {
       c.connected_to_cloudflared = detail.connected_to_cloudflared
+    }
+    const currentMode = detail.exposure_mode || detail.exposure?.mode || c.exposure_mode || c.exposure?.mode
+    if (currentMode) {
+      const pPort = getPrimaryPort(detail.ports || c.ports)
+      const formVal: ExposureSettings = {
+        mode: currentMode,
+        hostname: detail.hostname || detail.exposure?.hostname || c.hostname || c.exposure?.hostname || '',
+        target: detail.target || detail.exposure?.target || c.target || c.exposure?.target || `http://${detail.name}:${pPort}`,
+        private_type: detail.private_type || detail.exposure?.private_type || c.private_type || c.exposure?.private_type || '',
+        private_host: detail.private_host || detail.exposure?.private_host || c.private_host || c.exposure?.private_host || '',
+        private_port: detail.private_port || detail.exposure?.private_port || c.private_port || c.exposure?.private_port || parseInt(pPort, 10) || 80,
+        notes: detail.notes || detail.exposure?.notes || c.notes || c.exposure?.notes || '',
+        zero_trust_enabled: detail.zero_trust_enabled || detail.exposure?.zero_trust_enabled || c.zero_trust_enabled || c.exposure?.zero_trust_enabled || false,
+        zero_trust_emails: detail.zero_trust_emails || detail.exposure?.zero_trust_emails || c.zero_trust_emails || c.exposure?.zero_trust_emails || '',
+        zero_trust_auth_type: detail.zero_trust_auth_type || detail.exposure?.zero_trust_auth_type || c.zero_trust_auth_type || c.exposure?.zero_trust_auth_type || 'email',
+        zero_trust_session: detail.zero_trust_session || detail.exposure?.zero_trust_session || c.zero_trust_session || c.exposure?.zero_trust_session || '24h',
+      }
+      exposeForm.value[c.id] = formVal
+      if (detail.id) exposeForm.value[detail.id] = formVal
     }
   } catch (err: any) {
     console.error('Failed to load container details:', err)

@@ -1642,9 +1642,16 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 		return fmt.Errorf("unmarshal cloudflared config: %w", err)
 	}
 
+	var rawMap map[string]interface{}
+	_ = yaml.Unmarshal([]byte(raw), &rawMap)
+	if rawMap == nil {
+		rawMap = make(map[string]interface{})
+	}
+
 	cleanHost := cleanHostname(settings.Hostname)
 
-	// Filter out any existing rule for this container or hostname
+	// Filter out any existing rule for this container or hostname, preserving originRequest (e.g. httpHostHeader)
+	var existingOriginReq *cfOriginRequest
 	newIngress := make([]cfIngressRule, 0, len(doc.Ingress)+1)
 	for _, rule := range doc.Ingress {
 		// Ignore catch-all rule during filter
@@ -1653,6 +1660,9 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 		}
 		// If rule matches container name or hostname
 		if strings.Contains(rule.Service, containerName) || (cleanHost != "" && cleanHostname(rule.Hostname) == cleanHost) {
+			if rule.OriginRequest != nil {
+				existingOriginReq = rule.OriginRequest
+			}
 			continue
 		}
 		newIngress = append(newIngress, rule)
@@ -1665,7 +1675,9 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 			Hostname: cleanHost,
 			Service:  target,
 		}
-		if strings.HasPrefix(target, "https://") {
+		if existingOriginReq != nil {
+			rule.OriginRequest = existingOriginReq
+		} else if strings.HasPrefix(target, "https://") {
 			rule.OriginRequest = &cfOriginRequest{
 				NoTLSVerify: true,
 			}
@@ -1679,10 +1691,15 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 	})
 
 	doc.Ingress = newIngress
+	rawMap["ingress"] = newIngress
 
-	updatedYaml, err := yaml.Marshal(&doc)
+	updatedYaml, err := yaml.Marshal(rawMap)
 	if err != nil {
-		return fmt.Errorf("marshal updated cloudflared config: %w", err)
+		// Fallback to typed doc if rawMap fails
+		updatedYaml, err = yaml.Marshal(&doc)
+		if err != nil {
+			return fmt.Errorf("marshal updated cloudflared config: %w", err)
+		}
 	}
 
 	if err := s.configMgr.Write(string(updatedYaml), 1); err != nil {
