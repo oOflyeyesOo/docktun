@@ -95,7 +95,7 @@ try:
     docker('run', '-d', '--name', app, '--network', network, '--network-alias', 'kept-alias',
            '-p', '127.0.0.1::3001', '-v', data + ':/app/data', '-v', '/extra',
            '-v', '/var/run/docker.sock:/var/run/docker.sock',
-           '-e', 'DOCKTUN_UPDATE_IMAGE=' + candidate_id, '-e', 'DOCKER_NETWORK=' + network,
+           '-e', 'DOCKTUN_PREPARE_PROVIDERS=false', '-e', 'DOCKTUN_UPDATE_IMAGE=' + candidate_id, '-e', 'DOCKER_NETWORK=' + network,
            '-e', 'LITERAL_VALUE=spaces $HOME $(never-execute) "quoted"', image)
     ready()
     before = json.loads(docker('inspect', app))[0]

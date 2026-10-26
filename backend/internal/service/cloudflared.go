@@ -1,11 +1,11 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +25,7 @@ type ProcessState struct {
 }
 
 type Cloudflared struct {
+	providers    *ProviderContainers
 	cfg          *config.Config
 	hub          *ws.Hub
 	mu           sync.RWMutex
@@ -34,27 +35,11 @@ type Cloudflared struct {
 }
 
 func NewCloudflared(cfg *config.Config, hub *ws.Hub) *Cloudflared {
-	return &Cloudflared{cfg: cfg, hub: hub}
+	return &Cloudflared{cfg: cfg, hub: hub, providers: NewProviderContainers(cfg)}
 }
 
 func (s *Cloudflared) findContainer() string {
-	name := s.cfg.CloudflaredContainer
-	if name == "" {
-		name = "docktun-cloudflared"
-	}
-	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Status}}", name).Output()
-	if err == nil && len(strings.TrimSpace(string(out))) > 0 {
-		return name
-	}
-	// Fallback: look for any container running cloudflared
-	psOut, err := exec.Command("docker", "ps", "-a", "--filter", "ancestor=cloudflare/cloudflared", "--format", "{{.Names}}").Output()
-	if err == nil {
-		lines := strings.Split(strings.TrimSpace(string(psOut)), "\n")
-		if len(lines) > 0 && strings.TrimSpace(lines[0]) != "" {
-			return strings.Fields(lines[0])[0]
-		}
-	}
-	return name
+	return s.providers.name("cloudflare")
 }
 
 func (s *Cloudflared) IsRunning() bool {
@@ -62,17 +47,12 @@ func (s *Cloudflared) IsRunning() bool {
 }
 
 func (s *Cloudflared) Status() ProcessState {
-	mesh, err := NewMeshService(filepath.Dir(s.cfg.DBPath), nil, s.cfg).Load()
-	if err != nil {
-		return ProcessState{Status: "configuration error", LastError: err.Error()}
-	}
-	if mesh.Mode != "public" {
-		return ProcessState{Status: "disabled"}
-	}
 	cName := s.findContainer()
-	out, err := exec.Command("docker", "inspect", "-f", "{{.State.Status}} {{.State.StartedAt}}", cName).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := s.providers.run(ctx, "inspect", "-f", "{{.State.Status}} {{.State.StartedAt}} {{.State.ExitCode}}", cName)
 	if err != nil {
-		return ProcessState{Running: false, Status: "not found", LastError: fmt.Sprintf("Cloudflared container '%s' was not found", cName)}
+		return ProcessState{Running: false, Status: "not installed", LastError: fmt.Sprintf("Cloudflare container %s is missing. Enable Cloudflare to create it.", cName)}
 	}
 
 	parts := strings.Fields(strings.TrimSpace(string(out)))
@@ -81,6 +61,9 @@ func (s *Cloudflared) Status() ProcessState {
 	}
 
 	status := parts[0]
+	if status == "created" || status == "exited" {
+		status = "stopped"
+	}
 	running := status == "running"
 
 	var uptime string
@@ -90,25 +73,21 @@ func (s *Cloudflared) Status() ProcessState {
 		}
 	}
 
-	if s.cachedVer == "" {
+	s.mu.Lock()
+	if running && s.cachedVer == "" {
 		s.cachedVer = s.getVersion()
 	}
-
-	if time.Since(s.lastMemCheck) > 30*time.Second {
-		go func() {
-			s.mu.Lock()
-			s.cachedMem = s.getMemory()
-			s.lastMemCheck = time.Now()
-			s.mu.Unlock()
-		}()
+	version := s.cachedVer
+	if running && time.Since(s.lastMemCheck) > 30*time.Second {
+		s.lastMemCheck = time.Now()
+		go func() { memory := s.getMemory(); s.mu.Lock(); s.cachedMem = memory; s.mu.Unlock() }()
 	}
-
-	s.mu.RLock()
 	mem := s.cachedMem
-	s.mu.RUnlock()
+	s.mu.Unlock()
 
 	var lastErr string
-	if !running {
+	if !running && parts[0] != "created" && (parts[0] == "restarting" || (len(parts) > 2 && parts[2] != "0")) {
+		status = "failed"
 		logOut, _ := exec.Command("docker", "logs", "--tail", "6", cName).CombinedOutput()
 		lastErr = strings.TrimSpace(string(logOut))
 	}
@@ -118,7 +97,7 @@ func (s *Cloudflared) Status() ProcessState {
 		StartTime:   parts[1],
 		Uptime:      uptime,
 		Status:      status,
-		Version:     s.cachedVer,
+		Version:     version,
 		MemoryUsage: mem,
 		LastError:   lastErr,
 	}
@@ -156,10 +135,8 @@ func (s *Cloudflared) Restart() error {
 
 func (s *Cloudflared) dockerCmd(action string) error {
 	cName := s.findContainer()
-	cmd := exec.Command("docker", action, cName)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s failed on %s: %s", action, cName, strings.TrimSpace(string(out)))
+	if err := s.providers.Control("cloudflare", action); err != nil {
+		return err
 	}
 
 	entry, _ := json.Marshal(map[string]string{

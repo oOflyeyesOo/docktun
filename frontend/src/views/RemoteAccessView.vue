@@ -393,8 +393,7 @@ onMounted(async () => {
   if (qTab && ['cloudflare', 'tailscale', 'wireguard'].includes(qTab)) {
     activeTab.value = qTab as any
   }
-  const mesh = await apiFetch<any>('/api/mesh')
-  activeTab.value = remoteAccessTab(qTab, mesh.mode)
+  activeTab.value = remoteAccessTab(qTab, 'none')
   await fetchOverview()
   await fetchContainerExposures()
   if (activeTab.value === 'tailscale') await fetchTailscale()
@@ -505,9 +504,9 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             </div>
             <span class="text-xs font-semibold text-slate-800">Tailscale Mesh</span>
           </div>
-          <span class="text-xs text-purple-700">Optional</span>
+          <span class="text-xs text-purple-700">{{ overview?.tailscale?.running ? 'Running' : 'Stopped' }}</span>
         </div>
-        <p class="text-xs text-slate-600">A separate private device for each app you choose.</p>
+        <p class="text-xs text-slate-600">Choose Tailscale in each app’s Access tab. Each app gets a separate device; the shared companion can stay stopped.</p>
         <div v-if="activeTab === 'tailscale'" class="mt-3 h-0.5 w-full bg-purple-500 rounded-full"></div>
       </button>
 
@@ -535,7 +534,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             v-else
             class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-300"
           >
-            {{ overview?.wireguard?.installed ? 'STOPPED' : 'NOT INSTALLED' }}
+            {{ overview?.wireguard?.installed ? 'STOPPED' : 'Preparing' }}
           </span>
         </div>
         <div>
@@ -594,7 +593,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                   v-else
                   class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-300"
                 >
-                  {{ tailscale?.installed ? 'STOPPED' : 'NOT INSTALLED' }}
+                  {{ tailscale?.installed ? 'STOPPED' : 'Preparing' }}
                 </span>
               </h2>
               <p class="text-xs text-slate-600">
@@ -930,11 +929,11 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                   v-else
                   class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-300"
                 >
-                  {{ wireguard?.installed ? 'STOPPED' : 'NOT INSTALLED' }}
+                  {{ wireguard?.installed ? 'STOPPED' : 'Preparing' }}
                 </span>
               </h2>
               <p class="text-xs text-slate-600">
-                Point-to-point VPN tunnel with automatic peer key generation, mobile QR codes, and container gateway routing.
+                Configure an existing WireGuard VPN here. Upload its configuration under the WireGuard storage directory before enabling it. Each app keeps its own chosen VPN address and routing.
               </p>
             </div>
           </div>
@@ -947,7 +946,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
               class="cyber-btn flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500"
             >
               <Play class="h-3.5 w-3.5" />
-              <span>Start WireGuard</span>
+              <span>Enable WireGuard</span>
             </button>
             <button
               v-else
@@ -1314,7 +1313,6 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
       </div>
     </div>
 
-    <!-- Expose Container Modal (Tailscale / WireGuard / Cloudflare) -->
 
   </div>
 </template>

@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 
-	"github.com/go-chi/chi/v5"
 	"docktun/internal/service"
+	"github.com/go-chi/chi/v5"
 )
 
 type Config struct {
@@ -22,6 +23,11 @@ func NewConfig(mgr *service.ConfigManager, audit *service.AuditLogger, cfAPI *se
 
 func (h *Config) Get(w http.ResponseWriter, r *http.Request) {
 	content, err := h.mgr.Read()
+	if os.IsNotExist(err) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"content": "", "configured": false})
+		return
+	}
 	if err != nil {
 		http.Error(w, `{"error":"failed to read config"}`, http.StatusInternalServerError)
 		return

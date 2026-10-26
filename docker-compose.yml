@@ -1,21 +1,6 @@
 name: docktun
 
 services:
-  cloudflared:
-    profiles: ["cloudflare"]
-    image: cloudflare/cloudflared:latest
-    container_name: docktun-cloudflared
-    restart: unless-stopped
-    command: tunnel --config /etc/cloudflared/config.yml --metrics 0.0.0.0:2000 --protocol ${TUNNEL_PROTOCOL:-http2} run
-    volumes:
-      - ./cloudflared:/etc/cloudflared:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    sysctls:
-      - net.ipv4.ping_group_range=0 65535
-    networks:
-      - docktun
-
   docktun:
     build:
       context: .
@@ -44,6 +29,7 @@ services:
       CLOUDFLARED_METRICS: ${CLOUDFLARED_METRICS:-http://docktun-cloudflared:2000/metrics}
       TAILSCALE_STATE_VOLUME: ${TAILSCALE_STATE_VOLUME:-docktun-tailscale-state}
       TAILSCALE_NETWORK: ${TAILSCALE_NETWORK:-${DOCKER_NETWORK:-docktun}}
+      WIREGUARD_PORT: ${WIREGUARD_PORT:-51820}
       DOCKER_NETWORK: ${DOCKER_NETWORK:-docktun}
       DB_PATH: ${DB_PATH:-/app/data/app.db}
       LISTEN_ADDR: ${LISTEN_ADDR:-0.0.0.0:3001}
@@ -62,6 +48,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./cloudflared:/etc/cloudflared
+      - ./data/wireguard:/app/data/wireguard
       - /var/run/docker.sock:/var/run/docker.sock
       - ${PROJECTS_ROOT:-./projects}:/opt/projects
     networks:
@@ -85,53 +72,6 @@ services:
       - HTTP_PORT=80
       - DOCKTUN_PORT=${PORT:-8080}
 
-  # Optional Tailscale Zero-Trust Mesh VPN (run with: docker compose --profile tailscale up -d)
-  tailscale:
-    profiles: ["tailscale", "mesh", "all"]
-    image: tailscale/tailscale:latest
-    container_name: docktun-tailscale
-    hostname: docktun
-    restart: unless-stopped
-    environment:
-      - TS_AUTHKEY=${TS_AUTHKEY:-}
-      - TS_AUTH_ONCE=true
-      - TS_STATE_DIR=/var/lib/tailscale
-      - TS_USERSPACE=true
-      - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:-}
-    volumes:
-      - tailscale-state:/var/lib/tailscale
-    networks:
-      - docktun
-
-  # Optional WireGuard Point-to-Point VPN Tunnel (run with: docker compose --profile wireguard up -d)
-  wireguard:
-    profiles: ["wireguard", "mesh", "all"]
-    image: linuxserver/wireguard:latest
-    container_name: docktun-wireguard
-    restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=UTC
-      - SERVERURL=${WIREGUARD_SERVERURL:-auto}
-      - SERVERPORT=51820
-      - PEERS=${WIREGUARD_PEERS:-3}
-      - PEERDNS=auto
-      - INTERNAL_SUBNET=10.13.13.0
-    volumes:
-      - ./data/wireguard:/config
-      - /lib/modules:/lib/modules:ro
-    ports:
-      - "${WIREGUARD_PORT:-51820}:51820/udp"
-    networks:
-      - docktun
-
-volumes:
-  tailscale-state:
-    name: ${TAILSCALE_STATE_VOLUME:-docktun-tailscale-state}
 
 networks:
   docktun:

@@ -21,7 +21,7 @@ func TestTailscaleControlMountAndReuse(t *testing.T) {
 				calls = append(calls, args)
 				if args[0] == "inspect" {
 					if installed {
-						return []byte("existing"), nil
+						return []byte(`[{"State":{"Running":false}}]`), nil
 					}
 					return nil, errors.New("not found")
 				}
@@ -31,6 +31,13 @@ func TestTailscaleControlMountAndReuse(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := strings.Join(calls[len(calls)-1], " ")
+			if !installed {
+				for _, call := range calls {
+					if call[0] == "create" {
+						got = strings.Join(call, " ")
+					}
+				}
+			}
 			if installed {
 				if got != "start docktun-tailscale" {
 					t.Fatal(got)
@@ -51,35 +58,31 @@ func TestTailscaleControlMountAndReuse(t *testing.T) {
 
 func TestTailscaleRejectsContainerPath(t *testing.T) {
 	t.Setenv("TAILSCALE_STATE_VOLUME", "/app/data/tailscale")
-	s := &RemoteAccessService{runDocker: func(context.Context, ...string) ([]byte, error) { return nil, errors.New("not found") }}
+	s := &RemoteAccessService{runDocker: func(_ context.Context, args ...string) ([]byte, error) {
+		if args[0] == "inspect" {
+			return nil, errors.New("not found")
+		}
+		return []byte("ok"), nil
+	}}
 	if err := s.TailscaleControl("start"); err == nil || !strings.Contains(err.Error(), "volume name") {
 		t.Fatal(err)
 	}
 }
 
-func TestSelectedProviderSurvivesRestart(t *testing.T) {
+func TestAccountCreationDoesNotSelectProvider(t *testing.T) {
 	s := setupFixture(t)
 	s.cfg.DBPath = filepath.Join(s.dataDir, "app.db")
-	s.cfg.CloudflaredConfig = filepath.Join(s.dataDir, "cloudflared.yml")
-	if err := os.WriteFile(s.cfg.CloudflaredConfig, []byte("tunnel: leftover"), 0600); err != nil {
+	s.meshSvc = NewMeshService(s.dataDir, nil, s.cfg)
+	original := &MeshConfig{Mode: "tailscale", Enabled: true}
+	if err := s.meshSvc.Save(original); err != nil {
 		t.Fatal(err)
 	}
-	s.meshSvc = NewMeshService(s.dataDir, nil, s.cfg)
-	for _, provider := range []string{"tailscale", "wireguard", "none", "cloudflare"} {
-		if _, err := s.applyConfiguration(SetupCompleteRequest{Tunnel: SetupTunnelRequest{Type: provider}}, 1, ""); err != nil {
-			t.Fatal(err)
-		}
-		s.meshSvc = NewMeshService(s.dataDir, nil, s.cfg)
-		status, err := s.GetStatus(false)
-		if err != nil || status.TunnelType != provider {
-			t.Fatalf("%s: %+v %v", provider, status, err)
-		}
-		if provider != "cloudflare" {
-			state := NewCloudflared(s.cfg, nil).Status()
-			if state.Status != "disabled" || state.LastError != "" {
-				t.Fatal(state)
-			}
-		}
+	if _, err := s.applyConfiguration(SetupCompleteRequest{Tunnel: SetupTunnelRequest{Type: "cloudflare"}}, 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.meshSvc.Load()
+	if err != nil || got.Mode != "tailscale" {
+		t.Fatalf("account creation changed provider: %+v %v", got, err)
 	}
 }
 

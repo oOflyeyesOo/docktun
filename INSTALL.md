@@ -1,211 +1,29 @@
-# 🚀 DockTun Docker VM Installation Guide
+# Install DockTun
 
-This guide explains how to deploy **DockTun** and **Cloudflare Tunnel** onto your Docker VM or container using the automated [`install.sh`](file:///c:/Users/oofly/Downloads/tun/install.sh) script.
-
----
-
-## 📋 What the Installer Does
-
-1. **Pre-Flight Hardware & Feature Checks**:
-   - **Virtualization & Nesting**: Detects your environment (Proxmox LXC, KVM, QEMU, VMware, Hyper-V, WSL, bare-metal). Verifies LXC nesting permissions (cgroups writable, overlayfs support), nested CPU virtualization extensions (Intel VMX / AMD SVM), and `/dev/kvm`.
-   - **GPU Acceleration**: Scans for NVIDIA GPUs (and automatically checks/configures the **NVIDIA Container Toolkit** for Docker), plus Intel QuickSync and AMD VA-API hardware video acceleration (`/dev/dri`).
-   - **Kernel & Networking**: Checks and automatically enables IPv4 Forwarding (`net.ipv4.ip_forward = 1`), loads/creates TUN/TAP devices (`/dev/net/tun`), enables bridge netfilter (`br_netfilter`), verifies `overlay2` storage, and checks NTP system time synchronization.
-   - **Resources & Ports**: Audits RAM, free disk space, and tests for port 8080 conflicts (auto-suggesting an alternative port like 8081 if occupied).
-2. **Docker & Docker Compose**: Verifies or offers one-click official installation of Docker and Docker Compose plugin.
-3. **Cloudflared Installation**: Automatically detects your CPU architecture (`x86_64`, `arm64`, `arm`, etc.) and installs the official `cloudflared` CLI binary into `/usr/local/bin/cloudflared`.
-4. **Cloudflare Authentication**:
-   - Launches interactive `cloudflared tunnel login` flow (or allows importing existing credentials JSON).
-   - Prompts for your tunnel name and creates the tunnel in Cloudflare.
-   - Automatically locates the generated credentials JSON (`<tunnel-id>.json`) and moves it to `./cloudflared/credentials.json`.
-   - Automatically registers DNS CNAME routes directly in Cloudflare.
-5. **Admin Security**:
-   - Prompts you to set an Admin username and strong password (with masked input and auto-generate fallback).
-   - Generates a random 64-character `JWT_SECRET`.
-   - Writes everything into `.env`.
-6. **Existing Container Discovery & Import**:
-   - Connects all detected running containers to the `cloudflared` Docker network for internal DNS and routing.
-   - Inspects containers for Docker Compose metadata (`com.docker.compose.project.working_dir`), registers them in DockTun's SQLite database (`app.db`), and mounts their paths in `docker-compose.override.yml`.
-   - Prompts you to assign public domain names to any of your containers, generating `cloudflared/config.yml` ingress rules and Cloudflare DNS records automatically.
-7. **Launch & Verification**:
-   - Launches the stack using `docker compose up -d --build`.
-   - Displays your local dashboard URL, public tunnel URL, and admin login credentials.
-
----
-
-## ⚡ Quick Start on Your Linux VM
-
-### 1. Copy or Clone DockTun to your VM
-
-If copying from your local machine to your VM:
-```bash
-# Example using rsync or scp:
-rsync -avz --exclude 'node_modules' --exclude '.git' ./ user@your-vm-ip:/opt/docktun
-```
-
-Or clone directly on your VM:
-```bash
-cd /opt
-# Ensure you are inside the DockTun directory
-cd docktun
-```
-
-### 2. Make the script executable and run it
-
-```bash
-chmod +x install.sh
-sudo ./install.sh
-```
-
----
-
-## 🛠️ Pre-Flight Verification Highlights
-
-### Virtualization & Nesting Check
-- **Proxmox LXC Containers**: Verifies that LXC nesting is functional (`cgroups` writable, `overlayfs` supported). If not enabled, the installer guides you to enable `nesting=1,keyctl=1` in your container options.
-- **KVM / QEMU / VMware / Hyper-V VMs**: Checks CPU flags for nested hardware virtualization (`vmx`/`svm`) and `/dev/kvm` presence.
-- **Docker Socket**: Confirms `/var/run/docker.sock` is ready for DockTun container management.
-
-### GPU Acceleration Check
-- **NVIDIA GPU Detection**: If an NVIDIA GPU is detected (via PCI or `nvidia-smi`), the script checks whether the **NVIDIA Container Toolkit** (`nvidia-ctk`) is configured in `/etc/docker/daemon.json`.
-  - If not configured, the script offers a **one-click automatic installation & configuration** of the toolkit so your media (Plex, Jellyfin, Tdarr) and AI containers (Ollama, LocalAI) can access the GPU.
-- **Intel & AMD Hardware Acceleration**: Inspects `/dev/dri/renderD128` and `/dev/dri/card*` for QuickSync and VA-API hardware transcoding capabilities.
-
-### Kernel & Networking Fixes
-- **IPv4 Forwarding**: If `net.ipv4.ip_forward` is disabled (`0`), the script automatically activates it (`1`) and writes `/etc/sysctl.d/99-docker-ip-forward.conf` to persist across reboots, preventing container network isolation issues.
-- **TUN/TAP Support**: Verifies `/dev/net/tun` exists and automatically loads the kernel module or creates the node if missing.
-- **Time Synchronization (NTP)**: Checks that system time is synced. Accurate time is strictly required for Cloudflare TLS handshakes and JWT authentication.
-
----
-
-## 🌐 Post-Installation Access
-
-- **Local Access**: `http://<VM-IP>:<PORT>` (e.g. `http://192.168.1.100:8080`)
-- **Public Tunnel Access**: `https://docktun.yourdomain.com` (if configured)
-- **Default Username**: `admin` (or the username you selected)
-- **Password**: Your chosen admin password
-
----
-
-## 🔧 Useful Commands on the VM
-
-```bash
-# View realtime logs of all DockTun services
-docker compose logs -f
-
-# View cloudflared tunnel logs specifically
-docker compose logs -f cloudflared
-
-# Restart DockTun
-docker compose restart
-
-# Stop DockTun
-docker compose down
-
-# Check Cloudflare tunnels via CLI
-cloudflared tunnel list
-
-# Reset / Uninstall DockTun (preserving Cloudflare config & credentials)
-sudo ./uninstall.sh
-```
-
----
-
-## ⬆️ How to Update / Upgrade DockTun
-
-DockTun preserves all your data (`data/app.db`), configuration (`cloudflared/config.yml`), and credentials across updates.
-
-### On Linux Server or VM:
-```bash
-# 1. Pull latest code (if using Git)
-git pull
-
-# 2. Run the automated upgrade script (creates automatic backups and rebuilds)
-sudo ./upgrade.sh
-```
-*Or simply rebuild with Docker Compose:*
-```bash
-docker compose up -d --build
-```
-
-### On Windows (PowerShell or Command Prompt):
-```powershell
-.\upgrade.ps1
-# or double-click upgrade.bat
-```
-*Or run Docker Compose directly:*
-```powershell
-docker compose up -d --build
-```
-
----
-
-## 🔄 Fresh Reinstall / Reset
-
-If you wish to wipe the database, containers, and credentials for a clean slate while **keeping your Cloudflare Tunnel configuration**:
-
-```bash
-sudo ./uninstall.sh
-sudo ./install.sh
-```
-When running `install.sh`, press `Enter` to resume with your preserved tunnel, and enter fresh admin credentials!
-
-
-## Secure setup and reconfiguration
-
-On a fresh installation, start with `docker compose up -d --build`. Retrieve the
-one-time ownership secret on the host with:
+Download `compose.prebuilt.yml`, save it as `compose.yml`, and run:
 
 ```sh
-docker compose exec docktun cat /app/data/setup.token
+docker compose up -d
 ```
 
-Open the dashboard and provide that token plus a password of 12–72 bytes.
-Alternatively set `SETUP_TOKEN` to a secret of at least 32 bytes before startup.
-Never expose that token in screenshots, URLs, or shared logs. The token is useless
-for public setup after any account exists or setup has been marked complete.
-Existing installations sign in normally. Use `/setup?force=true` while signed in
-to reconfigure tunnels, container imports, and notifications. Account changes
-belong in Settings; reconfiguration cannot reset credentials or issue sessions.
+For Synology Container Manager, import the Compose file as a project. The prebuilt image supports AMD64 and ARM64; the private source repository does not need to be shared with testers.
 
-The public setup status endpoint exposes only the setup lock state. Detailed
-host/container discovery requires authentication. Once an account is created,
-public setup stays locked even if later configuration fails: sign in and rerun
-the authenticated wizard. Some changes may have applied before an error; review
-those settings before retrying.
+Open `http://SERVER:8080`. Create the administrator account using the ownership code from `docker exec docktun cat /app/data/setup.token`, or supply ADMIN_USERNAME and ADMIN_PASSWORD as environment variables before starting DockTun. Keep the ownership code private.
 
-JWT signing secrets must contain at least 32 bytes. Automatically generated
-secrets persist in `data/jwt.secret`; protect and back up the data directory.
-Instances with shorter existing secrets must replace them with a strong secret;
-this signs out existing sessions. Forwarded IP headers are not trusted, so a
-reverse proxy shares one login rate-limit budget unless trusted-proxy support
-is added. Use HTTPS when exposing the dashboard. Docker socket access grants
-host-level control; restrict dashboard access accordingly.
+There is no install/setup shell script or provider onboarding. Docker inventory is available immediately after sign-in. DockTun creates unused provider companions in a stopped state, downloading images on first use if necessary. Enable retries creation if a download or mount was unavailable.
 
-## System diagnostics and local verification
+## Independent exposure methods
 
-Open **Settings → System diagnostics** to check whether DockTun can reach the
-Docker engine and whether its Compose plugin is installed. Checks are read-only,
-require a signed-in administrator, and show a timestamp and recovery guidance.
-`/healthz` checks database readiness only: it deliberately stays healthy when
-Docker is offline so the dashboard can explain the failure.
+Choose a container's exposure in Containers → Access. None, Cloudflare, Tailscale, and WireGuard are choices; apps can use different methods simultaneously.
 
-For developers, build `docker build -t docktun:test .`, then run:
+- Cloudflare: save a connector token in Exposure providers → Cloudflare, or supply a local YAML tunnel and credentials file in the shared Cloudflare configuration mount, then Enable. Cloudflare API credentials for DNS and Access are separate from connector credentials.
+- Tailscale: connect each app in its Access tab. Each has a separate device identity and forwards only the selected TCP port. The shared legacy companion may remain stopped.
+- WireGuard: use an already configured VPN address for an app, or configure the stopped WireGuard companion using its persistent config directory before enabling it. The host must support WireGuard; no host kernel module is installed automatically.
 
-```sh
-python3 tests/container_smoke.py
-python3 tests/compose_integration.py
-```
+Enabling or disabling one provider does not stop another. Existing provider containers retain their mounts and running state. Use the mounted Docker socket only on a trusted system.
 
-The first test runs without a Docker socket and verifies setup ownership,
-authentication, restart persistence, and disconnected-engine diagnostics.
-The Compose test mounts the Docker socket, checks inventory/details/logs, and
-starts, stops, and restarts only its disposable fixture container. It uses an
-isolated project, a random localhost port, and removes its own containers,
-network, and data volume on completion. It does not configure public tunnels.
-Origin health checks report TCP reachability, not HTTP application health.
-Malformed tunnel YAML now returns an explicit error; IPv6 origins and explicit
-TCP/SSH/RDP ports are handled correctly, with at most eight simultaneous probes.
+## Persistence and updates
 
-The single-file, prebuilt-image installation remains a release gate: images
-must be built and published and a clean-host pull/install validated before
-advertising that workflow as supported.
+The Compose file mounts app data, Cloudflare configuration, and WireGuard configuration. Provider creation resolves the actual Docker host mounts, including Compose-prefixed volumes and Synology paths. Do not substitute container-only paths such as `/app/data/tailscale` for a host bind source.
+
+Update through Settings → Update DockTun. Back up persistent volumes before upgrading. Keep older provider state when migrating; existing containers are reused.

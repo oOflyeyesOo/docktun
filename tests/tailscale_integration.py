@@ -29,6 +29,8 @@ app = config['services']['docktun']
 app['container_name'] = project + '-app'
 app['image'] = os.environ.get('DOCKTUN_TEST_IMAGE', app['image'])
 app['ports'] = ['127.0.0.1::3001']
+app['environment']['DOCKTUN_PREPARE_PROVIDERS'] = 'false'
+app['environment']['DOCKER_NETWORK'] = project + '-network'
 app['environment']['TAILSCALE_STATE_VOLUME'] = state_volume
 app['environment']['TAILSCALE_NETWORK'] = project + '-network'
 for key, volume in config['volumes'].items():
@@ -55,8 +57,8 @@ with tempfile.TemporaryDirectory() as directory:
         secret = docker('exec', app['container_name'], 'cat', '/app/data/setup.token')
         token = request('/api/setup/complete', {'setup_token': secret, 'admin_username': 'tester', 'admin_password': 'tester-password-12345', 'tunnel': {'type': 'tailscale'}})['access_token']
         details = request('/api/setup/details', token=token)
-        assert details['tunnel_type'] == 'tailscale', details
-        assert request('/api/status', token=token)['status'] == 'disabled'
+        assert details['tunnel_type'] == 'none', details
+        assert request('/api/status', token=token)['status'] == 'not installed'
         request('/api/remote-access/tailscale/control', {'action': 'start'}, token)
         created_tailscale = True
         mounts = json.loads(docker('inspect', tailscale))[0]['Mounts']
@@ -74,7 +76,7 @@ with tempfile.TemporaryDirectory() as directory:
         base = 'http://' + compose('port', 'docktun', '3001')
         for _ in range(30):
             try:
-                assert request('/api/setup/details', token=token)['tunnel_type'] == 'tailscale'
+                assert request('/api/setup/details', token=token)['tunnel_type'] == 'none'
                 break
             except (OSError, AssertionError):
                 time.sleep(1)

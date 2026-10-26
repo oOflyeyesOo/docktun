@@ -20,7 +20,8 @@ const router = createRouter({
     { path: '/tcp-access', redirect: (to) => ({ path: '/access', query: { tab: 'cloudflare', ...to.query } }) },
     { path: '/audit', redirect: (to) => ({ path: '/logs', query: { tab: 'audit', ...to.query } }) },
     { path: '/notifications', component: () => import('../views/NotificationsView.vue') },
-    { path: '/setup', component: () => import('../views/SetupView.vue') },
+    { path: '/account', component: () => import('../views/AccountView.vue') },
+    { path: '/setup', redirect: '/login' },
     { path: '/settings', component: () => import('../views/SettingsView.vue') },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
@@ -31,15 +32,15 @@ let setupChecked = false
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
-  // First-run setup check
-  if (!setupChecked && to.path !== '/setup') {
+  // Initial account ownership check
+  if (!setupChecked && to.path !== '/account') {
     try {
       const res = await fetch('/api/setup/status')
       if (res.ok) {
         const data = await res.json()
         setupChecked = true
         if (!data.completed && to.query.force !== 'false') {
-          return '/setup'
+          return '/account'
         }
       }
     } catch {
@@ -47,7 +48,7 @@ router.beforeEach(async (to) => {
     }
   }
 
-  if (to.path === '/setup') {
+  if (to.path === '/account') {
     return true
   }
 

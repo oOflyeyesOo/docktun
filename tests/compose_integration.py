@@ -21,6 +21,7 @@ with tempfile.TemporaryDirectory() as directory:
             'app': {
                 'image': os.environ.get('DOCKTUN_TEST_IMAGE', 'docktun:test'),
                 'ports': ['127.0.0.1::3001'],
+                'environment': {'DOCKTUN_PREPARE_PROVIDERS': 'false'},
                 'volumes': ['data:/app/data', '/var/run/docker.sock:/var/run/docker.sock'],
                 'healthcheck': {'test': ['CMD', 'curl', '-fsS', 'http://localhost:3001/healthz'], 'interval': '2s', 'timeout': '2s', 'retries': 30},
             },
@@ -52,7 +53,7 @@ with tempfile.TemporaryDirectory() as directory:
         secret = docker('exec', app, 'cat', '/app/data/setup.token')
         access = request('/api/setup/complete', {'setup_token': secret, 'admin_username': 'integration', 'admin_password': 'integration-password-123'})['access_token']
         overview = request('/api/remote-access/overview', token=access)
-        assert overview['cloudflare']['status'] == 'disabled' and not overview['cloudflare']['running'], overview
+        assert overview['cloudflare']['status'] == 'not installed' and not overview['cloudflare']['running'], overview
         report = request('/api/diagnostics', token=access)
         assert len(report['checks']) == 2 and all(check['ok'] for check in report['checks']), report
         items = request('/api/docker/containers', token=access)

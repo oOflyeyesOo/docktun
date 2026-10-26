@@ -42,6 +42,16 @@ func main() {
 
   cfdSvc := service.NewCloudflared(cfg, hub)
   cfdSvc.Logs()
+  // Stage optional companions without starting them. Existing running providers
+  // are left alone; enabling one never disables another.
+  if os.Getenv("DOCKTUN_PREPARE_PROVIDERS") != "false" {
+    providers := service.NewProviderContainers(cfg)
+    for _, name := range []string{"cloudflare", "tailscale", "wireguard"} {
+      go func(provider string) {
+        if err := providers.Prepare(provider); err != nil { log.Printf("Prepare optional %s (left stopped): %v", provider, err) }
+      }(name)
+    }
+  }
   auditSvc := service.NewAuditLogger(database)
   authHandler := handler.NewAuth(cfg, database, auditSvc)
   configSvc := service.NewConfigManager(cfg, database)
@@ -61,6 +71,13 @@ func main() {
 
   dataDir := filepath.Dir(cfg.DBPath)
   cfAPISvc := service.NewCloudflareAPI(database)
+  // Preserve connector credentials saved by older onboarding versions.
+  if !cfdSvc.HasConnectorToken() {
+    var legacyToken string
+    if database.QueryRow(`SELECT value FROM system_settings WHERE key='cloudflare_tunnel_token'`).Scan(&legacyToken) == nil && legacyToken != "" {
+      if err := cfdSvc.SaveConnectorToken(legacyToken); err != nil { log.Printf("Migrate connector credentials: %v", err) }
+    }
+  }
   projectsSvc := service.NewProjects(database, cfg.SelfPath)
   dockerRunSvc := service.NewDockerRun(database, projectsSvc)
   dockerContainersSvc := service.NewDockerContainers(cfg, database, configSvc, cfdSvc, cfAPISvc, auditSvc)
@@ -112,6 +129,8 @@ func main() {
     r.Get("/api/status", statusHandler.Get)
     r.Get("/api/diagnostics", handler.Diagnostics())
     r.Post("/api/control/{action}", controlHandler.Execute)
+    r.Get("/api/provider/cloudflare/credentials", controlHandler.Connector)
+    r.Put("/api/provider/cloudflare/credentials", controlHandler.Connector)
 
     r.Get("/api/logs/history", logsHandler.History)
 

@@ -86,30 +86,7 @@ async function changePassword() {
         </button>
       </div>
 
-      <!-- 4. First-Run Setup & Onboarding Wizard -->
-      <div class="cyber-card space-y-4">
-        <div class="flex items-center gap-2 border-b border-border pb-3">
-          <Sparkles class="w-4 h-4 text-cyan-600" />
-          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-800">First-Run Setup & Onboarding</h2>
-        </div>
 
-        <p class="text-xs text-muted leading-relaxed">
-          Revisit initial Docker discovery and import settings.
-        </p>
-
-        <div class="p-3 rounded border border-border/60 bg-void/50 text-xs font-mono space-y-1">
-          <span class="text-cyan-700 font-bold block">Guided Reconfiguration Wizard</span>
-          <span class="text-muted text-[11px]">Exposure providers can be configured separately from the Exposure providers page.</span>
-        </div>
-
-        <router-link
-          to="/setup?force=true"
-          class="cyber-btn-secondary w-full text-center text-xs flex items-center justify-center gap-2 py-2 text-cyan-700 hover:text-cyan-200"
-        >
-          <RotateCcw class="w-3.5 h-3.5" />
-          <span>Launch Setup Wizard &rarr;</span>
-        </router-link>
-      </div>
     </div>
   </div>
 </template>
