@@ -51,6 +51,8 @@ with tempfile.TemporaryDirectory() as directory:
         request('/api/diagnostics', expected=401)
         secret = docker('exec', app, 'cat', '/app/data/setup.token')
         access = request('/api/setup/complete', {'setup_token': secret, 'admin_username': 'integration', 'admin_password': 'integration-password-123'})['access_token']
+        overview = request('/api/remote-access/overview', token=access)
+        assert overview['cloudflare']['status'] == 'disabled' and not overview['cloudflare']['running'], overview
         report = request('/api/diagnostics', token=access)
         assert len(report['checks']) == 2 and all(check['ok'] for check in report['checks']), report
         items = request('/api/docker/containers', token=access)

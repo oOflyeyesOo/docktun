@@ -9,3 +9,10 @@ export function remoteAccessTab(queryTab, mode) {
 export function cloudflareEnabled(status) {
   return Boolean(status && status.status !== 'disabled')
 }
+
+export function cloudflareCardStatus(summary) {
+  if (!summary) return 'Loading'
+  if (summary.status === 'disabled') return 'Optional'
+  if (summary.running) return 'Active'
+  return summary.status || 'Unknown'
+}
