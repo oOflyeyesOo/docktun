@@ -3403,9 +3403,123 @@ func SanitizeComposeFile(composePath string) bool {
 	if modified {
 		_ = os.WriteFile(composePath, []byte(strings.Join(lines, "\n")), 0644)
 		log.Printf("[docktun] sanitized invalid ports in compose file: %s", composePath)
-		return true
 	}
-	return false
+
+	volModified := SanitizeComposeVolumes(composePath)
+	return modified || volModified
+}
+
+func SanitizeComposeVolumes(composePath string) bool {
+	contentBytes, err := os.ReadFile(composePath)
+	if err != nil {
+		return false
+	}
+	content := string(contentBytes)
+	lines := strings.Split(content, "\n")
+	composeDir := filepath.Dir(composePath)
+
+	inServices := false
+	inServiceVolumes := false
+	inTopLevelVolumes := false
+	var serviceNamedVolumes []string
+	topLevelDeclaredVolumes := make(map[string]bool)
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		// Top level key (no indent)
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			if strings.HasPrefix(trimmed, "services:") {
+				inServices = true
+				inTopLevelVolumes = false
+				inServiceVolumes = false
+				continue
+			} else if strings.HasPrefix(trimmed, "volumes:") {
+				inTopLevelVolumes = true
+				inServices = false
+				inServiceVolumes = false
+				continue
+			} else {
+				inServices = false
+				inTopLevelVolumes = false
+				inServiceVolumes = false
+			}
+		}
+
+		if inTopLevelVolumes {
+			if strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(trimmed, "-") {
+				volKey := strings.TrimSpace(strings.TrimSuffix(trimmed, ":"))
+				if volKey != "" {
+					topLevelDeclaredVolumes[volKey] = true
+				}
+			}
+		}
+
+		if inServices {
+			if strings.HasPrefix(trimmed, "volumes:") {
+				inServiceVolumes = true
+				continue
+			}
+			if inServiceVolumes {
+				if strings.HasPrefix(trimmed, "-") {
+					rawVol := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+					rawVol = strings.Trim(rawVol, `"'`)
+					src := extractVolumeSource(rawVol)
+					if src != "" {
+						if isNamedVolume(src) {
+							serviceNamedVolumes = append(serviceNamedVolumes, src)
+							_ = exec.Command("docker", "volume", "create", src).Run()
+						} else {
+							var hostDir string
+							if strings.HasPrefix(src, "./") || strings.HasPrefix(src, "../") {
+								hostDir = filepath.Clean(filepath.Join(composeDir, src))
+							} else if strings.HasPrefix(src, "/") || strings.HasPrefix(src, "\\") {
+								hostDir = filepath.Clean(src)
+							}
+							if hostDir != "" {
+								_ = os.MkdirAll(hostDir, 0755)
+							}
+						}
+					}
+				} else if !strings.HasPrefix(trimmed, "#") {
+					inServiceVolumes = false
+				}
+			}
+		}
+	}
+
+	var missing []string
+	seen := make(map[string]bool)
+	for _, nv := range serviceNamedVolumes {
+		if !topLevelDeclaredVolumes[nv] && !seen[nv] {
+			seen[nv] = true
+			missing = append(missing, nv)
+		}
+	}
+
+	if len(missing) == 0 {
+		return false
+	}
+
+	var sb strings.Builder
+	sb.WriteString(content)
+	if !strings.HasSuffix(content, "\n") {
+		sb.WriteString("\n")
+	}
+
+	if len(topLevelDeclaredVolumes) == 0 {
+		sb.WriteString("\nvolumes:\n")
+	}
+	for _, m := range missing {
+		sb.WriteString(fmt.Sprintf("  %s:\n    name: %s\n", m, m))
+	}
+
+	_ = os.WriteFile(composePath, []byte(sb.String()), 0644)
+	log.Printf("[docktun] auto-declared missing named volumes %v in %s", missing, composePath)
+	return true
 }
 
 func sanitizeComposeFile(composePath string) bool {
