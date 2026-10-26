@@ -128,3 +128,14 @@ func TestEditingExposureDoesNotEnableStoppedCloudflare(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStoppedCloudflareIsNotReportedAsFailure(t *testing.T) {
+	for _, exit := range []string{"created 0001-01-01T00:00:00Z 0", "exited 2026-10-26T00:00:00Z 137"} {
+		cfd := NewCloudflared(&config.Config{}, nil)
+		cfd.providers.run = func(_ context.Context, args ...string) ([]byte, error) { return []byte(exit), nil }
+		got := cfd.Status()
+		if got.Running || got.Status != "stopped" || got.LastError != "" {
+			t.Fatalf("stopped connector shown as failed: %+v", got)
+		}
+	}
+}
