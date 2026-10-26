@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ProviderSetupGuide from '../components/ProviderSetupGuide.vue'
 import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import {
@@ -721,6 +722,7 @@ onUnmounted(() => {
       <label class="block text-sm space-y-1"><span>Tunnel connector token</span><input v-model="connectorToken" type="password" autocomplete="off" class="cyber-input w-full" :placeholder="connectorPresent ? 'Token saved — enter a replacement' : 'Paste tunnel connector token'" /></label>
       <div class="flex flex-wrap gap-2"><button class="cyber-btn-secondary text-xs" :disabled="saving || !connectorToken.trim()" @click="saveConnector()">Save connector token</button><button v-if="connectorPresent" class="cyber-btn-secondary text-xs" :disabled="saving" @click="saveConnector(true)">Use local YAML credentials</button></div>
     </section>
+    <ProviderSetupGuide provider="cloudflare" />
     <!-- Header (shown when standalone page) -->
     <div v-if="!embedded" class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>

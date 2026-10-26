@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ProviderSetupGuide from '../components/ProviderSetupGuide.vue'
 import { ref, onMounted, computed, watch } from 'vue'
 import { remoteAccessTab, cloudflareCardStatus } from '../lib/tunnel-provider.mjs'
 import { useRoute, useRouter } from 'vue-router'
@@ -561,10 +562,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
     <!-- TAB 2: TAILSCALE ZERO-TRUST MESH VPN -->
     <!-- ========================================================================= -->
     <div v-show="activeTab === 'tailscale'" class="space-y-6">
-      <div class="cyber-card space-y-2">
-        <h2 class="font-semibold">Connect individual apps</h2>
-        <p class="text-sm">Choose Expose Container below, sign in that app's Tailscale device, and save the port to share. Each app has its own address and identity. DockTun does not need to join your tailnet.</p>
-      </div>
+      <ProviderSetupGuide provider="tailscale" />
       <details class="space-y-3">
         <summary class="cursor-pointer text-xs text-slate-600">Advanced: legacy shared device and routing</summary>
       <!-- Tailscale Header Card -->
@@ -909,6 +907,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
     <!-- TAB 3: WIREGUARD PEER-TO-PEER VPN -->
     <!-- ========================================================================= -->
     <div v-show="activeTab === 'wireguard'" class="space-y-6">
+      <ProviderSetupGuide provider="wireguard" />
       <!-- WireGuard Header Card -->
       <div class="cyber-card space-y-4">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">

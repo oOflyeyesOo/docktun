@@ -21,6 +21,7 @@ async function connect() {
 
 <template>
   <div class="rounded-lg border border-purple-200 bg-purple-50 p-3 space-y-2 text-xs">
+    <router-link to="/access?tab=tailscale" class="block text-indigo-700 underline">Setup, sign-in and approval instructions →</router-link>
     <p>This app gets its own Tailscale device and private address. Only the TCP port you choose is forwarded. No subnet routes or other containers are exposed.</p>
     <button type="button" class="cyber-btn" :disabled="busy" @click="connect">{{ busy ? 'Connecting…' : status ? 'Check connection' : 'Connect this app to Tailscale' }}</button>
     <a v-if="loginURL && status?.state !== 'Running'" :href="loginURL" target="_blank" rel="noopener noreferrer" class="block underline">Sign in this app’s device →</a>
