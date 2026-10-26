@@ -389,9 +389,7 @@ func (s *RemoteAccessService) TailscaleUp(authKey, hostname string) error {
 		if err != nil {
 			return err
 		}
-		if mesh.Mode == "tailscale" {
-			authKey = mesh.Tailscale.AuthKey
-		}
+		authKey = mesh.Tailscale.AuthKey
 	}
 	if !s.isContainerRunning("docktun-tailscale") {
 		if err := s.TailscaleControl("start"); err != nil {
@@ -476,50 +474,11 @@ func (s *RemoteAccessService) defaultNetwork() string {
 }
 
 func (s *RemoteAccessService) TailscaleControl(action string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	switch strings.ToLower(action) {
-	case "start":
-		if s.isContainerInstalled("docktun-tailscale") {
-			_, err := s.docker(ctx, "start", "docktun-tailscale")
-			return err
-		}
-		// Docker resolves mount sources on the daemon host, not inside DockTun.
-		// Use the same named volume as the optional Compose service.
-		volume := os.Getenv("TAILSCALE_STATE_VOLUME")
-		if volume == "" {
-			volume = "docktun-tailscale-state"
-		}
-		if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]+$`).MatchString(volume) {
-			return fmt.Errorf("TAILSCALE_STATE_VOLUME must be a Docker volume name, not a container or host path")
-		}
-		network := s.defaultNetwork()
-		runArgs := []string{
-			"run", "-d",
-			"--name", "docktun-tailscale",
-			"--hostname", "docktun",
-			"--restart", "unless-stopped",
-			"--network", network,
-			"--mount", fmt.Sprintf("type=volume,source=%s,target=/var/lib/tailscale", volume),
-			"-e", "TS_USERSPACE=true",
-			"-e", "TS_STATE_DIR=/var/lib/tailscale",
-			"tailscale/tailscale:latest",
-		}
-		out, err := s.docker(ctx, runArgs...)
-		if err != nil {
-			return fmt.Errorf("failed to launch tailscale container: %s (%w)", strings.TrimSpace(string(out)), err)
-		}
-		return nil
-
-	case "stop":
-		return exec.Command("docker", "stop", "docktun-tailscale").Run()
-
-	case "restart":
-		return exec.Command("docker", "restart", "docktun-tailscale").Run()
-
-	default:
-		return fmt.Errorf("unknown action: %s", action)
+	p := NewProviderContainers(s.cfg)
+	if s.runDocker != nil {
+		p.run = s.runDocker
 	}
+	return p.Control("tailscale", strings.ToLower(action))
 }
 
 // ==============================================================================
@@ -631,48 +590,11 @@ func (s *RemoteAccessService) GetWireguardStatus() (*WireguardStatus, error) {
 }
 
 func (s *RemoteAccessService) WireguardControl(action string) error {
-	switch strings.ToLower(action) {
-	case "start":
-		if s.isContainerInstalled("docktun-wireguard") {
-			return exec.Command("docker", "start", "docktun-wireguard").Run()
-		}
-		// Launch via docker run
-		wgDir := filepath.Join(s.dataDir, "wireguard")
-		_ = os.MkdirAll(wgDir, 0755)
-		runArgs := []string{
-			"run", "-d",
-			"--name", "docktun-wireguard",
-			"--restart", "unless-stopped",
-			"--cap-add", "NET_ADMIN",
-			"--cap-add", "SYS_MODULE",
-			"--network", s.defaultNetwork(),
-			"-p", "51820:51820/udp",
-			"-v", fmt.Sprintf("%s:/config", wgDir),
-			"-e", "PUID=1000",
-			"-e", "PGID=1000",
-			"-e", "TZ=UTC",
-			"-e", "SERVERURL=auto",
-			"-e", "SERVERPORT=51820",
-			"-e", "PEERS=3",
-			"-e", "PEERDNS=auto",
-			"-e", "INTERNAL_SUBNET=10.13.13.0",
-			"linuxserver/wireguard:latest",
-		}
-		out, err := exec.Command("docker", runArgs...).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("failed to launch wireguard container: %s (%w)", strings.TrimSpace(string(out)), err)
-		}
-		return nil
-
-	case "stop":
-		return exec.Command("docker", "stop", "docktun-wireguard").Run()
-
-	case "restart":
-		return exec.Command("docker", "restart", "docktun-wireguard").Run()
-
-	default:
-		return fmt.Errorf("unknown action: %s", action)
+	p := NewProviderContainers(s.cfg)
+	if s.runDocker != nil {
+		p.run = s.runDocker
 	}
+	return p.Control("wireguard", strings.ToLower(action))
 }
 
 func (s *RemoteAccessService) WireguardAddPeer(name, allowedIPsMode string) (*WireguardPeerDetail, error) {

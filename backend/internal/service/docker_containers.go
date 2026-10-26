@@ -1689,8 +1689,8 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 		return err
 	}
 
-	// Reload cloudflared synchronously so changes take effect immediately
-	if s.cloudflared != nil {
+	// Reload an enabled connector; editing an app never enables a stopped provider.
+	if s.cloudflared != nil && s.cloudflared.IsRunning() {
 		if err := s.cloudflared.Restart(); err != nil {
 			log.Printf("[docktun] cloudflared restart error: %v", err)
 		}

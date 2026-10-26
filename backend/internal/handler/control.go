@@ -1,11 +1,11 @@
-﻿package handler
+package handler
 
 import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 	"docktun/internal/service"
+	"github.com/go-chi/chi/v5"
 )
 
 type Control struct {
@@ -17,6 +17,30 @@ func NewControl(cfd *service.Cloudflared, audit *service.AuditLogger) *Control {
 	return &Control{cfd: cfd, audit: audit}
 }
 
+func (h *Control) Connector(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut {
+		var req struct {
+			Token string `json:"token"`
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 70*1024)
+		if json.NewDecoder(r.Body).Decode(&req) != nil {
+			jsonError(w, "invalid connector credentials", http.StatusBadRequest)
+			return
+		}
+		if err := h.cfd.SaveConnectorToken(req.Token); err != nil {
+			jsonError(w, "unable to save connector credentials", http.StatusInternalServerError)
+			return
+		}
+		userID, _ := r.Context().Value("user_id").(int)
+		if h.audit != nil {
+			h.audit.Log(userID, "cloudflare_connector_credentials", "Connector credentials updated; running state unchanged", r.RemoteAddr)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(map[string]bool{"has_token": h.cfd.HasConnectorToken()})
+}
+
 func (h *Control) Execute(w http.ResponseWriter, r *http.Request) {
 	action := chi.URLParam(r, "action")
 	userID, _ := r.Context().Value("user_id").(int)
@@ -25,6 +49,10 @@ func (h *Control) Execute(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "restart":
 		err = h.cfd.Restart()
+	case "start":
+		err = h.cfd.Start()
+	case "stop":
+		err = h.cfd.Stop()
 	default:
 		http.Error(w, `{"error":"invalid action"}`, http.StatusBadRequest)
 		return

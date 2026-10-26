@@ -90,6 +90,31 @@ async function fetchStatus() {
   } catch {}
 }
 
+const connectorToken = ref('')
+const connectorPresent = ref(false)
+async function fetchConnector() {
+  try { connectorPresent.value = (await apiFetch<any>('/api/provider/cloudflare/credentials')).has_token } catch {}
+}
+async function saveConnector(clear = false) {
+  saving.value = true
+  try {
+    const result = await apiFetch<any>('/api/provider/cloudflare/credentials', { method: 'PUT', body: JSON.stringify({ token: clear ? '' : connectorToken.value }) })
+    connectorPresent.value = result.has_token
+    connectorToken.value = ''
+    message.value = { type: 'success', text: 'Credentials saved. Enable or restart Cloudflare to apply them.' }
+  } catch (e: any) { message.value = { type: 'error', text: e.message } }
+  finally { saving.value = false }
+}
+async function controlProvider(action: 'start' | 'stop') {
+  saving.value = true
+  try {
+    await apiFetch(`/api/control/${action}`, { method: 'POST' })
+    await fetchStatus()
+    message.value = { type: 'success', text: action === 'start' ? 'Cloudflare start requested. Check its status and logs for the connection result.' : 'Cloudflare stopped. Other providers keep their own state.' }
+  } catch (e: any) { message.value = { type: 'error', text: e.message } }
+  finally { saving.value = false }
+}
+
 // Backups State
 const backups = ref<BackupItem[]>([])
 const backupsLoading = ref(false)
@@ -322,7 +347,7 @@ async function save(restart = true) {
 
     if (restart) {
       await apiFetch('/api/control/restart', { method: 'POST' })
-      message.value = { type: 'success', text: 'Config saved and Cloudflare tunnel restarted! Routes are now active.' }
+      message.value = { type: 'success', text: 'Config saved and Cloudflare start requested. Check connection status and logs.' }
     } else {
       message.value = { type: 'success', text: 'Ingress configuration saved successfully!' }
     }
@@ -339,7 +364,7 @@ async function restartTunnel() {
   saving.value = true
   try {
     await apiFetch('/api/control/restart', { method: 'POST' })
-    message.value = { type: 'success', text: 'Cloudflare tunnel daemon restarted!' }
+    message.value = { type: 'success', text: 'Cloudflare restart requested. Check connection status and logs.' }
     setTimeout(() => (message.value = null), 3500)
   } catch (e: any) {
     message.value = { type: 'error', text: 'Restart failed: ' + e.message }
@@ -653,6 +678,7 @@ async function deleteAccessApp(id: string, name: string) {
 let metricsTimer: any = null
 
 onMounted(async () => {
+  await fetchConnector()
   const sub = route.query.sub as string
   if (sub && ['overview', 'ingress', 'tcp', 'api', 'backups', 'health'].includes(sub)) {
     if (sub === 'health') activeTab.value = 'overview'
@@ -686,6 +712,15 @@ onUnmounted(() => {
 
 <template>
   <div class="space-y-6">
+    <section class="cyber-card space-y-3">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div><h2 class="font-semibold">Cloudflare connector</h2><p class="text-sm text-slate-600">{{ tunnelStatus?.running ? 'Running' : 'Stopped' }} · Independent of Tailscale and WireGuard.</p></div>
+        <button class="cyber-btn" :disabled="saving" @click="controlProvider(tunnelStatus?.running ? 'stop' : 'start')">{{ saving ? 'Working…' : tunnelStatus?.running ? 'Disable Cloudflare' : 'Enable Cloudflare' }}</button>
+      </div>
+      <p class="text-sm text-slate-600">Use a tunnel connector token for a remotely managed tunnel, or keep a local YAML configuration and credentials file. Token-based tunnels use public-hostname rules managed in Cloudflare. The local ingress editor applies to locally managed tunnels. The Cloudflare API token below is a separate credential for DNS and account operations.</p>
+      <label class="block text-sm space-y-1"><span>Tunnel connector token</span><input v-model="connectorToken" type="password" autocomplete="off" class="cyber-input w-full" :placeholder="connectorPresent ? 'Token saved — enter a replacement' : 'Paste tunnel connector token'" /></label>
+      <div class="flex flex-wrap gap-2"><button class="cyber-btn-secondary text-xs" :disabled="saving || !connectorToken.trim()" @click="saveConnector()">Save connector token</button><button v-if="connectorPresent" class="cyber-btn-secondary text-xs" :disabled="saving" @click="saveConnector(true)">Use local YAML credentials</button></div>
+    </section>
     <!-- Header (shown when standalone page) -->
     <div v-if="!embedded" class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
@@ -918,7 +953,7 @@ onUnmounted(() => {
 
       <!-- Diagnostic Alert Banner when Tunnel is Degraded -->
       <div
-        v-if="tunnelStatus && !tunnelStatus.running"
+        v-if="tunnelStatus && !tunnelStatus.running && !['stopped', 'created', 'not installed'].includes(tunnelStatus.status)"
         class="rounded-lg border border-red-900/60 bg-red-50/40 p-4 text-xs text-red-200 flex flex-col sm:flex-row sm:items-start justify-between gap-3"
       >
         <div class="flex items-start gap-2.5">

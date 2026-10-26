@@ -1,4 +1,5 @@
 # DockTun prebuilt-image installer. No source checkout or Dockerfile required.
+# Optional providers are prepared stopped by DockTun; enable them in the UI.
 # Save as compose.yml and run: docker compose up -d
 name: docktun
 
@@ -13,6 +14,7 @@ services:
       DOCKER_NETWORK: ${DOCKER_NETWORK:-docktun}
       TAILSCALE_STATE_VOLUME: ${TAILSCALE_STATE_VOLUME:-docktun-tailscale-state}
       TAILSCALE_NETWORK: ${TAILSCALE_NETWORK:-${DOCKER_NETWORK:-docktun}}
+      WIREGUARD_PORT: ${WIREGUARD_PORT:-51820}
       DB_PATH: /app/data/app.db
       CLOUDFLARED_CONFIG_PATH: /etc/cloudflared/config.yml
       CLOUDFLARED_CONTAINER: docktun-cloudflared
@@ -21,6 +23,7 @@ services:
     volumes:
       - docktun-data:/app/data
       - docktun-cloudflared:/etc/cloudflared
+      - docktun-wireguard:/app/data/wireguard
       - ./projects:/opt/projects
       # Docker socket grants DockTun broad control of the host. Use only on trusted systems.
       - /var/run/docker.sock:/var/run/docker.sock
@@ -37,44 +40,11 @@ services:
           - docktun-backend
           - docktun-frontend
 
-  # Optional: start after configuring Cloudflare tunnel credentials and ingress
-  # with: docker compose --profile cloudflare up -d
-  cloudflared:
-    profiles: ["cloudflare"]
-    image: cloudflare/cloudflared:latest
-    container_name: docktun-cloudflared
-    restart: unless-stopped
-    command: tunnel --config /etc/cloudflared/config.yml --metrics 0.0.0.0:2000 run
-    volumes:
-      - docktun-cloudflared:/etc/cloudflared:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    networks:
-      - docktun
-
-  # Optional legacy shared device. Individual app devices are created by the UI
-  # and do not need this profile or a shared DockTun Tailscale login.
-  tailscale:
-    profiles: ["tailscale"]
-    image: tailscale/tailscale:latest
-    container_name: docktun-tailscale
-    hostname: docktun
-    restart: unless-stopped
-    environment:
-      TS_STATE_DIR: /var/lib/tailscale
-      TS_USERSPACE: "true"
-      TS_AUTHKEY: ${TS_AUTHKEY:-}
-      TS_AUTH_ONCE: "true"
-    volumes:
-      - tailscale-state:/var/lib/tailscale
-    networks:
-      - docktun
 
 volumes:
-  tailscale-state:
-    name: ${TAILSCALE_STATE_VOLUME:-docktun-tailscale-state}
   docktun-data:
   docktun-cloudflared:
+  docktun-wireguard:
 
 networks:
   docktun:

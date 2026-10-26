@@ -5,7 +5,7 @@ import { Menu, X } from 'lucide-vue-next'
 import AppSidebar from './components/AppSidebar.vue'
 
 const route = useRoute()
-const showSidebar = computed(() => !['/login', '/setup'].includes(route.path))
+const showSidebar = computed(() => !['/login', '/account'].includes(route.path))
 const mobileOpen = ref(false)
 const mainElement = ref<HTMLElement | null>(null)
 watch(() => route.fullPath, async () => {

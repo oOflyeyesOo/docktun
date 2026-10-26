@@ -73,7 +73,7 @@ try:
     docker('run', '-d', '--name', app, '--network', network, '-p', '127.0.0.1::3001',
            '-v', volumes[2] + ':/app/data', '-v', '/var/run/docker.sock:/var/run/docker.sock',
            '-e', 'DOCKER_NETWORK=' + network, '-e', 'TAILSCALE_NETWORK=' + network,
-           '-e', 'TAILSCALE_STATE_VOLUME=' + volumes[3], os.environ.get('DOCKTUN_TEST_IMAGE', 'docktun:reconciled'))
+           '-e', 'DOCKTUN_PREPARE_PROVIDERS=false', '-e', 'TAILSCALE_STATE_VOLUME=' + volumes[3], os.environ.get('DOCKTUN_TEST_IMAGE', 'docktun:reconciled'))
     base = 'http://' + docker('port', app, '3001/tcp')
     for _ in range(60):
         try:
@@ -166,7 +166,7 @@ try:
     request('/api/docker/containers/' + first + '/exposure', {'mode': 'private', 'private_type': 'tailscale', 'private_port': 8080, 'target': first + ':80'})
     fetch_node(0)
     assert json.loads(docker('exec', node, 'tailscale', 'status', '--json'))['Self']['ID'] == identity
-    assert request('/api/status')['status'] == 'disabled'
+    assert request('/api/status')['status'] == 'not installed'
     assert 'docktun-tailscale' not in docker('ps', '-a', '--format', '{{.Names}}').splitlines()
     print('Per-app Tailscale passed: distinct devices and IPs, same ports, no subnet routes, selected-port isolation, persistent identity across app recreation, independent disable/re-enable, no shared DockTun device', flush=True)
 

@@ -1,6 +1,6 @@
 # ☁️ DockTun
 
-Self-hosted web dashboard to manage and monitor Cloudflare Tunnel (cloudflared) and Docker Compose projects.
+Self-hosted Docker management with optional Cloudflare, Tailscale, and WireGuard exposure per container.
 
 ![Go](https://img.shields.io/badge/backend-Go-00ADD8?logo=go)
 ![Vue](https://img.shields.io/badge/frontend-Vue_3-4FC08D?logo=vue.js)
@@ -42,7 +42,7 @@ docker compose ps
 
 DockTun pulls `ghcr.io/ooflyeyesoo/docktun:latest` instead of compiling the frontend and backend. GitHub Actions publishes multi-platform `amd64` and `arm64` images after successful `main` validation, with commit-specific `sha-...` tags available for pinning. The **GHCR package must be made public separately** before other people can pull anonymously; the GitHub repository itself can remain private.
 
-Open `http://<server-ip>:8080`. If the setup wizard requests an ownership code, read it locally from the DockTun container:
+Open `http://<server-ip>:8080`. To create your administrator account, use the ownership code, read it locally from the DockTun container:
 
 ```sh
 docker exec docktun cat /app/data/setup.token
@@ -50,17 +50,17 @@ docker exec docktun cat /app/data/setup.token
 
 The setup token is sensitive: do not share it or publish it in logs or screenshots.
 
-The Compose file creates persistent volumes for the application data and tunnel configuration. To enable the optional Cloudflare companion service **after configuring its tunnel credentials and ingress config**, run:
+The Compose file persists app data, Cloudflare configuration, and WireGuard configuration. DockTun prepares the Cloudflare, shared Tailscale, and WireGuard companion containers **stopped**. Enable only what you need from Exposure providers. The first image downloads may take a few minutes; a download failure is reported and Enable retries creation. Existing containers are reused without changing their mounts or stopping running providers.
 
-```sh
-docker compose --profile cloudflare up -d
-```
+Each method is independent: Cloudflare for one app, a separate Tailscale device for another, and an existing WireGuard VPN address for a third can all be used simultaneously. Choosing a method for one app never changes another app or provider. For Tailscale, connect the app from Containers → Access; the legacy shared companion can remain stopped.
+
+For Cloudflare, save a tunnel connector token or local tunnel YAML and its credentials file, then click Enable Cloudflare. The connector token is separate from a Cloudflare API token used for DNS/Access operations. WireGuard requires a working host WireGuard kernel and a valid configuration; upload an existing configuration to its persistent config directory or use an already configured VPN. DockTun does not enable host kernel modules automatically.
 
 DockTun needs the Docker socket to manage containers, granting the app extensive host privileges. Keep the dashboard on a trusted network or behind authenticated remote access; **do not forward port 8080 directly to the public internet.** For Synology, import the single `compose.prebuilt.yml` file into Container Manager, rather than uploading a Dockerfile.
 
 ### Option 2: Build from source (full repository required)
 
-Start DockTun with zero initial configuration. The interactive **First-Run Setup Wizard** will guide you through setting up admin credentials, activating tunnels, and importing your existing containers:
+Build and start DockTun from the complete repository, then create the administrator account. Configure providers independently when needed.
 
 ```bash
 git clone https://github.com/oOflyeyesOo/docktun.git /opt/docktun
@@ -75,17 +75,17 @@ docker compose up -d
 # verify you have backend/, frontend/, Dockerfile, and docker-compose.yml
 # together under /opt/docktun (not just the Dockerfile).
 
-# Open in your browser to launch the Onboarding Wizard:
+# Open DockTun:
 # http://localhost:8080 or http://<your-server-ip>:8080
 ```
 
 ### Tailscale-only installs and persistent state
 
-Select Tailscale in onboarding, then start/connect it on the Remote Access page. Cloudflare is optional; only start its service with the `cloudflare` profile after configuring it. The shared Docker network is still named `cloudflared`; its name does not require the Cloudflare service.
+Connect each app to Tailscale from Containers → Access. Other providers remain available at the same time.
 
-Both the UI-created Tailscale container and `docker compose --profile tailscale up -d` use the named Docker volume `docktun-tailscale-state`. Set `TAILSCALE_STATE_VOLUME` in your Compose environment to use a different named volume. Do not set it to `/app/data/tailscale`: that path exists inside DockTun, while Docker mount sources are resolved by the host daemon. The default userspace mode needs no `/dev/net/tun` device or extra Linux capabilities, including on Synology. Kernel routing and exit-node networking require separate host configuration.
+Both the UI-created Tailscale container and the stopped shared companion use the named Docker volume `docktun-tailscale-state`. Set `TAILSCALE_STATE_VOLUME` in your Compose environment to use a different named volume. Do not set it to `/app/data/tailscale`: that path exists inside DockTun, while Docker mount sources are resolved by the host daemon. The default userspace mode needs no `/dev/net/tun` device or extra Linux capabilities, including on Synology. Kernel routing and exit-node networking require separate host configuration.
 
-Existing Tailscale containers are reused without changing their mounts. For older source installs using `./data/tailscale`, keep the existing container until you have backed up and migrated its state into the named volume before recreating it; otherwise you will need to authenticate a new node. Never remove an old state directory or volume during upgrade. Revisit authenticated onboarding once to save the selected provider if upgrading an installation that did not persist that selection.
+Existing Tailscale containers are reused without changing their mounts. For older source installs using `./data/tailscale`, keep the existing container until you have backed up and migrated its state into the named volume before recreating it; otherwise you will need to authenticate a new node. Never remove an old state directory or volume during upgrade. Existing legacy mesh selections no longer gate other providers.
 
 ### Source build troubleshooting for Synology and older Docker Compose installations
 
@@ -104,7 +104,7 @@ docker compose up -d --build
 
 If the repository is private, cloning requires authorized GitHub access. For DSM Container Manager's graphical project installer, copy the **entire** source tree to the project directory before starting the build. Do not copy only the Compose file or Dockerfile.
 
-The Compose file avoids newer `env_file: [{path, required}]` syntax. A local `.env` file is **optional** for first-run setup; Compose will read it automatically for variable substitution when present. You can copy `.env.example` to `.env` to customize settings without supplying an initial administrator password. Configure credentials using the first-run onboarding flow.
+The Compose file avoids newer `env_file: [{path, required}]` syntax. A local `.env` file is **optional** for first-run setup; Compose will read it automatically for variable substitution when present. You can copy `.env.example` to `.env` to customize settings without supplying an initial administrator password. Create your administrator account on first launch.
 
 If `docker compose` is unavailable or the project still fails validation, check `docker compose version` (or `docker-compose version`). Upgrade Synology Container Manager / the Compose plugin where possible: obsolete Compose v1 installations may not support other required features, such as service profiles.
 
@@ -119,43 +119,18 @@ docker run -d --name docktun \
   -p 8080:3001 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v docktun_data:/app/data \
+  -v docktun_cloudflared:/etc/cloudflared \
+  -v docktun_wireguard:/app/data/wireguard \
   --network cloudflared \
   --restart unless-stopped \
   ghcr.io/ooflyeyesoo/docktun:latest
 ```
 
-### Option 4: Guided CLI Terminal Installer
+### Updates
 
-For dedicated Linux servers or VMs, the automated script installs Docker, cloudflared, sets up systemd/LXC nesting, and configures everything:
+Use Settings → Update DockTun to install a published image without a Git pull. Back up persistent volumes before upgrades. Source installations may rebuild with `docker compose up -d --build`.
 
-```bash
-sudo ./install.sh
-```
-
-### First-Run Setup Wizard
-
-When you open DockTun in your browser for the first time, the guided onboarding wizard will:
-1. **Admin Credentials**: Create your secure administrator account.
-2. **Tunnel Activation**: Select and activate your remote access tunnel:
-   - **Cloudflare Tunnel (Zero Trust)**: Enter your tunnel connector token or API token.
-   - **WireGuard**: Configure a high-speed point-to-point VPN tunnel.
-   - **Tailscale**: Connect via Tailscale auth key into your secure mesh tailnet.
-   - **Local Only (ZeroConf)**: Access services locally via `<container>.local` mDNS.
-3. **Auto-Discovery & Import**: Discover all existing containers running on your Docker daemon, attach them to the tunnel network, and automatically import Compose projects.
-4. **Incident Alerts (Optional)**: Configure Discord, Telegram, Slack, or Ntfy push notifications.
-
-### Automated Installation, Updates & Reset
-
-```bash
-# Automated install (sets up cloudflared, containers, and web UI)
-sudo ./install.sh
-
-# Update DockTun (creates backup of .env/db/config and rebuilds containers)
-sudo ./upgrade.sh
-
-# Reset / Uninstall (wipes containers, DB, and credentials while keeping Cloudflare tunnel config)
-sudo ./uninstall.sh
-```
+There is no installer script or provider onboarding wizard. Account creation establishes ownership; provider settings and Docker management remain available afterward.
 
 ### Environment Variables
 

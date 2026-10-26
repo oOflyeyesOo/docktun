@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { Lock, User, AlertCircle, ArrowRight, Loader2, Sparkles } from 'lucide-vue-next'
+import { Lock, User, AlertCircle, ArrowRight, Loader2 } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
 import { useApi } from '../composables/useApi'
 
@@ -12,22 +12,6 @@ const { apiFetch } = useApi()
 const form = reactive({ username: '', password: '' })
 const error = ref('')
 const loading = ref(false)
-const setupIncomplete = ref(false)
-
-onMounted(async () => {
-  try {
-    const res = await fetch('/api/setup/status')
-    if (res.ok) {
-      const data = await res.json()
-      if (!data.completed || !data.has_admin_user) {
-        setupIncomplete.value = true
-      }
-    }
-  } catch {
-    // ignore
-  }
-})
-
 async function handleLogin() {
   error.value = ''
   loading.value = true
@@ -61,27 +45,6 @@ async function handleLogin() {
           </div>
           <h1 class="text-3xl font-semibold tracking-tight text-slate-900">Welcome to DockTun</h1>
           <p class="text-xs text-slate-600 mt-1.5">Your infrastructure, in one calm workspace.</p>
-        </div>
-
-        <!-- Setup Incomplete Prompt -->
-        <div
-          v-if="setupIncomplete"
-          class="mb-6 p-4 rounded-xl border border-indigo-500/30 bg-indigo-500/10 text-indigo-200 text-xs flex flex-col gap-2.5"
-        >
-          <div class="flex items-center gap-2 font-semibold text-indigo-300">
-            <Sparkles class="w-4 h-4 shrink-0 text-indigo-400" />
-            <span>First-Time Setup Required</span>
-          </div>
-          <p class="text-slate-300 text-[11.5px] leading-relaxed">
-            No administrator account has been initialized yet. Launch the guided onboarding wizard to create your credentials, or set <code class="px-1 py-0.5 rounded bg-slate-950/80 border border-slate-700/80 text-indigo-300">ADMIN_PASSWORD</code> in your <code class="px-1 py-0.5 rounded bg-slate-950/80 border border-slate-700/80 text-indigo-300">.env</code>.
-          </p>
-          <router-link
-            to="/setup"
-            class="mt-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs transition shadow-sm"
-          >
-            Launch Setup Wizard
-            <ArrowRight class="w-3.5 h-3.5" />
-          </router-link>
         </div>
 
         <!-- Error Notification -->
@@ -145,8 +108,8 @@ async function handleLogin() {
 
         <!-- Setup Link & Reset Hint -->
         <div class="mt-4 flex items-center justify-between text-[11px] text-slate-400">
-          <router-link to="/setup" class="hover:text-indigo-400 transition underline underline-offset-2">
-            First time? Setup Wizard
+          <router-link to="/account" class="hover:text-indigo-400 transition underline underline-offset-2">
+            Create administrator account
           </router-link>
           <span class="text-slate-500">or set in .env</span>
         </div>

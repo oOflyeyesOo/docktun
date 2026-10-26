@@ -3,12 +3,9 @@ package service
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -321,146 +318,15 @@ func (s *SetupService) Reconfigure(req SetupCompleteRequest, userID int, ip stri
 }
 
 func (s *SetupService) applyConfiguration(req SetupCompleteRequest, adminID int, ip string) (SetupCompleteResult, error) {
-	provider := strings.ToLower(strings.TrimSpace(req.Tunnel.Type))
-	if provider == "" {
-		provider = "none"
-	}
-	switch provider {
-	case "cloudflare", "tailscale", "wireguard", "none":
-	default:
-		return SetupCompleteResult{}, fmt.Errorf("unsupported tunnel provider: %s", provider)
-	}
-	if s.meshSvc != nil {
-		mesh, err := s.meshSvc.Load()
-		if err != nil {
-			return SetupCompleteResult{}, err
-		}
-		mesh.Mode, mesh.Enabled = provider, provider != "none"
-		if provider == "cloudflare" {
-			mesh.Mode = "public"
-		}
-		if provider == "tailscale" && req.Tunnel.TailscaleAuthKey != "" {
-			mesh.Tailscale.AuthKey = strings.TrimSpace(req.Tunnel.TailscaleAuthKey)
-		}
-		if err := s.meshSvc.Save(mesh); err != nil {
-			return SetupCompleteResult{}, err
-		}
-	}
-	// 2. Configure Tunnel / Remote Access
-	tunnelStatus := "Local / mDNS Only"
-	switch provider {
-	case "cloudflare":
-		tunnelStatus = "Cloudflare Tunnel Configured"
-		if req.Tunnel.CloudflareToken != "" {
-			_, err := s.db.Exec(`
-				INSERT INTO system_settings (key, value) VALUES ('cloudflare_tunnel_token', ?)
-				ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-			`, strings.TrimSpace(req.Tunnel.CloudflareToken))
-			if err != nil {
-				return SetupCompleteResult{}, err
-			}
-			tunnelStatus = "Cloudflare Token Tunnel Configured"
-		}
-
-		if req.Tunnel.CloudflareAPIToken != "" && s.cfAPI != nil {
-			err := s.cfAPI.SaveSettings(
-				strings.TrimSpace(req.Tunnel.CloudflareAccountID),
-				strings.TrimSpace(req.Tunnel.CloudflareAPIToken),
-				strings.TrimSpace(req.Tunnel.CloudflareTunnelID),
-				strings.TrimSpace(req.Tunnel.CloudflareTunnelName),
-			)
-			if err != nil {
-				return SetupCompleteResult{}, err
-			}
-			tunnelStatus = "Cloudflare API Managed Tunnel Connected"
-		}
-
-	case "wireguard":
-		tunnelStatus = "WireGuard settings saved"
-		if req.Tunnel.WireguardServerURL != "" {
-			_, err := s.db.Exec(`
-				INSERT INTO system_settings (key, value) VALUES ('wireguard_server_url', ?)
-				ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-			`, strings.TrimSpace(req.Tunnel.WireguardServerURL))
-			if err != nil {
-				return SetupCompleteResult{}, err
-			}
-		}
-
-	case "tailscale":
-		tunnelStatus = "Tailscale settings saved"
-		if req.Tunnel.TailscaleAuthKey != "" {
-			_, err := s.db.Exec(`
-				INSERT INTO system_settings (key, value) VALUES ('tailscale_auth_key', ?)
-				ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-			`, strings.TrimSpace(req.Tunnel.TailscaleAuthKey))
-			if err != nil {
-				return SetupCompleteResult{}, err
-			}
-		}
-	}
-
-	// 3. Import Selected Containers & Stacks
-	importedContainers := 0
-	importedStacks := 0
-	if len(req.ImportContainers.ContainerIDs) > 0 && s.dockerContainers != nil {
-		for _, cID := range req.ImportContainers.ContainerIDs {
-			cID = strings.TrimSpace(cID)
-			if cID == "" {
-				continue
-			}
-
-			// Connect to DockTun network if requested
-			if req.ImportContainers.ConnectNetwork {
-				if err := s.dockerContainers.ConnectNetwork(cID, ""); err != nil {
-					return SetupCompleteResult{}, err
-				}
-			}
-
-			// Auto-register project stack if requested
-			if req.ImportContainers.AutoImportStacks {
-				projID, err := s.dockerContainers.EnsureProjectForContainer(cID)
-				if err != nil {
-					return SetupCompleteResult{}, err
-				}
-				if projID > 0 {
-					importedStacks++
-				}
-			}
-			importedContainers++
-		}
-	}
-
-	// 4. Configure Default Notifications if provided
-	if req.Notifications.Enabled && req.Notifications.WebhookURL != "" {
-		notifCfg := map[string]interface{}{
-			"enabled":     true,
-			"type":        req.Notifications.Type,
-			"webhook_url": req.Notifications.WebhookURL,
-		}
-		data, _ := json.MarshalIndent(notifCfg, "", "  ")
-		if err := os.WriteFile(filepath.Join(s.dataDir, "notifications.json"), data, 0600); err != nil {
-			return SetupCompleteResult{}, err
-		}
-	}
-
-	// 5. Mark setup as completed in system_settings
-	_, err := s.db.Exec(`
-		INSERT INTO system_settings (key, value) VALUES ('setup_completed', 'true')
-		ON CONFLICT(key) DO UPDATE SET value = 'true', updated_at = CURRENT_TIMESTAMP
-	`)
+	// Account ownership only. Providers, imports and alerts are configured in
+	// their own pages; legacy wizard payloads never change exposure state.
+	_, err := s.db.Exec(`INSERT INTO system_settings (key, value) VALUES ('setup_completed', 'true')
+	 ON CONFLICT(key) DO UPDATE SET value='true', updated_at=CURRENT_TIMESTAMP`)
 	if err != nil {
 		return SetupCompleteResult{}, err
 	}
-
 	if s.audit != nil {
-		s.audit.Log(adminID, "setup_complete", fmt.Sprintf("Setup wizard completed via %s. Tunnel: %s, Imported: %d containers", ip, tunnelStatus, importedContainers), ip)
+		s.audit.Log(adminID, "account_ready", "Administrator account ready", ip)
 	}
-
-	return SetupCompleteResult{
-		OK:                 true,
-		ImportedContainers: importedContainers,
-		ImportedStacks:     importedStacks,
-		TunnelStatus:       tunnelStatus,
-	}, nil
+	return SetupCompleteResult{OK: true}, nil
 }
