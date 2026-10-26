@@ -504,7 +504,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             </div>
             <span class="text-xs font-semibold text-slate-800">Tailscale Mesh</span>
           </div>
-          <span class="text-xs text-purple-700">{{ overview?.tailscale?.running ? 'Running' : 'Stopped' }}</span>
+          <span class="text-xs text-purple-700">{{ !overview ? 'Loading' : overview.tailscale.running ? 'Running' : overview.tailscale.installed ? 'Stopped' : 'Not installed' }}</span>
         </div>
         <p class="text-xs text-slate-600">Choose Tailscale in each app’s Access tab. Each app gets a separate device; the shared companion can stay stopped.</p>
         <div v-if="activeTab === 'tailscale'" class="mt-3 h-0.5 w-full bg-purple-500 rounded-full"></div>
@@ -534,7 +534,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             v-else
             class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-300"
           >
-            {{ overview?.wireguard?.installed ? 'STOPPED' : 'Preparing' }}
+            {{ overview?.wireguard?.installed ? 'STOPPED' : 'Not installed' }}
           </span>
         </div>
         <div>
@@ -593,7 +593,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                   v-else
                   class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-300"
                 >
-                  {{ tailscale?.installed ? 'STOPPED' : 'Preparing' }}
+                  {{ tailscale?.installed ? 'STOPPED' : 'Not installed' }}
                 </span>
               </h2>
               <p class="text-xs text-slate-600">
@@ -929,7 +929,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                   v-else
                   class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-300"
                 >
-                  {{ wireguard?.installed ? 'STOPPED' : 'Preparing' }}
+                  {{ wireguard?.installed ? 'STOPPED' : 'Not installed' }}
                 </span>
               </h2>
               <p class="text-xs text-slate-600">
