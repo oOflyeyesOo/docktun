@@ -194,6 +194,7 @@ func main() {
     r.Post("/api/docker/containers/check-updates", dockerContainersHandler.CheckAllUpdates)
     r.Post("/api/docker/containers/{id}/check-update", dockerContainersHandler.CheckUpdate)
     r.Post("/api/docker/containers/{id}/update", dockerContainersHandler.Update)
+    r.Post("/api/docker/containers/{id}/relink-database", dockerContainersHandler.RelinkDatabase)
     r.Get("/api/docker/system/df", dockerContainersHandler.SystemDF)
     r.Post("/api/docker/system/prune", dockerContainersHandler.SystemPrune)
     r.Post("/api/docker/probe", dockerContainersHandler.ProbeTarget)
@@ -317,16 +318,31 @@ func main() {
     }
   }()
 
-  // Reconcile only a provider explicitly selected in setup.
+  // Reconcile network and database health on startup and periodically in background
   go func() {
     time.Sleep(2 * time.Second)
     mesh, err := meshSvc.Load()
-    if err != nil || !mesh.Enabled || mesh.Mode != "public" { return }
-    if _, err := dockerContainersSvc.ReconcileNetworks(); err != nil {
-      log.Printf("[docktun] network reconciliation notice: %v", err)
+    if err == nil && mesh.Enabled && mesh.Mode == "public" {
+      if _, err := dockerContainersSvc.ReconcileNetworks(); err != nil {
+        log.Printf("[docktun] network reconciliation notice: %v", err)
+      }
+      time.Sleep(1 * time.Second)
+      if mesh.Mode == "public" { cfAPISvc.AutoSyncIngressDNS(configSvc) }
     }
-    time.Sleep(1 * time.Second)
-    if mesh.Mode == "public" { cfAPISvc.AutoSyncIngressDNS(configSvc) }
+
+    ticker := time.NewTicker(10 * time.Minute)
+    defer ticker.Stop()
+    for {
+      select {
+      case <-ctx.Done():
+        return
+      case <-ticker.C:
+        mesh, err := meshSvc.Load()
+        if err == nil && mesh.Enabled && mesh.Mode == "public" {
+          _, _ = dockerContainersSvc.ReconcileNetworks()
+        }
+      }
+    }
   }()
 
   // Periodically check for container updates in background

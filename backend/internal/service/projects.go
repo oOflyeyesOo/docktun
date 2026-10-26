@@ -127,13 +127,71 @@ func (s *Projects) Create(name, path, repoURL, gitUsername, gitToken string) (Pr
 	if s.isSelf(path) {
 		return Project{}, fmt.Errorf("cannot add DockTun itself as a project")
 	}
+
+	// Check if a project with the same path or name already exists to prevent UNIQUE constraint errors
+	var existing Project
+	err := s.db.QueryRow("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects WHERE path = ? OR name = ?", path, name).
+		Scan(&existing.ID, &existing.Name, &existing.Path, &existing.RepoURL, &existing.GitUsername, &existing.GitToken, &existing.CreatedAt)
+	if err == nil {
+		// Update existing record
+		_, updateErr := s.db.Exec("UPDATE projects SET name = ?, path = ?, repo_url = ?, git_username = ?, git_token = ? WHERE id = ?",
+			name, path, repoURL, gitUsername, gitToken, existing.ID)
+		if updateErr != nil {
+			return Project{}, updateErr
+		}
+		return Project{
+			ID:          existing.ID,
+			Name:        name,
+			Path:        path,
+			RepoURL:     repoURL,
+			GitUsername: gitUsername,
+			CreatedAt:   existing.CreatedAt,
+		}, nil
+	}
+
 	res, err := s.db.Exec("INSERT INTO projects (name, path, repo_url, git_username, git_token) VALUES (?, ?, ?, ?, ?)",
 		name, path, repoURL, gitUsername, gitToken)
 	if err != nil {
+		// Fallback in case of concurrent insert or edge constraint
+		err2 := s.db.QueryRow("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects WHERE path = ? OR name = ?", path, name).
+			Scan(&existing.ID, &existing.Name, &existing.Path, &existing.RepoURL, &existing.GitUsername, &existing.GitToken, &existing.CreatedAt)
+		if err2 == nil {
+			_ = s.Update(existing.ID, name, path, repoURL, gitUsername, gitToken)
+			return Project{
+				ID:          existing.ID,
+				Name:        name,
+				Path:        path,
+				RepoURL:     repoURL,
+				GitUsername: gitUsername,
+				CreatedAt:   existing.CreatedAt,
+			}, nil
+		}
 		return Project{}, err
 	}
 	id, _ := res.LastInsertId()
 	return Project{ID: int(id), Name: name, Path: path, RepoURL: repoURL, GitUsername: gitUsername}, nil
+}
+
+func (s *Projects) GetByPath(path string) (*Project, error) {
+	var p Project
+	err := s.db.QueryRow("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects WHERE path = ?", path).
+		Scan(&p.ID, &p.Name, &p.Path, &p.RepoURL, &p.GitUsername, &p.GitToken, &p.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	p.GitToken = maskToken(p.GitToken)
+	return &p, nil
+}
+
+func (s *Projects) GetByName(name string) (*Project, error) {
+	var p Project
+	err := s.db.QueryRow("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects WHERE name = ?", name).
+		Scan(&p.ID, &p.Name, &p.Path, &p.RepoURL, &p.GitUsername, &p.GitToken, &p.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	p.GitToken = maskToken(p.GitToken)
+	return &p, nil
 }
 
 func (s *Projects) Update(id int, name, path, repoURL, gitUsername, gitToken string) error {
@@ -487,6 +545,11 @@ networks:
 func (s *Projects) SaveComposeFile(id int, filename string, content string) error {
 	if filename == "" {
 		filename = "docker-compose.yml"
+	}
+	if IsDockerRunCommand(content) {
+		if parsed, err := ParseDockerRunCommand(content); err == nil {
+			content = parsed.GenerateComposeYAML()
+		}
 	}
 	return s.SaveFile(id, filename, content)
 }

@@ -43,6 +43,7 @@ interface IngressRule {
   hostname: string
   service: string
   noTLSVerify: boolean
+  httpHostHeader?: string
 }
 
 interface BackupItem {
@@ -75,7 +76,7 @@ const protocol = ref('http2')
 const rawYaml = ref('')
 const isRawEditor = ref(false)
 const saving = ref(false)
-const message = ref<{ type: 'success' | 'error'; text: string } | null>(null)
+const message = ref<{ type: 'success' | 'error'; text: string; action?: string } | null>(null)
 
 // Metrics & Health State
 const metrics = ref<MetricsData | null>(null)
@@ -186,16 +187,21 @@ async function loadConfig() {
   }
 }
 
+function cleanYamlVal(val?: string): string {
+  if (!val) return ''
+  return val.trim().replace(/^["']|["']$/g, '').trim()
+}
+
 function parseYaml(content: string) {
   const lines = content.split('\n')
   rules.value = []
   for (const line of lines) {
     const m = line.match(/^tunnel:\s*(.+)/)
-    if (m) tunnelId.value = m[1].trim()
+    if (m) tunnelId.value = cleanYamlVal(m[1])
     const cm = line.match(/^credentials-file:\s*(.+)/)
-    if (cm) credentialsFile.value = cm[1].trim()
+    if (cm) credentialsFile.value = cleanYamlVal(cm[1])
     const pm = line.match(/^protocol:\s*(.+)/)
-    if (pm) protocol.value = pm[1].trim()
+    if (pm) protocol.value = cleanYamlVal(pm[1])
   }
 
   let inIngress = false
@@ -211,6 +217,7 @@ function parseYaml(content: string) {
     const hm = line.match(/^\s*-\s*hostname:\s*["']?([^"'\s]+)["']?/)
     const sm = line.match(/^\s*service:\s*["']?([^"'\s]+)["']?/)
     const tm = line.match(/noTLSVerify:\s*true/)
+    const hhm = line.match(/httpHostHeader:\s*["']?([^"'\s]+)["']?/)
 
     if (isStandaloneService) {
       if (cur.hostname) {
@@ -218,6 +225,7 @@ function parseYaml(content: string) {
           hostname: cur.hostname,
           service: cur.service || '',
           noTLSVerify: cur.noTLSVerify || false,
+          httpHostHeader: cur.httpHostHeader || '',
         })
         cur = {}
       }
@@ -231,13 +239,16 @@ function parseYaml(content: string) {
           hostname: cur.hostname,
           service: cur.service || '',
           noTLSVerify: cur.noTLSVerify || false,
+          httpHostHeader: cur.httpHostHeader || '',
         })
       }
-      cur = { hostname: hm[1].trim() }
+      cur = { hostname: cleanYamlVal(hm[1]) }
     } else if (sm && cur.hostname) {
-      cur.service = sm[1].trim()
+      cur.service = cleanYamlVal(sm[1])
     } else if (tm) {
       cur.noTLSVerify = true
+    } else if (hhm) {
+      cur.httpHostHeader = cleanYamlVal(hhm[1])
     }
   }
 
@@ -246,17 +257,22 @@ function parseYaml(content: string) {
       hostname: cur.hostname,
       service: cur.service || '',
       noTLSVerify: cur.noTLSVerify || false,
+      httpHostHeader: cur.httpHostHeader || '',
     })
   }
 }
 
 function generateYaml(): string {
-  let y = `tunnel: "${tunnelId.value}"\ncredentials-file: "${credentialsFile.value || '/etc/cloudflared/credentials.json'}"\nprotocol: ${protocol.value || 'http2'}\n\ningress:\n`
+  const tid = cleanYamlVal(tunnelId.value)
+  const creds = cleanYamlVal(credentialsFile.value) || '/etc/cloudflared/credentials.json'
+  const proto = cleanYamlVal(protocol.value) || 'http2'
+
+  let y = `tunnel: ${tid}\ncredentials-file: ${creds}\nprotocol: ${proto}\n\ningress:\n`
   for (const r of rules.value) {
     if (!r.hostname || !r.service) continue
     // Clean hostname: remove https:// and trailing slashes
-    let cleanH = r.hostname.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '').replace(/:[0-9]+$/, '')
-    let target = r.service.trim().replace(/^["']|["']$/g, '')
+    let cleanH = cleanYamlVal(r.hostname).replace(/^https?:\/\//i, '').replace(/\/+$/, '').replace(/:[0-9]+$/, '')
+    let target = cleanYamlVal(r.service)
     // Normalize .local to direct container name:
     if (target.includes('.local')) {
       target = target.replace('.local', '')
@@ -265,9 +281,15 @@ function generateYaml(): string {
     if (target.includes('localhost') || target.includes('127.0.0.1')) {
       target = target.replace('localhost', 'host.docker.internal').replace('127.0.0.1', 'host.docker.internal')
     }
-    y += `  - hostname: "${cleanH}"\n    service: "${target}"\n`
-    if (r.noTLSVerify || target.startsWith('https://')) {
-      y += `    originRequest:\n      noTLSVerify: true\n`
+    y += `  - hostname: ${cleanH}\n    service: ${target}\n`
+    if (r.noTLSVerify || r.httpHostHeader || target.startsWith('https://')) {
+      y += `    originRequest:\n`
+      if (r.noTLSVerify || target.startsWith('https://')) {
+        y += `      noTLSVerify: true\n`
+      }
+      if (r.httpHostHeader) {
+        y += `      httpHostHeader: "${cleanYamlVal(r.httpHostHeader)}"\n`
+      }
     }
   }
   return y + `  - service: "http_status:404"\n`
@@ -498,17 +520,20 @@ async function syncAllDnsRoutes(force = false) {
     const failList = res.synced?.filter((s: any) => !s.success) || []
 
     if (failList.length > 0) {
+      const errDetails = failList.map((f: any) => f.error ? `${f.hostname}: ${f.error}` : f.hostname).join('; ')
+      const isTokenReq = errDetails.toLowerCase().includes('token required')
       message.value = {
         type: 'error',
-        text: `DNS Sync: ${successCount} verified, ${failList.length} failed. Click "Force Overwrite" to delete conflicting old records.`,
+        text: `DNS Sync: ${successCount} verified, ${failList.length} failed (${errDetails}).`,
+        action: isTokenReq ? 'token_required' : 'force_overwrite',
       }
     } else {
       message.value = {
         type: 'success',
         text: `Successfully synced ${successCount} DNS routes in Cloudflare!`,
       }
+      setTimeout(() => (message.value = null), 6000)
     }
-    setTimeout(() => (message.value = null), 6000)
   } catch (err: any) {
     message.value = { type: 'error', text: 'Cloudflare DNS sync failed: ' + err.message }
   } finally {
@@ -716,17 +741,38 @@ onUnmounted(() => {
     <!-- Alert / Toast Feedback -->
     <div
       v-if="message"
-      class="rounded-lg border p-3 text-xs font-mono flex items-center justify-between"
+      class="rounded-lg border p-3 text-xs font-mono flex flex-col sm:flex-row sm:items-center justify-between gap-2"
       :class="message.type === 'success' ? 'border-emerald-500/40 bg-emerald-50/30 text-emerald-700' : 'border-red-500/40 bg-red-50/30 text-red-700'"
     >
       <div class="flex items-center gap-2">
-        <CheckCircle2 v-if="message.type === 'success'" class="h-4 w-4 text-emerald-600" />
-        <AlertCircle v-else class="h-4 w-4 text-red-600" />
+        <CheckCircle2 v-if="message.type === 'success'" class="h-4 w-4 text-emerald-600 shrink-0" />
+        <AlertCircle v-else class="h-4 w-4 text-red-600 shrink-0" />
         <span>{{ message.text }}</span>
       </div>
-      <button @click="message = null" class="text-slate-600 hover:text-slate-800">
-        &times;
-      </button>
+      <div class="flex items-center gap-2 shrink-0">
+        <button
+          v-if="message.action === 'token_required'"
+          @click="activeTab = 'api'"
+          class="cyber-btn-secondary text-[11px] px-2.5 py-1 text-cyan-700 border-cyan-300 bg-cyan-100/60 hover:bg-cyan-200/60 font-sans font-bold flex items-center gap-1"
+          title="Open Cloudflare API & Edge tab to enter your API Token"
+        >
+          <KeyRound class="h-3 w-3 text-cyan-600" />
+          <span>Enter API Token (Tab 4)</span>
+        </button>
+        <button
+          v-else-if="message.action === 'force_overwrite'"
+          @click="syncAllDnsRoutes(true)"
+          :disabled="syncLoading"
+          class="cyber-btn-secondary text-[11px] px-2.5 py-1 text-red-700 border-red-300 bg-red-100/60 hover:bg-red-200/60 font-sans font-bold flex items-center gap-1"
+          title="Delete conflicting old records and recreate clean CNAME for this tunnel"
+        >
+          <RotateCcw class="h-3 w-3 text-red-600" :class="syncLoading ? 'animate-spin' : ''" />
+          <span>Force Overwrite Now</span>
+        </button>
+        <button @click="message = null" class="text-slate-600 hover:text-slate-800">
+          &times;
+        </button>
+      </div>
     </div>
 
     <!-- Navigation Tabs -->
@@ -1018,13 +1064,22 @@ onUnmounted(() => {
             <span>Add Rule</span>
           </button>
           <button
-            @click="syncAllDnsRoutes"
+            @click="syncAllDnsRoutes(false)"
             :disabled="syncLoading"
             class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-800 bg-cyan-50/30 hover:bg-cyan-100/50"
             title="Automatically create or verify DNS CNAME records in Cloudflare for all hostnames above"
           >
             <RefreshCw class="h-3.5 w-3.5" :class="syncLoading ? 'animate-spin' : ''" />
             <span>{{ syncLoading ? 'Syncing DNS…' : 'Sync to Cloudflare DNS' }}</span>
+          </button>
+          <button
+            @click="syncAllDnsRoutes(true)"
+            :disabled="syncLoading"
+            class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-amber-700 border-amber-300 bg-amber-50/40 hover:bg-amber-100/60"
+            title="Force overwrite and delete any conflicting old DNS records in Cloudflare"
+          >
+            <RotateCcw class="h-3.5 w-3.5 text-amber-600" :class="syncLoading ? 'animate-spin' : ''" />
+            <span>Force Overwrite DNS</span>
           </button>
           <button
             @click="save(true)"

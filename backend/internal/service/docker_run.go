@@ -247,6 +247,19 @@ func (s *DockerRunService) executeAsCompose(jobID int, parsed *ParsedDockerRun, 
 		return
 	}
 
+	// Pre-create host directories for bind mounts and pre-create named volumes
+	for _, vol := range parsed.Volumes {
+		src := extractVolumeSource(vol)
+		if isNamedVolume(src) {
+			_ = exec.Command("docker", "volume", "create", src).Run()
+		} else if strings.HasPrefix(src, "./") || strings.HasPrefix(src, "../") {
+			fullHost := filepath.Clean(filepath.Join(projDir, src))
+			_ = os.MkdirAll(fullHost, 0755)
+		} else if strings.HasPrefix(src, "/") || strings.HasPrefix(src, "\\") {
+			_ = os.MkdirAll(src, 0755)
+		}
+	}
+
 	composeContent := parsed.GenerateComposeYAML()
 	composePath := filepath.Join(projDir, "docker-compose.yml")
 	if err := os.WriteFile(composePath, []byte(composeContent), 0644); err != nil {
@@ -436,6 +449,18 @@ func (s *DockerRunService) executeDirect(jobID int, parsed *ParsedDockerRun, raw
 	// Remove unmanaged container with the same name if one exists
 	s.removeConflictingContainer(jobID, parsed.ContainerName)
 
+	// Pre-create host directories for bind mounts and pre-create named volumes
+	for _, vol := range parsed.Volumes {
+		src := extractVolumeSource(vol)
+		if isNamedVolume(src) {
+			_ = exec.Command("docker", "volume", "create", src).Run()
+		} else if strings.HasPrefix(src, "/") || strings.HasPrefix(src, "\\") {
+			_ = os.MkdirAll(src, 0755)
+		} else if strings.HasPrefix(src, "./") || strings.HasPrefix(src, "../") {
+			_ = os.MkdirAll(src, 0755)
+		}
+	}
+
 	s.appendLine(jobID, fmt.Sprintf("[STEP] Executing: docker %s", strings.Join(cmdArgs, " ")))
 
 	cmd := exec.Command("docker", cmdArgs...)
@@ -484,6 +509,28 @@ func (s *DockerRunService) executeDirect(jobID int, parsed *ParsedDockerRun, raw
 			onDone(strings.Join(j.Lines, "\n"))
 		}
 	}
+}
+
+func IsDockerRunCommand(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "services:") || strings.HasPrefix(trimmed, "version:") {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "docker run") || strings.HasPrefix(lower, "docker create") ||
+		strings.HasPrefix(lower, "podman run") || strings.HasPrefix(lower, "podman create") ||
+		strings.HasPrefix(lower, "docker pull") || strings.HasPrefix(lower, "run -") {
+		return true
+	}
+	lines := strings.Split(trimmed, "\n")
+	firstLine := strings.TrimSpace(lines[0])
+	if (strings.Contains(firstLine, "--name") || strings.Contains(firstLine, "-p ") || strings.Contains(firstLine, "-v ") || strings.Contains(firstLine, "--restart")) && !strings.Contains(firstLine, ":") {
+		return true
+	}
+	return false
 }
 
 func ParseDockerRunCommand(raw string) (*ParsedDockerRun, error) {

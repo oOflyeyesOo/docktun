@@ -168,16 +168,51 @@ function getExpose(id?: string): ExposureSettings {
       notes: '',
     }
   }
-  if (!exposeForm.value[id]) {
-    exposeForm.value[id] = {
-      mode: 'internal',
-      hostname: '',
-      target: '',
-      private_type: '',
-      private_host: '',
-      private_port: 80,
-      notes: '',
+
+  // 1. Direct match
+  if (exposeForm.value[id]) {
+    return exposeForm.value[id]
+  }
+
+  // 2. Prefix match (e.g. 12-char short ID vs 64-char full SHA256 ID)
+  for (const k of Object.keys(exposeForm.value)) {
+    if (k.startsWith(id) || id.startsWith(k)) {
+      return exposeForm.value[k]
     }
+  }
+
+  // 3. Fallback: resolve from selectedContainer or containers list
+  const c = (selectedContainer.value && (selectedContainer.value.id === id || selectedContainer.value.id.startsWith(id) || id.startsWith(selectedContainer.value.id) || selectedContainer.value.name === id))
+    ? selectedContainer.value
+    : containers.value.find((item) => item.id === id || item.id.startsWith(id) || id.startsWith(item.id) || item.name === id)
+
+  if (c) {
+    const pPort = getPrimaryPort(c.ports)
+    const settings: ExposureSettings = {
+      mode: c.exposure_mode || c.exposure?.mode || 'internal',
+      hostname: c.hostname || c.exposure?.hostname || '',
+      target: c.target || c.exposure?.target || `http://${c.name}:${pPort}`,
+      private_type: c.private_type || c.exposure?.private_type || '',
+      private_host: c.private_host || c.exposure?.private_host || '',
+      private_port: c.private_port || c.exposure?.private_port || parseInt(pPort, 10) || 80,
+      notes: c.notes || c.exposure?.notes || '',
+      zero_trust_enabled: c.zero_trust_enabled || c.exposure?.zero_trust_enabled || false,
+      zero_trust_emails: c.zero_trust_emails || c.exposure?.zero_trust_emails || '',
+      zero_trust_auth_type: c.zero_trust_auth_type || c.exposure?.zero_trust_auth_type || 'email',
+      zero_trust_session: c.zero_trust_session || c.exposure?.zero_trust_session || '24h',
+    }
+    exposeForm.value[id] = settings
+    return settings
+  }
+
+  exposeForm.value[id] = {
+    mode: 'internal',
+    hostname: '',
+    target: '',
+    private_type: '',
+    private_host: '',
+    private_port: 80,
+    notes: '',
   }
   return exposeForm.value[id]
 }
@@ -268,10 +303,7 @@ const showLaunchModal = ref(false)
 const launchTab = ref<'compose' | 'templates' | 'dockerrun' | 'gitstack'>('compose')
 
 // Direct Compose Stack State
-const composeDeployForm = ref({
-  name: '',
-  path: '',
-  compose_content: `services:
+const defaultComposeExample = `services:
   my-app:
     image: nginx:alpine
     container_name: my-app
@@ -283,8 +315,12 @@ const composeDeployForm = ref({
 
 networks:
   cloudflared:
-    external: true
-`,
+    external: true`
+
+const composeDeployForm = ref({
+  name: '',
+  path: '',
+  compose_content: '',
   env_content: '',
   show_env: false,
 })
@@ -681,6 +717,9 @@ function insertComposeSnippet(type: 'network' | 'restart' | 'ports' | 'volumes' 
 }
 
 async function deployComposeStack() {
+  if (isPastedDockerRun.value) {
+    convertComposeDockerRun()
+  }
   const name = composeDeployForm.value.name.trim()
   if (!name) {
     alert('Stack name is required.')
@@ -731,10 +770,150 @@ function onBackdropMouseDown(e: MouseEvent) {
   backdropMouseDown = (e.target === e.currentTarget)
 }
 function onBackdropClick(e: MouseEvent, closeFn: () => void) {
+  // Never close if user has an active text selection from dragging
+  const selection = window.getSelection()?.toString()
+  if (selection && selection.length > 0) {
+    backdropMouseDown = false
+    return
+  }
   if (backdropMouseDown && e.target === e.currentTarget) {
     closeFn()
   }
   backdropMouseDown = false
+}
+
+function onLaunchModalBackdropClick() {
+  // Prevent accidental dismissal if the user has typed or pasted anything in the launch modal
+  if (!composeDeployForm.value.compose_content.trim() && !dockerRunCmd.value.trim()) {
+    showLaunchModal.value = false
+  }
+}
+
+function convertDockerRunToComposeYaml(cmd: string): { name: string; yaml: string } {
+  const cleanCmd = cmd.replace(/\\\r?\n/g, ' ').replace(/\s+/g, ' ').trim()
+  const tokens = cleanCmd.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || []
+
+  let name = ''
+  let image = ''
+  const ports: string[] = []
+  const volumes: string[] = []
+  const env: string[] = []
+  let restart = 'unless-stopped'
+  let network = 'cloudflared'
+  let privileged = false
+
+  let i = 0
+  if (tokens[0] === 'docker' || tokens[0] === 'podman') i++
+  if (tokens[i] === 'run' || tokens[i] === 'create') i++
+
+  for (; i < tokens.length; i++) {
+    const rawT = tokens[i]
+    const t = rawT.replace(/^["']|["']$/g, '')
+    if (t === '--name' && i + 1 < tokens.length) {
+      name = tokens[++i].replace(/^["']|["']$/g, '')
+    } else if (t.startsWith('--name=')) {
+      name = t.substring(7).replace(/^["']|["']$/g, '')
+    } else if ((t === '-p' || t === '--publish') && i + 1 < tokens.length) {
+      ports.push(tokens[++i].replace(/^["']|["']$/g, ''))
+    } else if (t.startsWith('-p=') || t.startsWith('--publish=')) {
+      ports.push(t.substring(t.indexOf('=') + 1).replace(/^["']|["']$/g, ''))
+    } else if ((t === '-v' || t === '--volume') && i + 1 < tokens.length) {
+      volumes.push(tokens[++i].replace(/^["']|["']$/g, ''))
+    } else if (t.startsWith('-v=') || t.startsWith('--volume=')) {
+      volumes.push(t.substring(t.indexOf('=') + 1).replace(/^["']|["']$/g, ''))
+    } else if ((t === '-e' || t === '--env') && i + 1 < tokens.length) {
+      env.push(tokens[++i].replace(/^["']|["']$/g, ''))
+    } else if (t.startsWith('-e=') || t.startsWith('--env=')) {
+      env.push(t.substring(t.indexOf('=') + 1).replace(/^["']|["']$/g, ''))
+    } else if (t === '--restart' && i + 1 < tokens.length) {
+      restart = tokens[++i].replace(/^["']|["']$/g, '')
+    } else if (t.startsWith('--restart=')) {
+      restart = t.substring(10).replace(/^["']|["']$/g, '')
+    } else if (t === '--privileged') {
+      privileged = true
+    } else if ((t === '--network' || t === '--net') && i + 1 < tokens.length) {
+      network = tokens[++i].replace(/^["']|["']$/g, '')
+    } else if (t.startsWith('--network=') || t.startsWith('--net=')) {
+      network = t.substring(t.indexOf('=') + 1).replace(/^["']|["']$/g, '')
+    } else if (!t.startsWith('-')) {
+      image = t
+    }
+  }
+
+  if (!name && image) {
+    const parts = image.split('/')
+    const imgPart = parts[parts.length - 1].split(':')[0]
+    name = imgPart || 'app'
+  }
+  if (!name) name = 'app'
+
+  let yaml = `services:\n  ${name}:\n    image: ${image || 'nginx:alpine'}\n    container_name: ${name}\n    restart: ${restart}\n`
+  if (privileged) yaml += '    privileged: true\n'
+  if (ports.length) {
+    yaml += '    ports:\n'
+    ports.forEach((p) => (yaml += `      - "${p}"\n`))
+  }
+  if (volumes.length) {
+    yaml += '    volumes:\n'
+    volumes.forEach((v) => (yaml += `      - "${v}"\n`))
+  }
+  if (env.length) {
+    yaml += '    environment:\n'
+    env.forEach((e) => (yaml += `      - ${e}\n`))
+  }
+  if (network && network !== 'host' && network !== 'none' && network !== 'bridge') {
+    yaml += `    networks:\n      - ${network}\n\nnetworks:\n  ${network}:\n    external: true\n`
+  }
+
+  const namedVols = volumes
+    .map((v) => v.split(':')[0])
+    .filter((v) => v && !v.startsWith('/') && !v.startsWith('./') && !v.startsWith('../') && !v.startsWith('~') && !v.includes('\\'))
+  if (namedVols.length) {
+    yaml += '\nvolumes:\n'
+    const seen = new Set<string>()
+    namedVols.forEach((nv) => {
+      if (!seen.has(nv)) {
+        seen.add(nv)
+        yaml += `  ${nv}:\n    name: ${nv}\n`
+      }
+    })
+  }
+
+  return { name, yaml }
+}
+
+const isPastedDockerRun = computed(() => {
+  const c = composeDeployForm.value.compose_content.trim()
+  if (!c) return false
+  if (c.startsWith('services:') || c.startsWith('version:')) return false
+  const lower = c.toLowerCase()
+  return (
+    lower.startsWith('docker run') ||
+    lower.startsWith('docker create') ||
+    lower.startsWith('docker pull') ||
+    lower.startsWith('run -') ||
+    (c.includes('--name') && c.includes('-p ') && !c.includes(':'))
+  )
+})
+
+function convertComposeDockerRun() {
+  const result = convertDockerRunToComposeYaml(composeDeployForm.value.compose_content)
+  composeDeployForm.value.compose_content = result.yaml
+  if (!composeDeployForm.value.name.trim() || composeDeployForm.value.name === 'my-stack') {
+    composeDeployForm.value.name = result.name
+  }
+}
+
+function onComposeFocus() {
+  if (composeDeployForm.value.compose_content.trim() === defaultComposeExample.trim()) {
+    composeDeployForm.value.compose_content = ''
+  }
+}
+
+function onComposePaste() {
+  if (composeDeployForm.value.compose_content.trim() === defaultComposeExample.trim()) {
+    composeDeployForm.value.compose_content = ''
+  }
 }
 
 function onDockerRunFocus() {
@@ -1318,6 +1497,25 @@ async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' |
     selectedContainer.value = detail
     if (detail.connected_to_cloudflared !== undefined) {
       c.connected_to_cloudflared = detail.connected_to_cloudflared
+    }
+    const currentMode = detail.exposure_mode || detail.exposure?.mode || c.exposure_mode || c.exposure?.mode
+    if (currentMode) {
+      const pPort = getPrimaryPort(detail.ports || c.ports)
+      const formVal: ExposureSettings = {
+        mode: currentMode,
+        hostname: detail.hostname || detail.exposure?.hostname || c.hostname || c.exposure?.hostname || '',
+        target: detail.target || detail.exposure?.target || c.target || c.exposure?.target || `http://${detail.name}:${pPort}`,
+        private_type: detail.private_type || detail.exposure?.private_type || c.private_type || c.exposure?.private_type || '',
+        private_host: detail.private_host || detail.exposure?.private_host || c.private_host || c.exposure?.private_host || '',
+        private_port: detail.private_port || detail.exposure?.private_port || c.private_port || c.exposure?.private_port || parseInt(pPort, 10) || 80,
+        notes: detail.notes || detail.exposure?.notes || c.notes || c.exposure?.notes || '',
+        zero_trust_enabled: detail.zero_trust_enabled || detail.exposure?.zero_trust_enabled || c.zero_trust_enabled || c.exposure?.zero_trust_enabled || false,
+        zero_trust_emails: detail.zero_trust_emails || detail.exposure?.zero_trust_emails || c.zero_trust_emails || c.exposure?.zero_trust_emails || '',
+        zero_trust_auth_type: detail.zero_trust_auth_type || detail.exposure?.zero_trust_auth_type || c.zero_trust_auth_type || c.exposure?.zero_trust_auth_type || 'email',
+        zero_trust_session: detail.zero_trust_session || detail.exposure?.zero_trust_session || c.zero_trust_session || c.exposure?.zero_trust_session || '24h',
+      }
+      exposeForm.value[c.id] = formVal
+      if (detail.id) exposeForm.value[detail.id] = formVal
     }
   } catch (err: any) {
     console.error('Failed to load container details:', err)
@@ -2968,6 +3166,8 @@ onUnmounted(() => {
       <div
         class="flex max-h-[92vh] w-full max-w-5xl flex-col rounded-xl border border-slate-300 bg-white shadow-sm overflow-hidden"
         @mousedown.stop
+        @mouseup.stop
+        @click.stop
       >
         <!-- Modal Top Bar -->
         <div class="flex flex-wrap items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-3 gap-3">
@@ -4200,7 +4400,7 @@ onUnmounted(() => {
       @mousedown="onBackdropMouseDown"
       @click="onBackdropClick($event, () => showUpdateConfirmModal = null)"
     >
-      <div class="w-full max-w-lg rounded-xl border border-amber-500/40 bg-white p-6 shadow-sm space-y-5" @mousedown.stop>
+      <div class="w-full max-w-lg rounded-xl border border-amber-500/40 bg-white p-6 shadow-sm space-y-5" @mousedown.stop @mouseup.stop @click.stop>
         <div class="flex items-start justify-between">
           <div class="flex items-center gap-3">
             <div class="rounded-lg bg-amber-500/20 p-2.5 text-amber-600 border border-amber-500/30">
@@ -4268,6 +4468,8 @@ onUnmounted(() => {
         class="w-full max-w-2xl rounded-xl border bg-white p-6 shadow-sm space-y-4"
         :class="updateResultModal.success ? 'border-emerald-500/40' : 'border-red-500/40'"
         @mousedown.stop
+        @mouseup.stop
+        @click.stop
       >
         <div class="flex items-start justify-between">
           <div class="flex items-center gap-3">
@@ -4312,11 +4514,13 @@ onUnmounted(() => {
       v-if="showLaunchModal"
       class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-4 backdrop-blur-md"
       @mousedown="onBackdropMouseDown"
-      @click="onBackdropClick($event, () => showLaunchModal = false)"
+      @click="onBackdropClick($event, onLaunchModalBackdropClick)"
     >
       <div
         class="w-full max-w-4xl rounded-xl border border-slate-300 bg-white p-6 shadow-sm space-y-4 max-h-[92vh] flex flex-col"
         @mousedown.stop
+        @mouseup.stop
+        @click.stop
       >
         <div class="flex items-start justify-between border-b border-slate-200 pb-3 shrink-0">
           <div>
@@ -4393,10 +4597,51 @@ onUnmounted(() => {
           </div>
 
           <div>
+            <!-- Banner when docker run command is pasted in Compose YAML tab -->
+            <div v-if="isPastedDockerRun" class="mb-2.5 rounded-lg border border-cyan-500/60 bg-cyan-50/80 p-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
+              <div class="flex items-center gap-2 text-cyan-800">
+                <Sparkles class="h-4 w-4 text-cyan-600 shrink-0" />
+                <span><strong>Docker Run command detected!</strong> Convert to clean Compose YAML, or DockTun will auto-convert when you deploy.</span>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  @click="convertComposeDockerRun"
+                  class="cyber-btn py-1 px-2.5 text-[11px] text-cyan-700 bg-white border-cyan-600 font-bold"
+                >
+                  Convert to Compose YAML
+                </button>
+                <button
+                  type="button"
+                  @click="launchTab = 'dockerrun'; dockerRunCmd = composeDeployForm.compose_content"
+                  class="text-[11px] text-slate-600 hover:text-slate-900 underline font-mono"
+                >
+                  Switch to Docker Run
+                </button>
+              </div>
+            </div>
+
             <div class="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
-              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                docker-compose.yml Content <span class="text-rose-600">*</span>
-              </label>
+              <div class="flex items-center gap-2">
+                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                  docker-compose.yml Content <span class="text-rose-600">*</span>
+                </label>
+                <button
+                  type="button"
+                  @click="composeDeployForm.compose_content = defaultComposeExample; if (!composeDeployForm.name) composeDeployForm.name = 'my-app'"
+                  class="text-[10px] text-cyan-600 hover:text-cyan-800 underline font-mono"
+                >
+                  Insert Example
+                </button>
+                <button
+                  v-if="composeDeployForm.compose_content"
+                  type="button"
+                  @click="composeDeployForm.compose_content = ''"
+                  class="text-[10px] text-slate-500 hover:text-rose-600 underline font-mono"
+                >
+                  Clear
+                </button>
+              </div>
               <div class="flex flex-wrap items-center gap-1 text-xs">
                 <span class="text-[10px] uppercase font-semibold text-slate-500 mr-0.5">Quick Insert:</span>
                 <button
@@ -4435,6 +4680,8 @@ onUnmounted(() => {
               class="cyber-input font-mono text-xs w-full leading-relaxed bg-slate-50 border-slate-200 text-cyan-100"
               placeholder="services:&#10;  app:&#10;    image: nginx:alpine&#10;    restart: unless-stopped"
               spellcheck="false"
+              @focus="onComposeFocus"
+              @paste="onComposePaste"
             ></textarea>
           </div>
 
@@ -4699,7 +4946,7 @@ onUnmounted(() => {
       @mousedown="onBackdropMouseDown"
       @click="onBackdropClick($event, () => stackOutputModal = null)"
     >
-      <div class="w-full max-w-3xl rounded-xl border border-slate-300 bg-white p-6 shadow-sm space-y-4" @mousedown.stop>
+      <div class="w-full max-w-3xl rounded-xl border border-slate-300 bg-white p-6 shadow-sm space-y-4" @mousedown.stop @mouseup.stop @click.stop>
         <div class="flex items-start justify-between border-b border-slate-200 pb-3">
           <div class="flex items-center gap-3">
             <div class="rounded-lg p-2 bg-slate-100 text-cyan-600">
@@ -4740,7 +4987,7 @@ onUnmounted(() => {
       @mousedown="onBackdropMouseDown"
       @click="onBackdropClick($event, () => showDeployPromptModal = null)"
     >
-      <div class="w-full max-w-md rounded-xl border border-violet-500/40 bg-white p-6 shadow-sm space-y-4" @mousedown.stop>
+      <div class="w-full max-w-md rounded-xl border border-violet-500/40 bg-white p-6 shadow-sm space-y-4" @mousedown.stop @mouseup.stop @click.stop>
         <div class="flex items-start justify-between border-b border-slate-200 pb-3">
           <div class="flex items-center gap-2 text-violet-300 font-bold">
             <Rocket class="h-5 w-5" />
@@ -4786,7 +5033,7 @@ onUnmounted(() => {
       @mousedown="onBackdropMouseDown"
       @click="onBackdropClick($event, () => stackHistoryModal = null)"
     >
-      <div class="w-full max-w-2xl rounded-xl border border-slate-300 bg-white p-6 shadow-sm space-y-4" @mousedown.stop>
+      <div class="w-full max-w-2xl rounded-xl border border-slate-300 bg-white p-6 shadow-sm space-y-4" @mousedown.stop @mouseup.stop @click.stop>
         <div class="flex items-start justify-between border-b border-slate-200 pb-3">
           <div class="flex items-center gap-2.5">
             <History class="h-5 w-5 text-cyan-600" />

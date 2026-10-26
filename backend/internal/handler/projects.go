@@ -45,12 +45,28 @@ func (h *Projects) Create(w http.ResponseWriter, r *http.Request) {
 		EnvContent     string `json:"env_content"`
 		AutoStart      bool   `json:"auto_start"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
-		jsonError(w, "project name required", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	body.Name = strings.TrimSpace(body.Name)
+	body.ComposeContent = strings.TrimSpace(body.ComposeContent)
+
+	// Auto-detect and convert raw Docker Run commands into valid Docker Compose YAML
+	if body.ComposeContent != "" && service.IsDockerRunCommand(body.ComposeContent) {
+		parsed, err := service.ParseDockerRunCommand(body.ComposeContent)
+		if err == nil {
+			if body.Name == "" || body.Name == "my-stack" {
+				body.Name = parsed.ContainerName
+			}
+			body.ComposeContent = parsed.GenerateComposeYAML()
+		}
+	}
+
+	if body.Name == "" {
+		body.Name = "app-stack"
+	}
 	if strings.TrimSpace(body.Path) == "" {
 		body.Path = filepath.Join("./projects", body.Name)
 	}

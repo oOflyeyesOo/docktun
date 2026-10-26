@@ -1020,8 +1020,21 @@ func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
 					for _, net := range networksToBridge {
 						_ = s.ConnectNetwork(cName, net)
 					}
-					addLog(fmt.Sprintf("Verified network connectivity for exposed container %s", cName))
+					_ = s.EnsureDatabaseLinks(cName)
+					addLog(fmt.Sprintf("Verified network connectivity and database links for %s", cName))
 				}
+			}
+		}
+	}
+
+	// 4b. Auto-heal any containers currently crashing or restarting
+	restartingCmd := exec.Command("docker", "ps", "-a", "--filter", "status=restarting", "--format", "{{.Names}}")
+	if rOut, err := restartingCmd.Output(); err == nil {
+		for _, name := range strings.Split(string(rOut), "\n") {
+			name = strings.TrimSpace(name)
+			if name != "" && !strings.HasPrefix(name, "docktun-updater-") {
+				_ = s.EnsureDatabaseLinks(name)
+				addLog(fmt.Sprintf("Auto-healed database links for restarting container %s", name))
 			}
 		}
 	}
@@ -1328,9 +1341,15 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 	return 0, nil
 }
 
-func (s *DockerContainers) Start(id string) error   { return dockerCommand("start", id) }
+func (s *DockerContainers) Start(id string) error {
+	_ = s.EnsureDatabaseLinks(id)
+	return dockerCommand("start", id)
+}
 func (s *DockerContainers) Stop(id string) error    { return dockerCommand("stop", id) }
-func (s *DockerContainers) Restart(id string) error { return dockerCommand("restart", id) }
+func (s *DockerContainers) Restart(id string) error {
+	_ = s.EnsureDatabaseLinks(id)
+	return dockerCommand("restart", id)
+}
 
 type BatchActionResult struct {
 	ID      string `json:"id"`
@@ -1606,9 +1625,16 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 		return fmt.Errorf("unmarshal cloudflared config: %w", err)
 	}
 
+	var rawMap map[string]interface{}
+	_ = yaml.Unmarshal([]byte(raw), &rawMap)
+	if rawMap == nil {
+		rawMap = make(map[string]interface{})
+	}
+
 	cleanHost := cleanHostname(settings.Hostname)
 
-	// Filter out any existing rule for this container or hostname
+	// Filter out any existing rule for this container or hostname, preserving originRequest (e.g. httpHostHeader)
+	var existingOriginReq *cfOriginRequest
 	newIngress := make([]cfIngressRule, 0, len(doc.Ingress)+1)
 	for _, rule := range doc.Ingress {
 		// Ignore catch-all rule during filter
@@ -1617,6 +1643,9 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 		}
 		// If rule matches container name or hostname
 		if strings.Contains(rule.Service, containerName) || (cleanHost != "" && cleanHostname(rule.Hostname) == cleanHost) {
+			if rule.OriginRequest != nil {
+				existingOriginReq = rule.OriginRequest
+			}
 			continue
 		}
 		newIngress = append(newIngress, rule)
@@ -1629,7 +1658,9 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 			Hostname: cleanHost,
 			Service:  target,
 		}
-		if strings.HasPrefix(target, "https://") {
+		if existingOriginReq != nil {
+			rule.OriginRequest = existingOriginReq
+		} else if strings.HasPrefix(target, "https://") {
 			rule.OriginRequest = &cfOriginRequest{
 				NoTLSVerify: true,
 			}
@@ -1643,10 +1674,15 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 	})
 
 	doc.Ingress = newIngress
+	rawMap["ingress"] = newIngress
 
-	updatedYaml, err := yaml.Marshal(&doc)
+	updatedYaml, err := yaml.Marshal(rawMap)
 	if err != nil {
-		return fmt.Errorf("marshal updated cloudflared config: %w", err)
+		// Fallback to typed doc if rawMap fails
+		updatedYaml, err = yaml.Marshal(&doc)
+		if err != nil {
+			return fmt.Errorf("marshal updated cloudflared config: %w", err)
+		}
 	}
 
 	if err := s.configMgr.Write(string(updatedYaml), 1); err != nil {
@@ -2267,10 +2303,16 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 					}
 				}
 			}
-			if validComposeDir == "" {
+			if validComposeDir == "" && (compProj == "" || strings.EqualFold(compProj, cname)) {
 				cDir := filepath.Join("/opt/projects", cname)
 				if fi, err := os.Stat(cDir); err == nil && fi.IsDir() {
 					validComposeDir = cDir
+				}
+			}
+			if validComposeDir == "" && compProj != "" {
+				pDir := filepath.Join("/opt/projects", compProj)
+				if fi, err := os.Stat(pDir); err == nil && fi.IsDir() {
+					validComposeDir = pDir
 				}
 			}
 		}
@@ -2457,6 +2499,13 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		netName := s.DefaultNetwork()
 		appendLog(fmt.Sprintf("[NETWORK] Ensuring connection to %s network...", netName))
 		_ = s.ConnectNetwork(cname, netName)
+	}
+
+	// Auto-heal companion database and service links (e.g. mediastorm -> mediastorm-postgres with alias postgres)
+	if linkErr := s.EnsureDatabaseLinks(cname); linkErr != nil {
+		appendLog(fmt.Sprintf("[NOTE] Database link verification notice: %v", linkErr))
+	} else {
+		appendLog(fmt.Sprintf("[DATABASE] Database links and network aliases verified for %s.", cname))
 	}
 
 	s.setContainerUpToDate(id, cname, image)
@@ -2689,6 +2738,212 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 	go func() {
 		_ = exec.Command("docker", "image", "prune", "-f").Run()
 	}()
+
+	return nil
+}
+
+func (s *DockerContainers) EnsureDatabaseLinks(cname string) error {
+	cname = strings.TrimPrefix(cname, "/")
+	if cname == "" {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "docker", "inspect", cname)
+	out, err := cmd.Output()
+	if err != nil {
+		return err
+	}
+
+	var inspectList []struct {
+		State struct {
+			Status   string `json:"Status"`
+			Running  bool   `json:"Running"`
+			ExitCode int    `json:"ExitCode"`
+		} `json:"State"`
+		Config struct {
+			Env    []string          `json:"Env"`
+			Labels map[string]string `json:"Labels"`
+		} `json:"Config"`
+		NetworkSettings struct {
+			Networks map[string]struct {
+				Aliases []string `json:"Aliases"`
+			} `json:"Networks"`
+		} `json:"NetworkSettings"`
+	}
+	if err := json.Unmarshal(out, &inspectList); err != nil || len(inspectList) == 0 {
+		return fmt.Errorf("failed to parse inspect json for %s", cname)
+	}
+
+	target := inspectList[0]
+	// Dedicated Tailscale proxies are managed exclusively by their app lifecycle.
+	if target.Config.Labels[tailscaleOwnerLabel] != "" { return nil }
+	targetNets := make(map[string]bool)
+	for n := range target.NetworkSettings.Networks {
+		targetNets[n] = true
+	}
+	targetProj := target.Config.Labels["com.docker.compose.project"]
+
+	dbHostnames := make(map[string]bool)
+	for _, env := range target.Config.Env {
+		lower := strings.ToLower(env)
+		if strings.HasPrefix(lower, "database_url=") || strings.HasPrefix(lower, "db_url=") {
+			val := env[strings.Index(env, "=")+1:]
+			if at := strings.Index(val, "@"); at != -1 {
+				afterAt := val[at+1:]
+				host := afterAt
+				if slash := strings.Index(host, "/"); slash != -1 {
+					host = host[:slash]
+				}
+				if colon := strings.Index(host, ":"); colon != -1 {
+					host = host[:colon]
+				}
+				if host != "" && host != "localhost" && host != "127.0.0.1" {
+					dbHostnames[host] = true
+				}
+			}
+		} else if strings.HasPrefix(lower, "db_host=") || strings.HasPrefix(lower, "postgres_host=") || strings.HasPrefix(lower, "mysql_host=") || strings.HasPrefix(lower, "redis_host=") {
+			val := strings.TrimSpace(env[strings.Index(env, "=")+1:])
+			if val != "" && val != "localhost" && val != "127.0.0.1" {
+				dbHostnames[val] = true
+			}
+		}
+	}
+
+	// Always candidate companion database containers
+	candidates := []string{
+		cname + "-postgres",
+		cname + "_postgres",
+		cname + "-db",
+		cname + "_db",
+		cname + "-database",
+		cname + "_database",
+		cname + "-mysql",
+		cname + "_mysql",
+		cname + "-redis",
+		cname + "_redis",
+		"postgres",
+		"shared-postgres",
+	}
+
+	// Also find any running container on host matching the project or service
+	listCmd := exec.Command("docker", "ps", "-a", "--format", "{{.Names}}")
+	if listOut, err := listCmd.Output(); err == nil {
+		for _, name := range strings.Split(string(listOut), "\n") {
+			name = strings.TrimSpace(name)
+			if name == "" || name == cname {
+				continue
+			}
+			lower := strings.ToLower(name)
+			if (strings.Contains(lower, cname) && (strings.Contains(lower, "postgres") || strings.Contains(lower, "db") || strings.Contains(lower, "mysql") || strings.Contains(lower, "redis"))) ||
+				(targetProj != "" && strings.Contains(lower, targetProj) && (strings.Contains(lower, "postgres") || strings.Contains(lower, "db"))) {
+				candidates = append([]string{name}, candidates...)
+			}
+		}
+	}
+
+	reconnectedAny := false
+
+	for _, dbName := range candidates {
+		dbInspectCmd := exec.Command("docker", "inspect", dbName)
+		dbOut, err := dbInspectCmd.Output()
+		if err != nil {
+			continue // container doesn't exist
+		}
+
+		var dbInspectList []struct {
+			State struct {
+				Running bool `json:"Running"`
+			} `json:"State"`
+			NetworkSettings struct {
+				Networks map[string]struct {
+					Aliases []string `json:"Aliases"`
+				} `json:"Networks"`
+			} `json:"NetworkSettings"`
+		}
+		if err := json.Unmarshal(dbOut, &dbInspectList); err != nil || len(dbInspectList) == 0 {
+			continue
+		}
+
+		dbContainer := dbInspectList[0]
+		if !dbContainer.State.Running {
+			_ = exec.Command("docker", "start", dbName).Run()
+		}
+
+		// Connect target container (e.g. mediastorm) to all networks that the DB is on (e.g. media_default)
+		for netName := range dbContainer.NetworkSettings.Networks {
+			if netName == "bridge" || netName == "host" || netName == "none" || netName == "" || strings.HasPrefix(netName, "docktun-ts-") {
+				continue
+			}
+			if !targetNets[netName] {
+				log.Printf("[docktun-db-link] Connecting %s to DB network %s...", cname, netName)
+				_ = exec.Command("docker", "network", "connect", netName, cname).Run()
+				targetNets[netName] = true
+				reconnectedAny = true
+			}
+		}
+
+		// Connect DB container to target's custom networks (e.g. cloudflared, docktun) with aliases
+		for netName := range targetNets {
+			if netName == "bridge" || netName == "host" || netName == "none" || netName == "" || strings.HasPrefix(netName, "docktun-ts-") {
+				continue
+			}
+			dbNetInfo, dbOnNet := dbContainer.NetworkSettings.Networks[netName]
+			if !dbOnNet {
+				connectArgs := []string{"network", "connect"}
+				for h := range dbHostnames {
+					connectArgs = append(connectArgs, "--alias", h)
+				}
+				if strings.Contains(strings.ToLower(dbName), "postgres") {
+					connectArgs = append(connectArgs, "--alias", "postgres")
+				}
+				connectArgs = append(connectArgs, "--alias", dbName, netName, dbName)
+				log.Printf("[docktun-db-link] Connecting %s to network %s with aliases...", dbName, netName)
+				_ = exec.Command("docker", connectArgs...).Run()
+				reconnectedAny = true
+			} else {
+				hasAlias := make(map[string]bool)
+				for _, a := range dbNetInfo.Aliases {
+					hasAlias[a] = true
+				}
+				var missingAliases []string
+				for h := range dbHostnames {
+					if !hasAlias[h] {
+						missingAliases = append(missingAliases, h)
+					}
+				}
+				if strings.Contains(strings.ToLower(dbName), "postgres") && !hasAlias["postgres"] {
+					missingAliases = append(missingAliases, "postgres")
+				}
+				if len(missingAliases) > 0 {
+					_ = exec.Command("docker", "network", "disconnect", netName, dbName).Run()
+					reconnectArgs := []string{"network", "connect"}
+					for _, a := range dbNetInfo.Aliases {
+						if a != "" {
+							reconnectArgs = append(reconnectArgs, "--alias", a)
+						}
+					}
+					for _, ma := range missingAliases {
+						reconnectArgs = append(reconnectArgs, "--alias", ma)
+					}
+					reconnectArgs = append(reconnectArgs, netName, dbName)
+					_ = exec.Command("docker", reconnectArgs...).Run()
+					reconnectedAny = true
+				}
+			}
+		}
+
+		log.Printf("[docktun-db-link] Database link established: %s <-> %s", cname, dbName)
+		break
+	}
+
+	// If we reconnected networks or if target is unhealthy/restarting, trigger a quick restart
+	if reconnectedAny || target.State.Status == "restarting" || (target.State.Status == "running" && target.State.ExitCode != 0) {
+		log.Printf("[docktun-db-link] Restarting %s to apply restored database connections...", cname)
+		_ = exec.Command("docker", "restart", cname).Run()
+	}
 
 	return nil
 }
@@ -3387,9 +3642,123 @@ func SanitizeComposeFile(composePath string) bool {
 	if modified {
 		_ = os.WriteFile(composePath, []byte(strings.Join(lines, "\n")), 0644)
 		log.Printf("[docktun] sanitized invalid ports in compose file: %s", composePath)
-		return true
 	}
-	return false
+
+	volModified := SanitizeComposeVolumes(composePath)
+	return modified || volModified
+}
+
+func SanitizeComposeVolumes(composePath string) bool {
+	contentBytes, err := os.ReadFile(composePath)
+	if err != nil {
+		return false
+	}
+	content := string(contentBytes)
+	lines := strings.Split(content, "\n")
+	composeDir := filepath.Dir(composePath)
+
+	inServices := false
+	inServiceVolumes := false
+	inTopLevelVolumes := false
+	var serviceNamedVolumes []string
+	topLevelDeclaredVolumes := make(map[string]bool)
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		// Top level key (no indent)
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			if strings.HasPrefix(trimmed, "services:") {
+				inServices = true
+				inTopLevelVolumes = false
+				inServiceVolumes = false
+				continue
+			} else if strings.HasPrefix(trimmed, "volumes:") {
+				inTopLevelVolumes = true
+				inServices = false
+				inServiceVolumes = false
+				continue
+			} else {
+				inServices = false
+				inTopLevelVolumes = false
+				inServiceVolumes = false
+			}
+		}
+
+		if inTopLevelVolumes {
+			if strings.HasSuffix(trimmed, ":") && !strings.HasPrefix(trimmed, "-") {
+				volKey := strings.TrimSpace(strings.TrimSuffix(trimmed, ":"))
+				if volKey != "" {
+					topLevelDeclaredVolumes[volKey] = true
+				}
+			}
+		}
+
+		if inServices {
+			if strings.HasPrefix(trimmed, "volumes:") {
+				inServiceVolumes = true
+				continue
+			}
+			if inServiceVolumes {
+				if strings.HasPrefix(trimmed, "-") {
+					rawVol := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+					rawVol = strings.Trim(rawVol, `"'`)
+					src := extractVolumeSource(rawVol)
+					if src != "" {
+						if isNamedVolume(src) {
+							serviceNamedVolumes = append(serviceNamedVolumes, src)
+							_ = exec.Command("docker", "volume", "create", src).Run()
+						} else {
+							var hostDir string
+							if strings.HasPrefix(src, "./") || strings.HasPrefix(src, "../") {
+								hostDir = filepath.Clean(filepath.Join(composeDir, src))
+							} else if strings.HasPrefix(src, "/") || strings.HasPrefix(src, "\\") {
+								hostDir = filepath.Clean(src)
+							}
+							if hostDir != "" {
+								_ = os.MkdirAll(hostDir, 0755)
+							}
+						}
+					}
+				} else if !strings.HasPrefix(trimmed, "#") {
+					inServiceVolumes = false
+				}
+			}
+		}
+	}
+
+	var missing []string
+	seen := make(map[string]bool)
+	for _, nv := range serviceNamedVolumes {
+		if !topLevelDeclaredVolumes[nv] && !seen[nv] {
+			seen[nv] = true
+			missing = append(missing, nv)
+		}
+	}
+
+	if len(missing) == 0 {
+		return false
+	}
+
+	var sb strings.Builder
+	sb.WriteString(content)
+	if !strings.HasSuffix(content, "\n") {
+		sb.WriteString("\n")
+	}
+
+	if len(topLevelDeclaredVolumes) == 0 {
+		sb.WriteString("\nvolumes:\n")
+	}
+	for _, m := range missing {
+		sb.WriteString(fmt.Sprintf("  %s:\n    name: %s\n", m, m))
+	}
+
+	_ = os.WriteFile(composePath, []byte(sb.String()), 0644)
+	log.Printf("[docktun] auto-declared missing named volumes %v in %s", missing, composePath)
+	return true
 }
 
 func sanitizeComposeFile(composePath string) bool {
