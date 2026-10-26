@@ -192,6 +192,7 @@ func main() {
     r.Post("/api/docker/containers/check-updates", dockerContainersHandler.CheckAllUpdates)
     r.Post("/api/docker/containers/{id}/check-update", dockerContainersHandler.CheckUpdate)
     r.Post("/api/docker/containers/{id}/update", dockerContainersHandler.Update)
+    r.Post("/api/docker/containers/{id}/relink-database", dockerContainersHandler.RelinkDatabase)
     r.Get("/api/docker/system/df", dockerContainersHandler.SystemDF)
     r.Post("/api/docker/system/prune", dockerContainersHandler.SystemPrune)
     r.Post("/api/docker/probe", dockerContainersHandler.ProbeTarget)
