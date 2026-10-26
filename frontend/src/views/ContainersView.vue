@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import ContainerTailscale from "../components/ContainerTailscale.vue"
+import { getPrimaryPort } from '../lib/containerPorts.mjs'
+import ContainerExposure from "../components/ContainerExposure.vue"
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -139,7 +140,7 @@ interface FileItem {
 const containers = ref<ContainerItem[]>([])
 const loading = ref(false)
 const searchQuery = ref('')
-const filter = ref<'all' | 'running' | 'stopped' | 'local' | 'public' | 'private' | 'updates'>('all')
+const filter = ref<'all' | 'running' | 'stopped' | 'local' | 'public' | 'private' | 'exposed' | 'updates'>('all')
 
 const checkingUpdates = ref(false)
 const checkingSingleUpdate = ref<Record<string, boolean>>({})
@@ -152,7 +153,6 @@ const availableUpdatesCount = computed(() => {
 })
 
 const actionLoading = ref<Record<string, string>>({})
-const exposeDrawerId = ref<string | null>(null)
 const exposeForm = ref<Record<string, ExposureSettings>>({})
 const exposeSaving = ref<Record<string, boolean>>({})
 
@@ -967,6 +967,7 @@ const filteredContainers = computed(() => {
     if (filter.value === 'local' && (!c.running || c.exposure_mode === 'public' || c.exposure_mode === 'private')) return false
     if (filter.value === 'public' && c.exposure_mode !== 'public') return false
     if (filter.value === 'private' && c.exposure_mode !== 'private') return false
+    if (filter.value === 'exposed' && c.exposure_mode !== 'public' && c.exposure_mode !== 'private') return false
     if (filter.value === 'updates' && !c.update_available) return false
 
     if (!searchQuery.value) return true
@@ -1248,10 +1249,10 @@ async function fetchContainers() {
         exposeForm.value[c.id] = {
           mode: c.exposure_mode || c.exposure?.mode || 'internal',
           hostname: c.hostname || c.exposure?.hostname || '',
-          target: c.target || c.exposure?.target || `http://${c.name}:80`,
+          target: c.target || c.exposure?.target || `http://${c.name}:${getPrimaryPort(c.ports)}`,
           private_type: c.private_type || c.exposure?.private_type || '',
           private_host: c.private_host || c.exposure?.private_host || '',
-          private_port: c.private_port || c.exposure?.private_port || 80,
+          private_port: c.private_port || c.exposure?.private_port || Number(getPrimaryPort(c.ports)),
           notes: c.notes || c.exposure?.notes || '',
         }
       }
@@ -1334,6 +1335,8 @@ async function checkSingleUpdate(container: ContainerItem) {
   checkingSingleUpdate.value[container.id] = true
   try {
     const res = await apiFetch(`/api/docker/containers/${container.id}/check-update`, { method: 'POST' })
+    const saved = await apiFetch<ExposureSettings>(`/api/docker/containers/${container.id}/exposure`)
+    Object.assign(payload, saved)
     await fetchContainers()
     if (selectedContainer.value && selectedContainer.value.id === container.id) {
       selectedContainer.value.update_available = res.update_available
@@ -1357,21 +1360,6 @@ async function checkSingleUpdate(container: ContainerItem) {
     alert(error.message || `Failed to check update for ${container.name}`)
   } finally {
     delete checkingSingleUpdate.value[container.id]
-  }
-}
-
-const reconcilingNetwork = ref(false)
-async function reconcileNetworkDNS() {
-  reconcilingNetwork.value = true
-  try {
-    const res: any = await apiFetch('/api/docker/network/reconcile', { method: 'POST' })
-    await fetchContainers()
-    const logDetails = (res.logs && res.logs.length > 0) ? '\n\n' + res.logs.join('\n') : ''
-    alert(`✔ Docker networks reconciled & DNS refreshed successfully!${logDetails}`)
-  } catch (err: any) {
-    alert(`Network reconciliation failed: ${err.message}`)
-  } finally {
-    reconcilingNetwork.value = false
   }
 }
 
@@ -1414,30 +1402,6 @@ async function performUpdate(container: ContainerItem) {
 
 const exposeMsg = ref<Record<string, { type: 'success' | 'error'; text: string }>>({})
 
-function toggleExposeDrawer(container: ContainerItem) {
-  if (exposeDrawerId.value === container.id) {
-    exposeDrawerId.value = null
-  } else {
-    exposeDrawerId.value = container.id
-    const pPort = getPrimaryPort(container.ports)
-    if (!exposeForm.value[container.id]) {
-      exposeForm.value[container.id] = {
-        mode: container.exposure_mode || 'internal',
-        hostname: container.hostname || '',
-        target: container.target || `http://${container.name}:${pPort}`,
-        private_type: container.private_type || '',
-        private_host: container.private_host || '',
-        private_port: container.private_port || parseInt(pPort, 10) || 80,
-        notes: container.notes || '',
-        zero_trust_enabled: container.zero_trust_enabled || false,
-        zero_trust_emails: container.zero_trust_emails || '',
-        zero_trust_auth_type: container.zero_trust_auth_type || 'email',
-        zero_trust_session: container.zero_trust_session || '24h',
-      }
-    }
-  }
-}
-
 async function saveExposure(container: ContainerItem) {
   exposeSaving.value[container.id] = true
   try {
@@ -1455,17 +1419,13 @@ async function saveExposure(container: ContainerItem) {
     }
     exposeMsg.value[container.id] = {
       type: 'success',
-      text: payload.mode === 'public'
-        ? `Tunnel route applied! Service live on Cloudflare.`
-        : 'Access mode saved successfully!',
+      text: 'Exposure settings saved.',
     }
     setTimeout(() => {
       delete exposeMsg.value[container.id]
     }, 6000)
-    exposeDrawerId.value = null
   } catch (error: any) {
     exposeMsg.value[container.id] = { type: 'error', text: 'Save failed: ' + error.message }
-    alert(error.message || 'Failed to save exposure settings')
   } finally {
     exposeSaving.value[container.id] = false
   }
@@ -2036,15 +1996,6 @@ watch(modalLogsAutoRefresh, (enabled) => {
 })
 
 // Extract first published port if any
-function getPrimaryPort(portsStr?: string): string {
-  if (!portsStr) return '80'
-  const match = portsStr.match(/:(\d+)->/)
-  if (match) return match[1]
-  const plainMatch = portsStr.match(/(\d+)\/tcp/)
-  if (plainMatch) return plainMatch[1]
-  return '80'
-}
-
 let timer: any = null
 const route = useRoute()
 const router = useRouter()
@@ -2062,7 +2013,7 @@ function checkRouteParams() {
       }
       if (cleanTargetName) {
         const cName = c.name.replace(/^\//, '').toLowerCase()
-        return cName === cleanTargetName || cName.startsWith(cleanTargetName) || cleanTargetName.startsWith(cName)
+        return cName === cleanTargetName
       }
       return false
     })
@@ -2184,15 +2135,7 @@ onUnmounted(() => {
           </span>
         </button>
 
-        <button
-          @click="reconcileNetworkDNS"
-          :disabled="reconcilingNetwork || loading"
-          class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-cyan-700 hover:border-cyan-500/60 hover:bg-cyan-50/30"
-          title="Bridge Docker networks, connect cloudflared, and flush DNS caches"
-        >
-          <Network class="h-3.5 w-3.5 text-cyan-600" :class="reconcilingNetwork ? 'animate-spin' : ''" />
-          <span>{{ reconcilingNetwork ? 'Reconciling…' : 'Repair Network & DNS' }}</span>
-        </button>
+
 
         <button
           @click="fetchContainers"
@@ -2244,10 +2187,10 @@ onUnmounted(() => {
 
       <div class="cyber-card flex flex-col justify-between p-3.5">
         <div class="flex items-center justify-between text-xs text-cyan-600">
-          <span>Public Ingress</span>
+          <span>Exposed</span>
           <Globe class="h-4 w-4 text-cyan-600" />
         </div>
-        <div class="mt-2 text-2xl font-bold text-cyan-600 font-mono">{{ summary.publicCount }}</div>
+        <div class="mt-2 text-2xl font-bold text-cyan-600 font-mono">{{ summary.publicCount + summary.privateCount }}</div>
       </div>
 
       <router-link
@@ -2284,19 +2227,8 @@ onUnmounted(() => {
         >
           Running ({{ summary.running }})
         </button>
-        <button
-          @click="filter = 'local'"
-          class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors"
-          :class="filter === 'local' ? 'bg-slate-100 text-violet-300 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
-        >
-          Local
-        </button>
-        <button
-          @click="filter = 'public'"
-          class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors"
-          :class="filter === 'public' ? 'bg-slate-100 text-cyan-700 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
-        >
-          Public ({{ summary.publicCount }})
+        <button @click="filter = 'exposed'" class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors" :class="filter === 'exposed' ? 'bg-slate-100 text-cyan-700' : 'text-slate-600 hover:text-slate-800'">
+          Exposed ({{ summary.publicCount + summary.privateCount }})
         </button>
         <button
           @click="filter = 'updates'"
@@ -2699,10 +2631,10 @@ onUnmounted(() => {
               <span
                 v-if="container.exposure_mode === 'public'"
                 class="inline-flex items-center gap-1.5 rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-cyan-700"
-                title="Public Cloudflare Tunnel Ingress Active"
+                title="Cloudflare exposure configured"
               >
                 <Globe class="h-3 w-3" />
-                <span>Public Ingress</span>
+                <span>Cloudflare</span>
               </span>
               <span
                 v-if="container.exposure_mode === 'public' && container.zero_trust_enabled"
@@ -2717,24 +2649,8 @@ onUnmounted(() => {
                 class="inline-flex items-center gap-1.5 rounded-full border border-violet-500/40 bg-violet-500/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet-300"
               >
                 <Shield class="h-3 w-3" />
-                <span>Private Mesh ({{ container.private_type || '' }})</span>
+                <span>{{ container.private_type || 'Private exposure' }}</span>
               </span>
-              <span
-                v-else-if="container.running"
-                class="inline-flex items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-violet-300 font-mono"
-                title="Local mDNS Active"
-              >
-                <Wifi class="h-3 w-3" />
-                <span>{{ container.name }}.local</span>
-              </span>
-              <span
-                v-else
-                class="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white/60 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500"
-              >
-                <Lock class="h-3 w-3 text-slate-500" />
-                <span>Internal</span>
-              </span>
-
               <!-- Update Available Badge -->
               <span
                 v-if="container.update_available"
@@ -2758,29 +2674,6 @@ onUnmounted(() => {
 
             <!-- Local Address (Default) and Public Ingress if Exposed -->
             <div class="flex flex-wrap items-center gap-3 pt-1 text-xs">
-              <div class="flex items-center gap-1.5 font-mono">
-                <span class="text-slate-500 font-sans text-[11px]">Local:</span>
-                <a
-                  :href="`http://${container.name}.local`"
-                  target="_blank"
-                  rel="noopener"
-                  @click.stop
-                  class="inline-flex items-center gap-1 text-violet-300 hover:text-violet-200 hover:underline font-semibold"
-                  title="Open local .local address"
-                >
-                  <span>http://{{ container.name }}.local</span>
-                  <ExternalLink class="h-3 w-3 text-violet-400/80" />
-                </a>
-                <button
-                  @click.stop="copyToClipboard('mdns-' + container.id, `http://${container.name}.local`)"
-                  class="text-slate-500 hover:text-slate-700 ml-0.5"
-                  title="Copy local .local URL"
-                >
-                  <Check v-if="copiedKey === 'mdns-' + container.id" class="h-3 w-3 text-emerald-600" />
-                  <Copy v-else class="h-3 w-3" />
-                </button>
-              </div>
-
               <div v-if="container.exposure_mode === 'public' && container.hostname" class="flex items-center gap-1.5 font-mono">
                 <span class="text-slate-500 font-sans text-[11px]">Public:</span>
                 <a
@@ -2807,18 +2700,7 @@ onUnmounted(() => {
               title="Open Container Control Center (Overview, Compose, .env, Files, Logs)"
             >
               <Sliders class="h-3.5 w-3.5" />
-              <span>Control Center</span>
-            </button>
-
-            <!-- Quick Exec / Terminal Button -->
-            <button
-              v-if="container.running"
-              @click="openContainerModal(container, 'exec')"
-              class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-emerald-700/90 hover:text-emerald-200 hover:border-emerald-500/50"
-              title="Open quick command console / terminal inside container"
-            >
-              <Terminal class="h-3.5 w-3.5 text-emerald-600" />
-              <span>Exec</span>
+              <span>Manage</span>
             </button>
 
             <!-- 1-Click Update Button (Shown when update available) -->
@@ -2853,40 +2735,16 @@ onUnmounted(() => {
               <span>{{ actionLoading[container.id] === 'stop' ? 'Stopping…' : 'Stop' }}</span>
             </button>
 
-            <button
-              @click="runAction(container, 'restart')"
-              :disabled="!!actionLoading[container.id]"
-              class="cyber-btn-secondary flex items-center gap-1.5 text-xs"
-            >
-              <RotateCcw class="h-3.5 w-3.5" :class="actionLoading[container.id] === 'restart' ? 'animate-spin' : ''" />
-              <span>Restart</span>
-            </button>
-
-            <button
-              @click="toggleExposeDrawer(container)"
-              class="cyber-btn-secondary flex items-center gap-1.5 text-xs"
-              :class="exposeDrawerId === container.id ? 'border-cyan-500 text-cyan-700' : ''"
-            >
-              <Globe class="h-3.5 w-3.5 text-cyan-600" />
-              <span>Expose</span>
-            </button>
-
-            <button
-              @click="openContainerModal(container, 'logs')"
-              class="cyber-btn-secondary flex items-center gap-1.5 text-xs"
-            >
-              <ScrollText class="h-3.5 w-3.5 text-slate-600" />
-              <span>Logs</span>
-            </button>
-
-            <button
-              @click="removeContainer(container)"
-              :disabled="!!actionLoading[container.id]"
-              class="cyber-btn-danger flex items-center gap-1.5 text-xs"
-              title="Delete container"
-            >
-              <Trash2 class="h-3.5 w-3.5" />
-            </button>
+            <details class="relative">
+              <summary class="cyber-btn-secondary cursor-pointer text-xs">More</summary>
+              <div class="absolute right-0 z-20 mt-2 flex min-w-40 flex-col gap-1 rounded-lg border border-slate-200 bg-white p-2 shadow-lg" @click="($event.currentTarget as HTMLElement).parentElement?.removeAttribute('open')">
+                <button class="cyber-btn-secondary text-xs" @click="openContainerModal(container, 'access')">Exposure</button>
+                <button class="cyber-btn-secondary text-xs" @click="openContainerModal(container, 'logs')">Logs</button>
+                <button v-if="container.running" class="cyber-btn-secondary text-xs" @click="openContainerModal(container, 'exec')">Terminal</button>
+                <button class="cyber-btn-secondary text-xs" :disabled="!!actionLoading[container.id]" @click="runAction(container, 'restart')">Restart</button>
+                <button class="cyber-btn-danger text-xs" :disabled="!!actionLoading[container.id]" @click="removeContainer(container)">Delete container</button>
+              </div>
+            </details>
           </div>
         </div>
 
@@ -2949,206 +2807,7 @@ onUnmounted(() => {
         </div>
 
         <!-- Inline Expose / Exposure Config Drawer -->
-        <div v-if="exposeDrawerId === container.id" class="mt-4 rounded-xl border border-cyan-500/30 bg-slate-50 p-4">
-          <div class="flex items-center justify-between border-b border-slate-200 pb-3">
-            <div class="flex items-center gap-2">
-              <Globe class="h-4 w-4 text-cyan-600" />
-              <h3 class="text-xs font-bold uppercase tracking-[0.18em] text-slate-800">
-                Exposure & Ingress Configuration: {{ container.name }}
-              </h3>
-            </div>
-            <button @click="exposeDrawerId = null" class="text-slate-600 hover:text-slate-800">
-              <X class="h-4 w-4" />
-            </button>
-          </div>
 
-          <div class="mt-4 grid gap-4 md:grid-cols-3">
-            <div>
-              <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                Access Mode
-              </label>
-              <select v-model="getExpose(container.id).mode" class="cyber-input">
-                <option value="internal">Internal (No Ingress)</option>
-                <option value="public">Public (Cloudflare Tunnel)</option>
-                <option value="private">Private (Tailscale / WireGuard)</option>
-              </select>
-            </div>
-
-            <!-- Public Mode Inputs -->
-            <template v-if="getExpose(container.id).mode === 'public'">
-              <div>
-                <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                  Public Hostname (FQDN)
-                </label>
-                <input
-                  v-model="getExpose(container.id).hostname"
-                  type="text"
-                  placeholder="app.yourdomain.com"
-                  class="cyber-input"
-                />
-              </div>
-              <div>
-                <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                  Service Target URL
-                </label>
-                <input
-                  v-model="getExpose(container.id).target"
-                  type="text"
-                  :placeholder="`http://${container.name}:80`"
-                  class="cyber-input"
-                />
-              </div>
-
-              <!-- Optional Zero Trust Protection -->
-              <div class="col-span-full pt-3 border-t border-slate-200 space-y-3">
-                <label class="flex items-start gap-2.5 cursor-pointer p-2.5 rounded-lg border border-slate-200 bg-white/60 hover:border-slate-300 transition">
-                  <input
-                    type="checkbox"
-                    v-model="getExpose(container.id).zero_trust_enabled"
-                    class="h-4 w-4 mt-0.5 rounded border-slate-300 bg-white text-indigo-500 focus:ring-indigo-500"
-                  />
-                  <div class="space-y-0.5 flex-1">
-                    <div class="text-xs font-semibold text-slate-800 flex items-center justify-between">
-                      <div class="flex items-center gap-1.5">
-                        <ShieldCheck class="h-3.5 w-3.5 text-indigo-600" />
-                        <span>Protect with Cloudflare Zero Trust Access</span>
-                        <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-700 border border-indigo-500/30">Optional</span>
-                      </div>
-                      <span v-if="cfSettings?.has_token" class="text-[10px] text-emerald-600 font-mono">
-                        ✓ CF Token Connected
-                      </span>
-                      <span v-else class="text-[10px] text-amber-600 font-mono">
-                        ⚠️ No API Token (Check Settings)
-                      </span>
-                    </div>
-                    <div class="text-[10px] text-slate-600">
-                      Intercept requests at Cloudflare edge with an authentication wall before forwarding to this container.
-                    </div>
-                  </div>
-                </label>
-
-                <!-- Multi-auth & Session Duration controls -->
-                <div v-if="getExpose(container.id).zero_trust_enabled" class="pl-6 space-y-2.5">
-                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                        Authentication Method
-                      </label>
-                      <select v-model="getExpose(container.id).zero_trust_auth_type" class="cyber-input text-xs w-full">
-                        <option value="email">Email OTP PIN (Specific Users)</option>
-                        <option value="domain">Corporate / Domain Whitelist</option>
-                        <option value="everyone">Any Authenticated User / Everyone</option>
-                        <option value="ip">IP / CIDR Network Whitelist</option>
-                        <option value="bypass_ip">IP / CIDR Bypass (No Prompt)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                        Session Timeout
-                      </label>
-                      <select v-model="getExpose(container.id).zero_trust_session" class="cyber-input text-xs w-full">
-                        <option value="15m">15 Minutes</option>
-                        <option value="1h">1 Hour</option>
-                        <option value="24h">24 Hours (Default)</option>
-                        <option value="7d">7 Days</option>
-                        <option value="30d">30 Days</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div v-if="getExpose(container.id).zero_trust_auth_type !== 'everyone'">
-                    <label class="block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                      <span v-if="getExpose(container.id).zero_trust_auth_type === 'email'">Allowed Email Addresses (Comma-separated)</span>
-                      <span v-else-if="getExpose(container.id).zero_trust_auth_type === 'domain'">Allowed Email Domains (e.g. company.com)</span>
-                      <span v-else-if="getExpose(container.id).zero_trust_auth_type === 'ip'">Allowed Client IP / CIDRs</span>
-                      <span v-else-if="getExpose(container.id).zero_trust_auth_type === 'bypass_ip'">Bypass Client IP / CIDRs</span>
-                    </label>
-                    <input
-                      v-model="getExpose(container.id).zero_trust_emails"
-                      type="text"
-                      :placeholder="
-                        getExpose(container.id).zero_trust_auth_type === 'email' ? 'admin@example.com, developer@company.com' :
-                        getExpose(container.id).zero_trust_auth_type === 'domain' ? 'company.com, myfamily.org' :
-                        '192.168.1.0/24, 73.120.45.6/32'
-                      "
-                      class="cyber-input text-xs font-mono"
-                    />
-                  </div>
-                  <div v-else class="text-[10px] text-indigo-700/80 bg-indigo-50/30 border border-indigo-900/40 rounded p-2">
-                    All users who successfully authenticate with your Cloudflare Zero Trust Identity Provider will be allowed.
-                  </div>
-                </div>
-              </div>
-            </template>
-
-            <!-- Private Mode Inputs -->
-            <template v-if="getExpose(container.id).mode === 'private'">
-              <ContainerTailscale v-if="getExpose(container.id).private_type === 'tailscale'" :key="container.id" :container-id="container.id" />
-              <div><label class="block text-xs">Container target (name:internal port)</label><input v-model="getExpose(container.id).target" :placeholder="container.name + ':8080'" class="cyber-input" /><p class="text-xs text-slate-500">Only this app’s selected TCP port is forwarded. Blank uses the private port as the container port.</p></div>
-              <div>
-                <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                  Private Mesh Type
-                </label>
-                <select v-model="getExpose(container.id).private_type" class="cyber-input">
-                  <option value="" disabled>Choose a provider</option>
-                  <option value="tailscale">Tailscale</option>
-                  <option value="wireguard">WireGuard</option>
-                  <option value="mesh">Custom Mesh</option>
-                </select>
-              </div>
-              <div>
-                <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                  Tailscale address (filled after saving) / Other mesh IP
-                </label>
-                <input
-                  v-model="getExpose(container.id).private_host"
-                  type="text"
-                  placeholder="100.x.y.z or 10.0.0.x"
-                  class="cyber-input"
-                />
-              </div>
-              <div>
-                <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
-                  Private listening port
-                </label>
-                <input
-                  v-model.number="getExpose(container.id).private_port"
-                  type="number"
-                  placeholder="8080"
-                  class="cyber-input"
-                />
-              </div>
-            </template>
-          </div>
-
-          <div class="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 border-t border-slate-200">
-            <p class="text-xs text-slate-600">
-              <span v-if="getExpose(container.id).mode === 'public'" class="text-cyan-700">
-                Saving public mode connects the container to the tunnel network and configures Cloudflare routing.
-              </span>
-              <span v-else-if="getExpose(container.id).mode === 'private'" class="text-violet-300">
-                Each Tailscale app has its own device and address, so apps can use the same private port. Other mesh types require their own routing.
-              </span>
-              <span v-else class="text-slate-500">
-                Removes public ingress rules for this container. Accessible inside Docker network.
-              </span>
-            </p>
-            <div class="flex items-center gap-2">
-              <button @click="exposeDrawerId = null" class="cyber-btn-secondary text-xs">
-                Cancel
-              </button>
-              <button
-                @click="saveExposure(container)"
-                :disabled="exposeSaving[container.id]"
-                class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
-              >
-                <ShieldCheck class="h-3.5 w-3.5" />
-                <span>{{ exposeSaving[container.id] ? 'Saving & Applying…' : 'Save & Apply Ingress' }}</span>
-              </button>
-            </div>
-          </div>
-        </div>
       </div>
         </div>
       </div>
@@ -3552,230 +3211,13 @@ onUnmounted(() => {
           <!-- TAB 2: ACCESS & NETWORKS                       -->
           <!-- ============================================== -->
           <div v-else-if="selectedTab === 'access'" class="space-y-5">
-            <!-- 1. PRIMARY LOCAL ACCESS (mDNS .local) -->
-            <div class="rounded-xl border border-violet-500/30 bg-slate-50 p-5 space-y-4">
-              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
-                <div class="flex items-center gap-2">
-                  <Wifi class="h-5 w-5 text-violet-400" />
-                  <div>
-                    <h4 class="text-sm font-bold text-slate-900">Local LAN Access (mDNS)</h4>
-                    <p class="text-xs text-slate-600">
-                      Reach this container directly from any computer, phone, or tablet on your Wi-Fi with zero configuration.
-                    </p>
-                  </div>
-                </div>
-                <span class="rounded bg-violet-950/60 border border-violet-800/50 px-2.5 py-0.5 text-[10px] font-mono font-semibold text-violet-300">
-                  Default (Internal Only)
-                </span>
-              </div>
-
-              <!-- Primary URL Box -->
-              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-violet-500/20 bg-violet-950/20 p-4">
-                <div class="space-y-1">
-                  <div class="text-[10px] uppercase tracking-wider font-semibold text-violet-300">Portless LAN Address</div>
-                  <div class="flex items-center gap-2">
-                    <span class="font-mono text-base font-bold text-slate-900">
-                      http://{{ selectedContainer.name }}.local
-                    </span>
-                  </div>
-                </div>
-
-                <div class="flex items-center gap-2">
-                  <a
-                    :href="`http://${selectedContainer.name}.local`"
-                    target="_blank"
-                    rel="noopener"
-                    class="cyber-btn flex items-center gap-1.5 text-xs text-violet-300 border-violet-700 bg-violet-950/40 hover:bg-violet-900/50"
-                  >
-                    <span>Open</span>
-                    <ExternalLink class="h-3 w-3" />
-                  </a>
-                  <button
-                    @click="copyToClipboard('mdns', `http://${selectedContainer.name}.local`)"
-                    class="cyber-btn-secondary text-xs flex items-center gap-1.5"
-                  >
-                    <Check v-if="copiedKey === 'mdns'" class="h-3 w-3 text-emerald-600" />
-                    <Copy v-else class="h-3 w-3" />
-                    <span>Copy</span>
-                  </button>
-                </div>
-              </div>
-
-              <!-- Compact Internal Networking Details -->
-              <div class="rounded-lg border border-slate-200/80 bg-white/40 p-3 space-y-2">
-                <div class="flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
-                  <div class="flex items-center gap-2">
-                    <span class="text-slate-500 font-sans text-[11px] uppercase tracking-wider font-semibold">Docker DNS:</span>
-                    <span class="text-emerald-600 font-bold">http://{{ selectedContainer.name }}:{{ getPrimaryPort(selectedContainer.ports) || '80' }}</span>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <span class="text-slate-500 font-sans text-[11px] uppercase tracking-wider font-semibold">Host Port Mapping:</span>
-                    <span :class="selectedContainer.ports ? 'text-amber-700 font-bold' : 'text-slate-500 font-sans'">
-                      {{ selectedContainer.ports || 'None (mDNS proxy only)' }}
-                    </span>
-                  </div>
-                </div>
-                <p class="text-[11px] text-slate-500 font-sans border-t border-slate-200/60 pt-2 leading-relaxed">
-                  <span class="text-slate-600 font-semibold">Note:</span> Docker DNS & host port mappings are internal routing details for container-to-container links. On your local network, browse directly with zero port numbers via <span class="text-violet-300 font-mono font-bold">http://{{ selectedContainer.name }}.local</span>.
-                </p>
-              </div>
+            <div class="cyber-card space-y-2">
+              <h3 class="text-sm font-semibold">Local networking</h3>
+              <p class="text-sm text-slate-600">Published ports: <span class="font-mono">{{ selectedContainer.ports || 'None' }}</span></p>
+              <p class="text-sm text-slate-600">Docker networks: {{ selectedContainer.networks?.join(', ') || 'None' }}</p>
+              <p class="text-xs text-slate-500">Docker service names resolve within shared Docker networks. LAN access depends on published ports or a configured local proxy.</p>
             </div>
-
-            <!-- 2. OPTIONAL PUBLIC INGRESS (Cloudflare Tunnel) -->
-            <div class="rounded-xl border border-slate-200 bg-slate-50 p-5 space-y-4">
-              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
-                <div class="flex items-center gap-2">
-                  <Globe class="h-5 w-5 text-cyan-600" />
-                  <div>
-                    <h4 class="text-sm font-bold text-slate-900">Public Ingress & Remote Access</h4>
-                    <p class="text-xs text-slate-600">
-                      Optionally expose this container to the global internet via Cloudflare Tunnel.
-                    </p>
-                  </div>
-                </div>
-                <span
-                  class="rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider self-start sm:self-auto"
-                  :class="getExpose(selectedContainer.id).mode === 'public' ? 'bg-cyan-500/20 text-cyan-700 border border-cyan-500/40' : 'bg-slate-100 text-slate-600 border border-slate-300'"
-                >
-                  {{ getExpose(selectedContainer.id).mode === 'public' ? 'Public Tunnel Active' : 'Internal Only' }}
-                </span>
-              </div>
-
-              <div class="grid gap-4 md:grid-cols-3">
-                <div>
-                  <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Access Mode</label>
-                  <select v-model="getExpose(selectedContainer.id).mode" class="cyber-input text-xs">
-                    <option value="internal">Internal Only (Local mDNS)</option>
-                    <option value="public">Public (Cloudflare Tunnel)</option>
-                    <option value="private">Private Mesh (Tailscale/WireGuard)</option>
-                  </select>
-                </div>
-
-                <div v-if="getExpose(selectedContainer.id).mode === 'public'">
-                  <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Public Hostname (FQDN)</label>
-                  <input
-                    v-model="getExpose(selectedContainer.id).hostname"
-                    type="text"
-                    placeholder="app.yourdomain.com"
-                    class="cyber-input text-xs font-mono"
-                  />
-                </div>
-
-                <div v-if="getExpose(selectedContainer.id).mode === 'public'">
-                  <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Tunnel Service Target</label>
-                  <input
-                    v-model="getExpose(selectedContainer.id).target"
-                    type="text"
-                    :placeholder="`http://${selectedContainer.name}:${getPrimaryPort(selectedContainer.ports)}`"
-                    class="cyber-input text-xs font-mono"
-                  />
-                  <p class="text-[10px] text-slate-500 font-mono mt-1">
-                    Internal target on cloudflared network: http://{{ selectedContainer.name }}:{{ getPrimaryPort(selectedContainer.ports) }}
-                  </p>
-                </div>
-
-                <!-- Private Mesh Options -->
-                <template v-if="getExpose(selectedContainer.id).mode === 'private'">
-              <ContainerTailscale v-if="getExpose(selectedContainer.id).private_type === 'tailscale'" :key="selectedContainer.id" :container-id="selectedContainer.id" />
-              <div><label class="block text-xs">Container target (name:internal port)</label><input v-model="getExpose(selectedContainer.id).target" :placeholder="selectedContainer.name + ':8080'" class="cyber-input" /><p class="text-xs">Each app has its own Tailscale device. No subnet or neighboring container access is enabled.</p></div>
-                  <div>
-                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Mesh Type</label>
-                    <select v-model="getExpose(selectedContainer.id).private_type" class="cyber-input text-xs">
-                      <option value="" disabled>Choose a provider</option>
-                  <option value="tailscale">Tailscale</option>
-                      <option value="wireguard">WireGuard</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Tailscale address (filled after saving) / Other mesh IP</label>
-                    <input
-                      v-model="getExpose(selectedContainer.id).private_host"
-                      type="text"
-                      placeholder="100.x.y.z"
-                      class="cyber-input text-xs font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Private listening port</label>
-                    <input
-                      v-model.number="getExpose(selectedContainer.id).private_port"
-                      type="number"
-                      placeholder="8080"
-                      class="cyber-input text-xs font-mono"
-                    />
-                  </div>
-                </template>
-              </div>
-
-              <!-- Internal Mode Note -->
-              <div v-if="getExpose(selectedContainer.id).mode === 'internal'" class="rounded border border-slate-200 bg-white/40 p-3 text-xs text-slate-600">
-                <span class="text-slate-700 font-semibold">🔒 Internal Only:</span>
-                This container is kept private to your local network. It is not connected to Cloudflare and has no public internet route.
-              </div>
-
-              <!-- DNS Requirement Note for Public Mode -->
-              <div v-if="getExpose(selectedContainer.id).mode === 'public'" class="rounded-lg border border-cyan-900/40 bg-cyan-50/20 p-3.5 text-xs text-slate-600 space-y-1.5">
-                <div class="flex items-center gap-1.5 text-cyan-700 font-semibold">
-                  <Globe class="h-4 w-4" />
-                  <span>Cloudflare DNS Requirement</span>
-                </div>
-                <p class="text-[11px] leading-relaxed">
-                  For your public URL to work, you must have a <strong class="text-cyan-700">CNAME</strong> record in your Cloudflare DNS dashboard pointing <strong class="text-slate-800 font-mono">{{ getExpose(selectedContainer.id).hostname || 'your-hostname' }}</strong> to your tunnel (<code class="text-cyan-600 font-mono">&lt;tunnel-id&gt;.cfargotunnel.com</code>) with the orange cloud (<strong class="text-cyan-700">Proxied</strong>) enabled.
-                </p>
-              </div>
-
-              <!-- Active Public Link preview -->
-              <div v-if="getExpose(selectedContainer.id).mode === 'public' && getExpose(selectedContainer.id).hostname" class="rounded border border-cyan-900/50 bg-cyan-50/30 p-3 flex items-center justify-between">
-                <div class="flex items-center gap-2 text-xs">
-                  <span class="text-slate-600">Live URL:</span>
-                  <a
-                    :href="`https://${getExpose(selectedContainer.id).hostname}`"
-                    target="_blank"
-                    rel="noopener"
-                    class="font-mono text-cyan-700 hover:underline flex items-center gap-1 font-bold"
-                  >
-                    https://{{ getExpose(selectedContainer.id).hostname }}
-                    <ExternalLink class="h-3 w-3" />
-                  </a>
-                </div>
-                <button
-                  @click="copyToClipboard('puburl', `https://${getExpose(selectedContainer.id).hostname}`)"
-                  class="cyber-btn-sm text-xs"
-                >
-                  <Check v-if="copiedKey === 'puburl'" class="h-3 w-3 text-emerald-600 mr-1" />
-                  <Copy v-else class="h-3 w-3 mr-1" />
-                  <span>Copy</span>
-                </button>
-              </div>
-
-              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-200">
-                <div class="space-y-0.5">
-                  <div v-if="exposeMsg[selectedContainer.id]" class="flex items-center gap-1.5 text-xs font-semibold" :class="exposeMsg[selectedContainer.id].type === 'success' ? 'text-emerald-600' : 'text-red-600'">
-                    <CheckCircle2 v-if="exposeMsg[selectedContainer.id].type === 'success'" class="h-3.5 w-3.5" />
-                    <AlertCircle v-else class="h-3.5 w-3.5" />
-                    <span>{{ exposeMsg[selectedContainer.id].text }}</span>
-                  </div>
-                  <div v-else class="text-xs text-slate-500">
-                    <span v-if="getExpose(selectedContainer.id).mode === 'public'">
-                      Public mode attaches container to <code class="text-slate-600">cloudflared</code> and applies tunnel routing.
-                    </span>
-                    <span v-else>
-                      Keeps container internal to local mDNS (.local) network only.
-                    </span>
-                  </div>
-                </div>
-
-                <button
-                  @click="saveExposure(selectedContainer)"
-                  :disabled="exposeSaving[selectedContainer.id]"
-                  class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50 self-start sm:self-auto"
-                >
-                  <RotateCcw v-if="exposeSaving[selectedContainer.id]" class="h-3.5 w-3.5 animate-spin" />
-                  <ShieldCheck v-else class="h-3.5 w-3.5" />
-                  <span>{{ exposeSaving[selectedContainer.id] ? 'Saving & Applying…' : 'Save Access Mode' }}</span>
-                </button>
-              </div>
-            </div>
+            <ContainerExposure :container="selectedContainer" :settings="getExpose(selectedContainer.id)" :saving="exposeSaving[selectedContainer.id]" :message="exposeMsg[selectedContainer.id]" @save="saveExposure(selectedContainer)" />
           </div>
 
           <!-- ============================================== -->

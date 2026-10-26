@@ -14,7 +14,7 @@ const nav = [
   { to: '/containers', label: 'Containers', icon: Server },
   { to: '/metrics', label: 'Metrics', icon: Activity },
   { to: '/storage', label: 'Storage', icon: HardDrive },
-  { to: '/access', label: 'Remote Access', icon: Globe },
+  { to: '/access', label: 'Exposure providers', icon: Globe },
   { to: '/logs', label: 'Logs & Audit', icon: ScrollText },
   { to: '/notifications', label: 'Alerts', icon: Bell },
   { to: '/settings', label: 'Settings', icon: Cog },
@@ -40,7 +40,7 @@ async function handleLogout() {
             DockTun
             <span class="text-[10px] font-medium px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-700 border border-indigo-500/30">Workspace</span>
           </div>
-          <div class="text-[11px] text-slate-600">Tunnels & Containers</div>
+          <div class="text-[11px] text-slate-600">Docker management</div>
         </div>
       </div>
     </div>

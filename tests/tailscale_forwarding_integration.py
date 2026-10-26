@@ -90,7 +90,7 @@ try:
     for index in range(2):
         web_app = web + str(index)
         containers.append(web_app)
-        docker('run', '-d', '--name', web_app, '--network', network, 'busybox:1.37', 'sh', '-c', 'mkdir /www; echo app-' + str(index) + ' > /www/index.html; httpd -f -p 80 -h /www')
+        docker('run', '-d', '--name', web_app, '--network', network, '-e', 'DB_HOST=' + web_app + '-postgres', 'busybox:1.37', 'sh', '-c', 'mkdir /www; echo app-' + str(index) + ' > /www/index.html; httpd -f -p 80 -h /www')
         node = 'docktun-ts-' + hashlib.sha256(web_app.encode()).hexdigest()[:20]
         containers.append(node); node_networks.append(node); volumes.append(node + '-state')
         status = request('/api/docker/containers/' + web_app + '/tailscale', {})
