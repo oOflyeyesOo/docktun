@@ -43,6 +43,7 @@ interface IngressRule {
   hostname: string
   service: string
   noTLSVerify: boolean
+  httpHostHeader?: string
 }
 
 interface BackupItem {
@@ -186,16 +187,21 @@ async function loadConfig() {
   }
 }
 
+function cleanYamlVal(val?: string): string {
+  if (!val) return ''
+  return val.trim().replace(/^["']|["']$/g, '').trim()
+}
+
 function parseYaml(content: string) {
   const lines = content.split('\n')
   rules.value = []
   for (const line of lines) {
     const m = line.match(/^tunnel:\s*(.+)/)
-    if (m) tunnelId.value = m[1].trim()
+    if (m) tunnelId.value = cleanYamlVal(m[1])
     const cm = line.match(/^credentials-file:\s*(.+)/)
-    if (cm) credentialsFile.value = cm[1].trim()
+    if (cm) credentialsFile.value = cleanYamlVal(cm[1])
     const pm = line.match(/^protocol:\s*(.+)/)
-    if (pm) protocol.value = pm[1].trim()
+    if (pm) protocol.value = cleanYamlVal(pm[1])
   }
 
   let inIngress = false
@@ -211,6 +217,7 @@ function parseYaml(content: string) {
     const hm = line.match(/^\s*-\s*hostname:\s*["']?([^"'\s]+)["']?/)
     const sm = line.match(/^\s*service:\s*["']?([^"'\s]+)["']?/)
     const tm = line.match(/noTLSVerify:\s*true/)
+    const hhm = line.match(/httpHostHeader:\s*["']?([^"'\s]+)["']?/)
 
     if (isStandaloneService) {
       if (cur.hostname) {
@@ -218,6 +225,7 @@ function parseYaml(content: string) {
           hostname: cur.hostname,
           service: cur.service || '',
           noTLSVerify: cur.noTLSVerify || false,
+          httpHostHeader: cur.httpHostHeader || '',
         })
         cur = {}
       }
@@ -231,13 +239,16 @@ function parseYaml(content: string) {
           hostname: cur.hostname,
           service: cur.service || '',
           noTLSVerify: cur.noTLSVerify || false,
+          httpHostHeader: cur.httpHostHeader || '',
         })
       }
-      cur = { hostname: hm[1].trim() }
+      cur = { hostname: cleanYamlVal(hm[1]) }
     } else if (sm && cur.hostname) {
-      cur.service = sm[1].trim()
+      cur.service = cleanYamlVal(sm[1])
     } else if (tm) {
       cur.noTLSVerify = true
+    } else if (hhm) {
+      cur.httpHostHeader = cleanYamlVal(hhm[1])
     }
   }
 
@@ -246,17 +257,22 @@ function parseYaml(content: string) {
       hostname: cur.hostname,
       service: cur.service || '',
       noTLSVerify: cur.noTLSVerify || false,
+      httpHostHeader: cur.httpHostHeader || '',
     })
   }
 }
 
 function generateYaml(): string {
-  let y = `tunnel: "${tunnelId.value}"\ncredentials-file: "${credentialsFile.value || '/etc/cloudflared/credentials.json'}"\nprotocol: ${protocol.value || 'http2'}\n\ningress:\n`
+  const tid = cleanYamlVal(tunnelId.value)
+  const creds = cleanYamlVal(credentialsFile.value) || '/etc/cloudflared/credentials.json'
+  const proto = cleanYamlVal(protocol.value) || 'http2'
+
+  let y = `tunnel: ${tid}\ncredentials-file: ${creds}\nprotocol: ${proto}\n\ningress:\n`
   for (const r of rules.value) {
     if (!r.hostname || !r.service) continue
     // Clean hostname: remove https:// and trailing slashes
-    let cleanH = r.hostname.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '').replace(/:[0-9]+$/, '')
-    let target = r.service.trim().replace(/^["']|["']$/g, '')
+    let cleanH = cleanYamlVal(r.hostname).replace(/^https?:\/\//i, '').replace(/\/+$/, '').replace(/:[0-9]+$/, '')
+    let target = cleanYamlVal(r.service)
     // Normalize .local to direct container name:
     if (target.includes('.local')) {
       target = target.replace('.local', '')
@@ -265,9 +281,15 @@ function generateYaml(): string {
     if (target.includes('localhost') || target.includes('127.0.0.1')) {
       target = target.replace('localhost', 'host.docker.internal').replace('127.0.0.1', 'host.docker.internal')
     }
-    y += `  - hostname: "${cleanH}"\n    service: "${target}"\n`
-    if (r.noTLSVerify || target.startsWith('https://')) {
-      y += `    originRequest:\n      noTLSVerify: true\n`
+    y += `  - hostname: ${cleanH}\n    service: ${target}\n`
+    if (r.noTLSVerify || r.httpHostHeader || target.startsWith('https://')) {
+      y += `    originRequest:\n`
+      if (r.noTLSVerify || target.startsWith('https://')) {
+        y += `      noTLSVerify: true\n`
+      }
+      if (r.httpHostHeader) {
+        y += `      httpHostHeader: "${cleanYamlVal(r.httpHostHeader)}"\n`
+      }
     }
   }
   return y + `  - service: "http_status:404"\n`
@@ -499,10 +521,11 @@ async function syncAllDnsRoutes(force = false) {
 
     if (failList.length > 0) {
       const errDetails = failList.map((f: any) => f.error ? `${f.hostname}: ${f.error}` : f.hostname).join('; ')
+      const isTokenReq = errDetails.toLowerCase().includes('token required')
       message.value = {
         type: 'error',
         text: `DNS Sync: ${successCount} verified, ${failList.length} failed (${errDetails}).`,
-        action: 'force_overwrite',
+        action: isTokenReq ? 'token_required' : 'force_overwrite',
       }
     } else {
       message.value = {
@@ -728,7 +751,16 @@ onUnmounted(() => {
       </div>
       <div class="flex items-center gap-2 shrink-0">
         <button
-          v-if="message.action === 'force_overwrite'"
+          v-if="message.action === 'token_required'"
+          @click="activeTab = 'api'"
+          class="cyber-btn-secondary text-[11px] px-2.5 py-1 text-cyan-700 border-cyan-300 bg-cyan-100/60 hover:bg-cyan-200/60 font-sans font-bold flex items-center gap-1"
+          title="Open Cloudflare API & Edge tab to enter your API Token"
+        >
+          <KeyRound class="h-3 w-3 text-cyan-600" />
+          <span>Enter API Token (Tab 4)</span>
+        </button>
+        <button
+          v-else-if="message.action === 'force_overwrite'"
           @click="syncAllDnsRoutes(true)"
           :disabled="syncLoading"
           class="cyber-btn-secondary text-[11px] px-2.5 py-1 text-red-700 border-red-300 bg-red-100/60 hover:bg-red-200/60 font-sans font-bold flex items-center gap-1"
