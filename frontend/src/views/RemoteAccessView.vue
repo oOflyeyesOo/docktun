@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import ContainerTailscale from "../components/ContainerTailscale.vue"
 import { ref, onMounted, computed, watch } from 'vue'
 import { remoteAccessTab } from '../lib/tunnel-provider.mjs'
 import { useRoute, useRouter } from 'vue-router'
@@ -183,24 +182,6 @@ const wireguardContainers = computed(() => {
     (c) => c.exposure_mode === 'private' && c.private_type === 'wireguard'
   )
 })
-
-// Expose Container Modal
-const showExposeModal = ref(false)
-const exposeTargetContainer = ref<ContainerExposure | null>(null)
-const exposeForm = ref({
-  mode: 'internal' as 'public' | 'private' | 'internal',
-  private_type: '' as '' | 'tailscale' | 'wireguard',
-  private_port: 80,
-  target_port: 80,
-  private_host: '',
-  subdomain: '',
-  domain: '',
-  zero_trust_enabled: false,
-  zero_trust_emails: '',
-  zero_trust_auth_type: 'email' as 'email' | 'domain' | 'everyone' | 'ip' | 'bypass_ip',
-  zero_trust_session: '24h',
-})
-const exposingSaving = ref(false)
 
 // Load Overview
 async function fetchOverview() {
@@ -398,102 +379,12 @@ function copyText(key: string, text: string) {
   }, 2000)
 }
 
-// Open Expose Modal for Container
-function openExposeModal(
-  container: ContainerExposure | null,
-  defaultMode: 'public' | 'private',
-  privateType: 'tailscale' | 'wireguard'
-) {
-  if (!container && containerExposures.value.length > 0) {
-    const unexposed = containerExposures.value.find((c) => c.exposure_mode === 'internal')
-    container = unexposed || containerExposures.value[0]
-  }
-  exposeTargetContainer.value = container
-  const defaultPort = container?.ports && container.ports.length > 0 ? container.ports[0] : 80
-  exposeForm.value = {
-    mode: defaultMode,
-    private_type: privateType,
-    private_port: container?.private_port || defaultPort,
-    target_port: defaultPort,
-    private_host: '',
-    subdomain: container ? container.name.toLowerCase().replace(/[^a-z0-9-]/g, '-') : '',
-    domain: '',
-    zero_trust_enabled: container?.zero_trust_enabled || false,
-    zero_trust_emails: container?.zero_trust_emails || '',
-    zero_trust_auth_type: (container?.zero_trust_auth_type as any) || 'email',
-    zero_trust_session: container?.zero_trust_session || '24h',
-  }
-  showExposeModal.value = true
+// All app exposure editing lives in the container inspector.
+function openContainerAccess(container: ContainerExposure | null, _mode: string, _provider: string) {
+  router.push({ path: '/containers', query: container ? { name: container.name, tab: 'access' } : {} })
 }
 
-function onExposeTargetChanged(event: Event) {
-  const targetId = (event.target as HTMLSelectElement).value
-  const found = containerExposures.value.find((c) => c.id === targetId || c.name === targetId)
-  if (found) {
-    exposeTargetContainer.value = found
-    const defaultPort = found.ports && found.ports.length > 0 ? found.ports[0] : 80
-    exposeForm.value.private_port = found.private_port || defaultPort
-    exposeForm.value.target_port = defaultPort
-    exposeForm.value.subdomain = found.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
-    exposeForm.value.zero_trust_enabled = found.zero_trust_enabled || false
-    exposeForm.value.zero_trust_emails = found.zero_trust_emails || ''
-    exposeForm.value.zero_trust_auth_type = (found.zero_trust_auth_type as any) || 'email'
-    exposeForm.value.zero_trust_session = found.zero_trust_session || '24h'
-  }
-}
 
-async function saveContainerExposure() {
-  if (!exposeTargetContainer.value) return
-  exposingSaving.value = true
-  try {
-    let hostname = ''
-    if (exposeForm.value.mode === 'public') {
-      hostname = `${exposeForm.value.subdomain.trim()}.${exposeForm.value.domain.trim()}`
-    }
-
-    await apiFetch('/api/remote-access/containers/expose', {
-      method: 'POST',
-      body: JSON.stringify({
-        container_name: exposeTargetContainer.value.name,
-        mode: exposeForm.value.mode,
-        private_type: exposeForm.value.private_type,
-        private_port: exposeForm.value.private_port,
-        private_host: exposeForm.value.private_host,
-        hostname: hostname,
-        target: `http://${exposeTargetContainer.value.name}:${exposeForm.value.target_port}`,
-        zero_trust_enabled: exposeForm.value.mode === 'public' && exposeForm.value.zero_trust_enabled,
-        zero_trust_emails: exposeForm.value.zero_trust_emails?.trim() || '',
-        zero_trust_auth_type: exposeForm.value.zero_trust_auth_type,
-        zero_trust_session: exposeForm.value.zero_trust_session,
-      }),
-    })
-
-    showExposeModal.value = false
-    await fetchContainerExposures()
-    await fetchOverview()
-  } catch (err: any) {
-    alert(err.message || 'Failed to update container exposure')
-  } finally {
-    exposingSaving.value = false
-  }
-}
-
-async function removeExposure(container: ContainerExposure) {
-  if (!confirm(`Reset exposure for ${container.name} to internal only?`)) return
-  try {
-    await apiFetch('/api/remote-access/containers/expose', {
-      method: 'POST',
-      body: JSON.stringify({
-        container_name: container.name,
-        mode: 'internal',
-      }),
-    })
-    await fetchContainerExposures()
-    await fetchOverview()
-  } catch (err: any) {
-    alert(err.message || 'Failed to remove exposure')
-  }
-}
 
 // Route Query Handling
 onMounted(async () => {
@@ -539,7 +430,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
         </div>
         <div>
           <h1 class="text-xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-            Remote Access & Ingress
+            Exposure providers & Ingress
           </h1>
           <p class="text-xs text-slate-600">
             Unified management for Cloudflare edge tunnels, Tailscale zero-trust mesh, and WireGuard VPN
@@ -552,7 +443,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           @click="fetchOverview(); fetchContainerExposures(); if (activeTab === 'tailscale') fetchTailscale(); if (activeTab === 'wireguard') fetchWireguard();"
           :disabled="loadingOverview"
           class="cyber-btn-secondary text-xs flex items-center gap-1.5"
-          title="Refresh Remote Access status"
+          title="Refresh Exposure providers status"
         >
           <RefreshCw class="h-3.5 w-3.5" :class="loadingOverview ? 'animate-spin' : ''" />
           <span>Refresh</span>
@@ -661,7 +552,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
     <!-- ========================================================================= -->
     <!-- TAB 1: CLOUDFLARE TUNNEL (Full Integrated Config & Rules Engine) -->
     <!-- ========================================================================= -->
-    <section v-if="activeTab === 'overview'" class="cyber-panel p-5 space-y-2"><h2 class="font-semibold">Remote access is optional</h2><p class="text-sm text-slate-600">Keep your containers internal, or choose Cloudflare, Tailscale, or WireGuard above when you want remote access. Opening a provider does not activate it or expose any containers.</p></section>
+    <section v-if="activeTab === 'overview'" class="cyber-panel p-5 space-y-2"><h2 class="font-semibold">Remote access is optional</h2><p class="text-sm text-slate-600">Configure a provider here when you need it. Choose which apps to expose in Containers → Access. All three methods are optional; you can use DockTun only for Docker management.</p></section>
     <div v-if="activeTab === 'cloudflare'" class="space-y-6">
       <ConfigView :embedded="true" />
     </div>
@@ -901,7 +792,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             </span>
           </div>
           <button
-            @click="openExposeModal(null, 'private', 'tailscale')"
+            @click="openContainerAccess(null, 'private', 'tailscale')"
             class="cyber-btn flex items-center gap-1.5 text-xs bg-purple-600 hover:bg-purple-500 py-1 px-2.5"
           >
             <Plus class="h-3.5 w-3.5" />
@@ -913,7 +804,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           <Box class="h-6 w-6 text-slate-600 mx-auto" />
           <p>No containers currently routed directly through Tailscale mesh.</p>
           <button
-            @click="openExposeModal(null, 'private', 'tailscale')"
+            @click="openContainerAccess(null, 'private', 'tailscale')"
             class="cyber-btn-secondary text-xs text-purple-700 hover:border-purple-500/50 inline-flex items-center gap-1.5"
           >
             <Plus class="h-3 w-3" />
@@ -962,10 +853,10 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 </td>
                 <td class="py-2.5 px-3 text-right">
                   <button
-                    @click="removeExposure(c)"
-                    class="cyber-btn-sm text-rose-700 border-rose-500/30 hover:bg-rose-50/60"
+                    @click="openContainerAccess(c, 'private', c.private_type)"
+                    class="cyber-btn-sm text-cyan-700 border-cyan-500/30 hover:bg-cyan-50/60"
                   >
-                    Unexpose
+                    Manage exposure
                   </button>
                 </td>
               </tr>
@@ -1115,7 +1006,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             </span>
           </div>
           <button
-            @click="openExposeModal(null, 'private', 'wireguard')"
+            @click="openContainerAccess(null, 'private', 'wireguard')"
             class="cyber-btn flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 py-1 px-2.5"
           >
             <Plus class="h-3.5 w-3.5" />
@@ -1127,7 +1018,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
           <Shield class="h-6 w-6 text-slate-600 mx-auto" />
           <p>No containers have a saved WireGuard access address. Configure your VPN routing before adding an address here.</p>
           <button
-            @click="openExposeModal(null, 'private', 'wireguard')"
+            @click="openContainerAccess(null, 'private', 'wireguard')"
             class="cyber-btn-secondary text-xs text-emerald-700 hover:border-emerald-500/50 inline-flex items-center gap-1.5"
           >
             <Plus class="h-3 w-3" />
@@ -1176,10 +1067,10 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
                 </td>
                 <td class="py-2.5 px-3 text-right">
                   <button
-                    @click="removeExposure(c)"
-                    class="cyber-btn-sm text-rose-700 border-rose-500/30 hover:bg-rose-50/60"
+                    @click="openContainerAccess(c, 'private', c.private_type)"
+                    class="cyber-btn-sm text-cyan-700 border-cyan-500/30 hover:bg-cyan-50/60"
                   >
-                    Unexpose
+                    Manage exposure
                   </button>
                 </td>
               </tr>
@@ -1423,210 +1314,6 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
     </div>
 
     <!-- Expose Container Modal (Tailscale / WireGuard / Cloudflare) -->
-    <div
-      v-if="showExposeModal && exposeTargetContainer"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/80 backdrop-blur-sm p-4"
-    >
-      <div class="cyber-card w-full max-w-md p-6 space-y-4 border-slate-300">
-        <div class="flex items-center justify-between">
-          <h3 class="text-sm font-bold text-slate-900 flex items-center gap-2">
-            <Box class="h-4 w-4 text-indigo-600" />
-            Expose Container: {{ exposeTargetContainer.name }}
-          </h3>
-          <button @click="showExposeModal = false" class="text-slate-600 hover:text-slate-900 text-xs">✕</button>
-        </div>
 
-        <div class="space-y-3.5 text-xs">
-          <!-- Target Docker Container -->
-          <div>
-            <label class="block text-[11px] font-medium text-slate-700 mb-1">Target Docker Container</label>
-            <select
-              :value="exposeTargetContainer.id"
-              @change="onExposeTargetChanged"
-              class="cyber-input font-mono text-xs w-full bg-white"
-            >
-              <option v-for="c in containerExposures" :key="c.id" :value="c.id">
-                {{ c.name }} ({{ c.image }})
-              </option>
-            </select>
-          </div>
-
-          <!-- Exposure Mode Selection -->
-          <div>
-            <label class="block text-[11px] font-medium text-slate-700 mb-1.5">Network Route Type</label>
-            <div class="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                @click="exposeForm.mode = 'private'"
-                class="p-2.5 rounded-lg border text-left transition"
-                :class="exposeForm.mode === 'private' ? 'border-purple-500 bg-purple-50/40 text-purple-700' : 'border-slate-200 bg-white text-slate-600'"
-              >
-                <div class="font-semibold text-xs">Private (VPN / Mesh)</div>
-                <div class="text-[10px] text-slate-500">Tailscale or WireGuard</div>
-              </button>
-
-              <button
-                type="button"
-                @click="exposeForm.mode = 'public'"
-                class="p-2.5 rounded-lg border text-left transition"
-                :class="exposeForm.mode === 'public' ? 'border-orange-500 bg-orange-50/40 text-orange-700' : 'border-slate-200 bg-white text-slate-600'"
-              >
-                <div class="font-semibold text-xs">Public Edge Route</div>
-                <div class="text-[10px] text-slate-500">Cloudflare Tunnel Domain</div>
-              </button>
-            </div>
-          </div>
-
-          <!-- Private VPN Type (if private) -->
-          <div v-if="exposeForm.mode === 'private'">
-            <label class="block text-[11px] font-medium text-slate-700 mb-1.5">VPN Network</label>
-            <div class="grid grid-cols-2 gap-2">
-              <label class="flex items-center gap-2 p-2 rounded-lg bg-white border border-slate-200 cursor-pointer">
-                <input type="radio" value="tailscale" v-model="exposeForm.private_type" class="text-purple-600" />
-                <span class="text-xs text-slate-800">Tailscale Mesh</span>
-              </label>
-              <label class="flex items-center gap-2 p-2 rounded-lg bg-white border border-slate-200 cursor-pointer">
-                <input type="radio" value="wireguard" v-model="exposeForm.private_type" class="text-emerald-600" />
-                <span class="text-xs text-slate-800">WireGuard VPN</span>
-              </label>
-            </div>
-          </div>
-
-          <ContainerTailscale v-if="exposeForm.mode === 'private' && exposeForm.private_type === 'tailscale'" :key="exposeTargetContainer.name" :container-id="exposeTargetContainer.name" />
-<div v-if="exposeForm.mode === 'private' && exposeForm.private_type === 'wireguard'"><label class="block text-xs">Existing VPN address</label><input v-model="exposeForm.private_host" class="cyber-input" placeholder="VPN-reachable host or IP" /><p class="text-xs text-slate-600">Saves an access address. Configure routing and port publishing in your WireGuard setup first.</p></div>
-          <div v-if="exposeForm.private_type === 'tailscale' || exposeForm.mode === 'public'"><label class="block text-xs">Container internal TCP port</label><input v-model.number="exposeForm.target_port" type="number" min="1" max="65535" class="cyber-input" /><p v-if="exposeForm.mode === 'private'" class="text-xs text-slate-600">Uses this app’s own Tailscale device. Apps can reuse the same port on their separate addresses. No subnet routing or public Funnel is enabled.</p></div>
-          <!-- Container Target Port -->
-          <div>
-            <label class="block text-[11px] font-medium text-slate-700 mb-1">Private listening port / Access port</label>
-            <div class="flex items-center gap-2">
-              <input
-                v-model.number="exposeForm.private_port"
-                type="number"
-                placeholder="80"
-                class="cyber-input font-mono text-xs w-28"
-              />
-              <span class="text-[11px] text-slate-600">
-                Detected: {{ exposeTargetContainer.ports?.join(', ') || 'None' }}
-              </span>
-            </div>
-          </div>
-
-          <!-- Public Domain Settings (if public) -->
-          <div v-if="exposeForm.mode === 'public'" class="space-y-3">
-            <div>
-              <label class="block text-[11px] font-medium text-slate-700 mb-1">Public Domain Hostname</label>
-              <div class="flex items-center gap-1 font-mono text-xs">
-                <input
-                  v-model="exposeForm.subdomain"
-                  type="text"
-                  placeholder="subdomain"
-                  class="cyber-input font-mono text-xs flex-1"
-                />
-                <span class="text-slate-600">.</span>
-                <input
-                  v-model="exposeForm.domain"
-                  type="text"
-                  placeholder="example.com"
-                  class="cyber-input font-mono text-xs flex-1"
-                />
-              </div>
-              <div class="text-[10px] text-slate-600 mt-1">
-                Will route: <code class="text-orange-600 font-mono">https://{{ exposeForm.subdomain }}.{{ exposeForm.domain }}</code> &rarr; <code class="text-slate-700 font-mono">{{ exposeTargetContainer.name }}:{{ exposeForm.private_port }}</code>
-              </div>
-            </div>
-
-            <!-- Optional Zero Trust Access Control -->
-            <div class="pt-2.5 border-t border-slate-200 space-y-2">
-              <label class="flex items-start gap-2.5 cursor-pointer p-2.5 rounded-lg border border-slate-200 bg-white/60 hover:border-slate-300 transition">
-                <input
-                  type="checkbox"
-                  v-model="exposeForm.zero_trust_enabled"
-                  class="h-4 w-4 mt-0.5 rounded border-slate-300 bg-white text-indigo-500 focus:ring-indigo-500"
-                />
-                <div class="space-y-0.5">
-                  <div class="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
-                    <ShieldCheck class="h-3.5 w-3.5 text-indigo-600" />
-                    <span>Protect with Cloudflare Zero Trust</span>
-                    <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-700 border border-indigo-500/30">Optional</span>
-                  </div>
-                  <div class="text-[10px] text-slate-600">
-                    Require email OTP PIN or SSO login before users can view this container.
-                  </div>
-                </div>
-              </label>
-
-              <!-- Rich Zero Trust Options (if Zero Trust enabled) -->
-              <div v-if="exposeForm.zero_trust_enabled" class="pl-6 space-y-2.5">
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                      Authentication Method
-                    </label>
-                    <select v-model="exposeForm.zero_trust_auth_type" class="cyber-input text-xs w-full">
-                      <option value="email">Email OTP PIN (Specific Users)</option>
-                      <option value="domain">Corporate / Domain Whitelist</option>
-                      <option value="everyone">Any Authenticated User / Everyone</option>
-                      <option value="ip">IP / CIDR Network Whitelist</option>
-                      <option value="bypass_ip">IP / CIDR Bypass (No Prompt)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                      Session Timeout
-                    </label>
-                    <select v-model="exposeForm.zero_trust_session" class="cyber-input text-xs w-full">
-                      <option value="15m">15 Minutes</option>
-                      <option value="1h">1 Hour</option>
-                      <option value="24h">24 Hours (Default)</option>
-                      <option value="7d">7 Days</option>
-                      <option value="30d">30 Days</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div v-if="exposeForm.zero_trust_auth_type !== 'everyone'">
-                  <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                    <span v-if="exposeForm.zero_trust_auth_type === 'email'">Allowed Email Addresses (Comma-separated)</span>
-                    <span v-else-if="exposeForm.zero_trust_auth_type === 'domain'">Allowed Email Domains (e.g. company.com)</span>
-                    <span v-else-if="exposeForm.zero_trust_auth_type === 'ip'">Allowed Client IP / CIDRs</span>
-                    <span v-else-if="exposeForm.zero_trust_auth_type === 'bypass_ip'">Bypass Client IP / CIDRs</span>
-                  </label>
-                  <input
-                    v-model="exposeForm.zero_trust_emails"
-                    type="text"
-                    :placeholder="
-                      exposeForm.zero_trust_auth_type === 'email' ? 'admin@example.com, developer@company.com' :
-                      exposeForm.zero_trust_auth_type === 'domain' ? 'company.com, myfamily.org' :
-                      '192.168.1.0/24, 73.120.45.6/32'
-                    "
-                    class="cyber-input text-xs font-mono w-full"
-                  />
-                </div>
-                <div v-else class="text-[10px] text-indigo-700/80 bg-indigo-50/30 border border-indigo-900/40 rounded p-2">
-                  All users who successfully authenticate with your Cloudflare Zero Trust Identity Provider will be allowed.
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
-          <button
-            @click="showExposeModal = false"
-            class="cyber-btn-secondary text-xs py-2 px-3"
-          >
-            Cancel
-          </button>
-          <button
-            @click="saveContainerExposure"
-            :disabled="exposingSaving"
-            class="cyber-btn text-xs py-2 px-4"
-          >
-            {{ exposingSaving ? 'Saving…' : 'Apply Exposure' }}
-          </button>
-        </div>
-      </div>
-    </div>
   </div>
 </template>

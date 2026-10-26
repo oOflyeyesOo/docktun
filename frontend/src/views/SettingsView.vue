@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive } from 'vue'
 import { RotateCcw, ShieldCheck, KeyRound, Globe, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
 import SelfUpdate from '../components/SelfUpdate.vue'
 import SystemDiagnostics from '../components/SystemDiagnostics.vue'
@@ -11,15 +11,6 @@ const { apiFetch } = useApi()
 const form = reactive({ current_password: '', new_password: '', confirm: '' })
 const message = ref<{ type: string; text: string } | null>(null)
 const loading = ref(false)
-
-// Cloudflare Tunnel & System Status
-const systemStatus = ref<any>(null)
-
-async function fetchStatus() {
-  try {
-    systemStatus.value = await apiFetch('/api/status')
-  } catch {}
-}
 
 async function changePassword() {
   if (form.new_password !== form.confirm) {
@@ -41,16 +32,13 @@ async function changePassword() {
   }
 }
 
-onMounted(() => {
-  fetchStatus()
-})
 </script>
 
 <template>
   <div class="space-y-6">
     <div>
-      <h1 class="cyber-heading text-xl lg:text-2xl">System Settings & Maintenance</h1>
-      <p class="text-xs text-muted font-mono mt-1">// Manage credentials, tunnel configuration, and host utilities</p>
+      <h1 class="cyber-heading text-xl lg:text-2xl">Settings</h1>
+      <p class="text-xs text-muted font-mono mt-1">Manage DockTun updates, account security, and diagnostics.</p>
     </div>
 
     <SelfUpdate />
@@ -59,51 +47,7 @@ onMounted(() => {
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
       <!-- 2. Cloudflare Tunnel Environment Overview -->
-      <div class="cyber-card space-y-4">
-        <div class="flex items-center justify-between border-b border-border pb-3">
-          <div class="flex items-center gap-2">
-            <Globe class="w-4 h-4 text-cyan-600" />
-            <h2 class="text-xs font-bold uppercase tracking-wider text-slate-800">Cloudflare Tunnel Status</h2>
-          </div>
-          <router-link to="/access?tab=cloudflare" class="text-xs text-indigo-600 hover:underline font-mono">
-            Full Config &rarr;
-          </router-link>
-        </div>
 
-        <div class="space-y-2.5 text-xs font-mono">
-          <div class="flex items-center justify-between p-2.5 rounded bg-void/50 border border-border/50">
-            <span class="text-muted">Tunnel Identity:</span>
-            <span class="text-cyan-700 font-bold truncate max-w-[200px]" :title="systemStatus?.tunnel_id || 'Active'">
-              {{ systemStatus?.tunnel_id || systemStatus?.tunnel_name || 'docktun' }}
-            </span>
-          </div>
-
-          <div class="flex items-center justify-between p-2.5 rounded bg-void/50 border border-border/50">
-            <span class="text-muted">Protocol & Architecture:</span>
-            <span class="text-slate-800 font-bold">{{ systemStatus?.protocol || 'HTTP/2' }} • 2-Container Unified</span>
-          </div>
-
-          <div class="flex items-center justify-between p-2.5 rounded bg-void/50 border border-border/50">
-            <span class="text-muted">High Availability Conns:</span>
-            <span class="text-emerald-600 font-bold">{{ systemStatus?.ha_connections || 4 }} Edge Links</span>
-          </div>
-
-          <div class="flex items-center justify-between p-2.5 rounded bg-void/50 border border-border/50">
-            <span class="text-muted">Active Ingress Hostnames:</span>
-            <span class="text-cyan-600 font-bold">{{ systemStatus?.hostnames?.length || 0 }} Domains</span>
-          </div>
-        </div>
-
-        <div class="pt-2 border-t border-border">
-          <router-link
-            to="/access?tab=cloudflare"
-            class="cyber-btn-secondary w-full text-center text-xs flex items-center justify-center gap-2 py-2 text-indigo-700"
-          >
-            <ShieldCheck class="w-3.5 h-3.5 text-indigo-600" />
-            <span>Manage Cloudflare API Keys & Ingress Rules &rarr;</span>
-          </router-link>
-        </div>
-      </div>
 
       <!-- 3. Change Password -->
       <div class="cyber-card space-y-4">
@@ -150,12 +94,12 @@ onMounted(() => {
         </div>
 
         <p class="text-xs text-muted leading-relaxed">
-          Need to reconfigure your Cloudflare tunnel, re-discover previous Docker containers, or switch between WireGuard and Tailscale?
+          Revisit initial Docker discovery and import settings.
         </p>
 
         <div class="p-3 rounded border border-border/60 bg-void/50 text-xs font-mono space-y-1">
           <span class="text-cyan-700 font-bold block">Guided Reconfiguration Wizard</span>
-          <span class="text-muted text-[11px]">Walks through tunnel activation, network attachments, and container imports step-by-step.</span>
+          <span class="text-muted text-[11px]">Exposure providers can be configured separately from the Exposure providers page.</span>
         </div>
 
         <router-link
