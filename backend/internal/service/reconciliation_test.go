@@ -1,9 +1,7 @@
 package service
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -71,61 +69,5 @@ func TestStorageTransferBinaryAndTraversal(t *testing.T) {
 	}
 	if _, _, _, err = svc.GetDownloadStream("project", target, "nested"); err == nil {
 		t.Fatal("downloaded directory")
-	}
-}
-
-func TestTailscaleExposureLifecycle(t *testing.T) {
-	var calls []string
-	svc := &DockerContainers{exposureDocker: func(_ context.Context, args ...string) ([]byte, error) {
-		cmd := strings.Join(args, " ")
-		calls = append(calls, cmd)
-		if strings.Contains(cmd, "serve status") {
-			return []byte(`{}`), nil
-		}
-		if strings.Contains(cmd, "status --json") {
-			return []byte(`{"BackendState":"Running","Self":{"DNSName":"docktun.example.ts.net."}}`), nil
-		}
-		return nil, nil
-	}}
-	next := ExposureSettings{Mode: "private", PrivateType: "tailscale", PrivatePort: 8081, Target: "app:80"}
-	undo, err := svc.syncTailscaleExposure("app", ExposureSettings{}, &next)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if next.PrivateHost != "docktun.example.ts.net" || next.Target != "tcp://app:80" {
-		t.Fatal(next)
-	}
-	if !strings.Contains(strings.Join(calls, "\n"), "serve --bg --tcp=8081 tcp://app:80") {
-		t.Fatal(calls)
-	}
-	undo()
-	if !strings.HasSuffix(calls[len(calls)-1], "--tcp=8081 off") {
-		t.Fatal(calls)
-	}
-	_, err = svc.syncTailscaleExposure("app", next, &ExposureSettings{Mode: "internal"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	svc.exposureDocker = func(context.Context, ...string) ([]byte, error) { return []byte("NeedsLogin"), errors.New("offline") }
-	if _, err = svc.syncTailscaleExposure("app", ExposureSettings{}, &next); err == nil {
-		t.Fatal("offline falsely succeeded")
-	}
-}
-
-func TestTailscalePortConflict(t *testing.T) {
-	setup := setupFixture(t)
-	svc := &DockerContainers{db: setup.db}
-	if err := svc.saveExposureToDB("first", ExposureSettings{Mode: "private", PrivateType: "tailscale", PrivatePort: 8080}); err != nil {
-		t.Fatal(err)
-	}
-	next := ExposureSettings{Mode: "private", PrivateType: "tailscale", PrivatePort: 8080}
-	if _, err := svc.syncTailscaleExposure("second", ExposureSettings{}, &next); err == nil || !strings.Contains(err.Error(), "already assigned") {
-		t.Fatal(err)
-	}
-	for _, target := range []string{"other:80", "app:0", "app:65536", "http://app:80/path", "app:80;touch bad"} {
-		next.Target = target
-		if _, err := tailscaleTarget("app", next); err == nil {
-			t.Fatalf("accepted %s", target)
-		}
 	}
 }

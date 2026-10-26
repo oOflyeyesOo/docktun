@@ -72,7 +72,6 @@ const form = reactive({
   cloudflare_tunnel_id: '',
   wireguard_server_url: '',
   wireguard_port: 51820,
-  tailscale_auth_key: '',
 
   // Container Import Config
   selected_container_ids: {} as Record<string, boolean>,
@@ -179,7 +178,6 @@ async function finishSetup() {
         cloudflare_tunnel_id: form.cloudflare_mode === 'api' ? form.cloudflare_tunnel_id : '',
         wireguard_server_url: form.wireguard_server_url,
         wireguard_port: form.wireguard_port,
-        tailscale_auth_key: form.tailscale_auth_key,
       },
       import_containers: {
         auto_import_stacks: form.auto_import_stacks,
@@ -574,18 +572,7 @@ onMounted(() => {
 
           <!-- Tailscale Setup -->
           <div v-else-if="form.tunnel_type === 'tailscale'" class="p-4 rounded-xl border border-slate-200 bg-white/40 space-y-2">
-            <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600 font-mono">
-              Tailscale Auth Key (Reusable or Ephemeral)
-            </label>
-            <input
-              v-model="form.tailscale_auth_key"
-              type="password"
-              placeholder="tskey-auth-..."
-              class="cyber-input text-xs font-mono"
-            />
-            <p class="text-[11px] text-slate-600">
-              Generated in Tailscale Admin Console → Settings → Personal Settings → Keys.
-            </p>
+            <p class="text-xs text-slate-700">After setup, choose the individual containers you want to expose. Each app gets its own Tailscale device and sign-in. No auth key is needed here, and DockTun itself does not need to join your network.</p>
           </div>
 
           <!-- WireGuard Setup -->

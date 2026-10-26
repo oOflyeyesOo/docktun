@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ContainerTailscale from "../components/ContainerTailscale.vue"
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -3083,7 +3084,8 @@ onUnmounted(() => {
 
             <!-- Private Mode Inputs -->
             <template v-if="getExpose(container.id).mode === 'private'">
-              <div><label class="block text-xs">Container target (name:internal port)</label><input v-model="getExpose(container.id).target" :placeholder="container.name + ':8080'" class="cyber-input" /><p class="text-xs text-slate-500">Tailscale TCP forwarding; no separate device or public Funnel. Blank uses the private port as the container port.</p></div>
+              <ContainerTailscale v-if="getExpose(container.id).private_type === 'tailscale'" :key="container.id" :container-id="container.id" />
+              <div><label class="block text-xs">Container target (name:internal port)</label><input v-model="getExpose(container.id).target" :placeholder="container.name + ':8080'" class="cyber-input" /><p class="text-xs text-slate-500">Only this app’s selected TCP port is forwarded. Blank uses the private port as the container port.</p></div>
               <div>
                 <label class="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
                   Private Mesh Type
@@ -3126,7 +3128,7 @@ onUnmounted(() => {
                 Saving public mode connects the container to the tunnel network and configures Cloudflare routing.
               </span>
               <span v-else-if="getExpose(container.id).mode === 'private'" class="text-violet-300">
-                Tailscale forwards TCP through the shared DockTun device. Use a unique private port for each app. Other mesh types require their own routing.
+                Each Tailscale app has its own device and address, so apps can use the same private port. Other mesh types require their own routing.
               </span>
               <span v-else class="text-slate-500">
                 Removes public ingress rules for this container. Accessible inside Docker network.
@@ -3674,7 +3676,8 @@ onUnmounted(() => {
 
                 <!-- Private Mesh Options -->
                 <template v-if="getExpose(selectedContainer.id).mode === 'private'">
-              <div><label class="block text-xs">Container target (name:internal port)</label><input v-model="getExpose(selectedContainer.id).target" :placeholder="selectedContainer.name + ':8080'" class="cyber-input" /><p class="text-xs">Tailscale uses the shared DockTun device, with a unique TCP port per app.</p></div>
+              <ContainerTailscale v-if="getExpose(selectedContainer.id).private_type === 'tailscale'" :key="selectedContainer.id" :container-id="selectedContainer.id" />
+              <div><label class="block text-xs">Container target (name:internal port)</label><input v-model="getExpose(selectedContainer.id).target" :placeholder="selectedContainer.name + ':8080'" class="cyber-input" /><p class="text-xs">Each app has its own Tailscale device. No subnet or neighboring container access is enabled.</p></div>
                   <div>
                     <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Mesh Type</label>
                     <select v-model="getExpose(selectedContainer.id).private_type" class="cyber-input text-xs">

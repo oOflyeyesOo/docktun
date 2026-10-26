@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ContainerTailscale from "../components/ContainerTailscale.vue"
 import { ref, onMounted, computed, watch } from 'vue'
 import { remoteAccessTab } from '../lib/tunnel-provider.mjs'
 import { useRoute, useRouter } from 'vue-router'
@@ -612,34 +613,9 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             </div>
             <span class="text-xs font-semibold text-slate-800">Tailscale Mesh</span>
           </div>
-          <span
-            v-if="overview?.tailscale?.backend_state === 'Running'"
-            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30"
-          >
-            <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-            CONNECTED
-          </span>
-          <span
-            v-else-if="overview?.tailscale?.backend_state === 'NeedsLogin'"
-            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/30 animate-pulse"
-          >
-            AUTH REQUIRED
-          </span>
-          <span
-            v-else
-            class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-300"
-          >
-            {{ overview?.tailscale?.installed ? 'STOPPED' : 'NOT INSTALLED' }}
-          </span>
+          <span class="text-xs text-purple-700">Optional</span>
         </div>
-        <div>
-          <div class="text-base font-bold text-purple-700 font-mono truncate">
-            {{ overview?.tailscale?.tailscale_ips?.[0] || '100.x.y.z' }}
-          </div>
-          <div class="text-[11px] text-slate-500 truncate mt-0.5">
-            {{ overview?.tailscale?.peers_count ?? 0 }} tailnet peers connected
-          </div>
-        </div>
+        <p class="text-xs text-slate-600">A separate private device for each app you choose.</p>
         <div v-if="activeTab === 'tailscale'" class="mt-3 h-0.5 w-full bg-purple-500 rounded-full"></div>
       </button>
 
@@ -694,6 +670,12 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
     <!-- TAB 2: TAILSCALE ZERO-TRUST MESH VPN -->
     <!-- ========================================================================= -->
     <div v-show="activeTab === 'tailscale'" class="space-y-6">
+      <div class="cyber-card space-y-2">
+        <h2 class="font-semibold">Connect individual apps</h2>
+        <p class="text-sm">Choose Expose Container below, sign in that app's Tailscale device, and save the port to share. Each app has its own address and identity. DockTun does not need to join your tailnet.</p>
+      </div>
+      <details class="space-y-3">
+        <summary class="cursor-pointer text-xs text-slate-600">Advanced: legacy shared device and routing</summary>
       <!-- Tailscale Header Card -->
       <div class="cyber-card space-y-4">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -907,6 +889,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
         </div>
       </div>
 
+      </details>
       <!-- Container Exposures for Tailscale -->
       <div class="cyber-card space-y-3">
         <div class="flex items-center justify-between">
@@ -1509,8 +1492,9 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             </div>
           </div>
 
-          <div v-if="exposeForm.mode === 'private' && exposeForm.private_type === 'wireguard'"><label class="block text-xs">Existing VPN address</label><input v-model="exposeForm.private_host" class="cyber-input" placeholder="VPN-reachable host or IP" /><p class="text-xs text-slate-600">Saves an access address. Configure routing and port publishing in your WireGuard setup first.</p></div>
-          <div v-if="exposeForm.private_type === 'tailscale' || exposeForm.mode === 'public'"><label class="block text-xs">Container internal TCP port</label><input v-model.number="exposeForm.target_port" type="number" min="1" max="65535" class="cyber-input" /><p v-if="exposeForm.mode === 'private'" class="text-xs text-slate-600">Uses the shared DockTun Tailscale device. Choose a unique private listening port for each app; no public Funnel is enabled.</p></div>
+          <ContainerTailscale v-if="exposeForm.mode === 'private' && exposeForm.private_type === 'tailscale'" :key="exposeTargetContainer.name" :container-id="exposeTargetContainer.name" />
+<div v-if="exposeForm.mode === 'private' && exposeForm.private_type === 'wireguard'"><label class="block text-xs">Existing VPN address</label><input v-model="exposeForm.private_host" class="cyber-input" placeholder="VPN-reachable host or IP" /><p class="text-xs text-slate-600">Saves an access address. Configure routing and port publishing in your WireGuard setup first.</p></div>
+          <div v-if="exposeForm.private_type === 'tailscale' || exposeForm.mode === 'public'"><label class="block text-xs">Container internal TCP port</label><input v-model.number="exposeForm.target_port" type="number" min="1" max="65535" class="cyber-input" /><p v-if="exposeForm.mode === 'private'" class="text-xs text-slate-600">Uses this app’s own Tailscale device. Apps can reuse the same port on their separate addresses. No subnet routing or public Funnel is enabled.</p></div>
           <!-- Container Target Port -->
           <div>
             <label class="block text-[11px] font-medium text-slate-700 mb-1">Private listening port / Access port</label>

@@ -252,11 +252,21 @@ Tailscale, or WireGuard does not expose every container. Each container starts
 internal and requires an explicit exposure choice.
 
 - **Cloudflare:** configure your tunnel, then choose public exposure for individual apps.
-- **Tailscale:** sign in under Remote Access, then select Tailscale private exposure.
-  DockTun configures a persistent TCP forwarding rule on the shared `docktun`
-  Tailscale device. Set the app's internal port and a unique private listening port.
-  Apps do not become separate tailnet devices. This does not enable public Funnel
-  or UDP forwarding; tailnet access policies still apply.
+- **Tailscale:** choose a container, select private Tailscale access, and click
+  **Connect this app to Tailscale**. Sign in the new device, check the connection,
+  then save the app's internal TCP port and private listening port. Every selected
+  app gets a separate device, MagicDNS name/IP, and persistent named state volume.
+  Different apps can use the same private port. Tailscale grants/ACLs and device
+  sharing apply to each app's identity. DockTun itself does not need to sign in.
+  A userspace helper on a dedicated app bridge forwards only the chosen TCP port;
+  no subnet routes, exit node, SSH, public Funnel, UDP forwarding, TUN device or
+  privileged container is enabled. Host/shared-network apps must first use their
+  own Docker bridge. Existing shared-device rules remain until explicitly changed;
+  saving a connected app migrates only its matching old rule. Removing exposure
+  stops that app's helper and retains its state volume for the next connection.
+  Selected apps recreated by Compose are reattached to their own helper network
+  within 15 seconds; this never starts a stopped helper or enrolls another app.
+  Remove an obsolete device in Tailscale's admin console if it is no longer wanted.
 - **WireGuard/custom mesh:** configure the VPN's routing and any required host port
   publishing, then save the reachable VPN address and port. Saving the address
   does not create VPN forwarding rules. DockTun does not assume a gateway address.
