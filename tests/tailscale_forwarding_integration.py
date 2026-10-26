@@ -117,6 +117,10 @@ try:
         prefs = json.loads(docker('exec', node, 'tailscale', 'debug', 'prefs'))
         assert not prefs.get('AdvertiseRoutes') and not prefs.get('RunSSH'), prefs
     assert app_nodes[0][2] != app_nodes[1][2] and app_nodes[0][3] != app_nodes[1][3]
+    links = {item['name']: item for item in request('/api/remote-access/containers')}
+    assert links[app_nodes[0][0]]['tailscale_url'] != links[app_nodes[1][0]]['tailscale_url']
+    assert 'app-0.' in links[app_nodes[0][0]]['tailscale_url'], links[app_nodes[0][0]]
+    assert 'app-1.' in links[app_nodes[1][0]]['tailscale_url'], links[app_nodes[1][0]]
 
     def fetch_node(index, port=8080, expected=True):
         node_ip = app_nodes[index][2]
@@ -131,6 +135,15 @@ try:
                 time.sleep(1)
         raise AssertionError('app device never became reachable')
 
+    fetch_node(0); fetch_node(1)
+    # Gemini's companion-database recovery must preserve the private app bridge.
+    db_network, db_container = prefix + '-dbnet', app_nodes[0][0] + '-postgres'
+    docker('network', 'create', db_network); node_networks.append(db_network)
+    containers.append(db_container)
+    docker('run', '-d', '--name', db_container, '--network', db_network, 'busybox:1.37', 'sleep', '3600')
+    request('/api/docker/containers/' + app_nodes[0][0] + '/restart', {})
+    private_members = json.loads(docker('network', 'inspect', app_nodes[0][1]))[0]['Containers']
+    assert {item['Name'] for item in private_members.values()} == {app_nodes[0][0], app_nodes[0][1]}, private_members
     fetch_node(0); fetch_node(1)
     fetch_node(0, 80, expected=False)
     first, node, address, identity = app_nodes[0]

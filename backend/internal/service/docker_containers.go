@@ -1345,7 +1345,7 @@ func (s *DockerContainers) Start(id string) error {
 	_ = s.EnsureDatabaseLinks(id)
 	return dockerCommand("start", id)
 }
-func (s *DockerContainers) Stop(id string) error    { return dockerCommand("stop", id) }
+func (s *DockerContainers) Stop(id string) error { return dockerCommand("stop", id) }
 func (s *DockerContainers) Restart(id string) error {
 	_ = s.EnsureDatabaseLinks(id)
 	return dockerCommand("restart", id)
@@ -2779,7 +2779,9 @@ func (s *DockerContainers) EnsureDatabaseLinks(cname string) error {
 
 	target := inspectList[0]
 	// Dedicated Tailscale proxies are managed exclusively by their app lifecycle.
-	if target.Config.Labels[tailscaleOwnerLabel] != "" { return nil }
+	if target.Config.Labels[tailscaleOwnerLabel] != "" {
+		return nil
+	}
 	targetNets := make(map[string]bool)
 	for n := range target.NetworkSettings.Networks {
 		targetNets[n] = true

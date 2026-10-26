@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -815,16 +816,6 @@ func (s *RemoteAccessService) GetContainerExposures() ([]ContainerExposureItem, 
 		return nil, err
 	}
 
-	// Fetch active Tailscale status
-	var tailscaleIP, magicDNS string
-	tsStatus, _ := s.GetTailscaleStatus()
-	if tsStatus != nil {
-		if len(tsStatus.TailscaleIPs) > 0 {
-			tailscaleIP = tsStatus.TailscaleIPs[0]
-		}
-		magicDNS = tsStatus.DNSName
-	}
-
 	items := make([]ContainerExposureItem, 0, len(containers))
 	for _, c := range containers {
 		// Extract port numbers from port string (e.g. "80/tcp, 5432/tcp")
@@ -859,12 +850,8 @@ func (s *RemoteAccessService) GetContainerExposures() ([]ContainerExposureItem, 
 			}
 
 			if c.PrivateType == "tailscale" {
-				if magicDNS != "" {
-					item.TailscaleURL = fmt.Sprintf("http://%s:%d", magicDNS, targetPort)
-				} else if tailscaleIP != "" {
-					item.TailscaleURL = fmt.Sprintf("http://%s:%d", tailscaleIP, targetPort)
-				} else {
-					item.TailscaleURL = ""
+				if c.PrivateHost != "" {
+					item.TailscaleURL = "http://" + net.JoinHostPort(c.PrivateHost, strconv.Itoa(targetPort))
 				}
 			} else if c.PrivateType == "wireguard" {
 				if c.PrivateHost != "" {
