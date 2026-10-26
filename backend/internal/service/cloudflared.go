@@ -86,7 +86,7 @@ func (s *Cloudflared) Status() ProcessState {
 	s.mu.Unlock()
 
 	var lastErr string
-	if !running && parts[0] != "created" && (parts[0] == "restarting" || (len(parts) > 2 && parts[2] != "0")) {
+	if !running && (parts[0] == "restarting" || parts[0] == "dead") {
 		status = "failed"
 		logOut, _ := exec.Command("docker", "logs", "--tail", "6", cName).CombinedOutput()
 		lastErr = strings.TrimSpace(string(logOut))
