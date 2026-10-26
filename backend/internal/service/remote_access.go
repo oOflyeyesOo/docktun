@@ -28,6 +28,7 @@ type RemoteAccessOverview struct {
 }
 
 type CloudflareSummary struct {
+	Status       string `json:"status"`
 	Running      bool   `json:"running"`
 	TunnelID     string `json:"tunnel_id"`
 	TunnelName   string `json:"tunnel_name"`
@@ -212,9 +213,14 @@ func (s *RemoteAccessService) GetOverview() (*RemoteAccessOverview, error) {
 		return cached, nil
 	}
 	s.overviewMu.RUnlock()
+	cloudflare := ProcessState{Status: "disabled"}
+	if s.cfdSvc != nil {
+		cloudflare = s.cfdSvc.Status()
+	}
 	overview := &RemoteAccessOverview{
 		Cloudflare: CloudflareSummary{
-			Running:    s.cfdSvc != nil && s.cfdSvc.IsRunning(),
+			Running:    cloudflare.Running,
+			Status:     cloudflare.Status,
 			Protocol:   "http2",
 			TunnelName: s.cfg.TunnelName,
 		},

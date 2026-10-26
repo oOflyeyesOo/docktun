@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { remoteAccessTab, cloudflareEnabled } from './tunnel-provider.mjs'
+import { remoteAccessTab, cloudflareEnabled, cloudflareCardStatus } from './tunnel-provider.mjs'
 
 test('onboarding selection opens the matching remote access tab', () => {
   assert.equal(remoteAccessTab(undefined, 'tailscale'), 'tailscale')
@@ -21,4 +21,11 @@ test('no provider selection opens a neutral overview', () => {
  assert.equal(remoteAccessTab(undefined, 'none'), 'overview')
  assert.equal(remoteAccessTab(undefined, undefined), 'overview')
  assert.equal(remoteAccessTab(undefined, 'cloudflare'), 'cloudflare')
+})
+
+test('provider card distinguishes unused Cloudflare from a stopped configured tunnel', () => {
+  assert.equal(cloudflareCardStatus(null), 'Loading')
+  assert.equal(cloudflareCardStatus({status: 'disabled', running: false}), 'Optional')
+  assert.equal(cloudflareCardStatus({status: 'not found', running: false}), 'not found')
+  assert.equal(cloudflareCardStatus({status: 'running', running: true}), 'Active')
 })

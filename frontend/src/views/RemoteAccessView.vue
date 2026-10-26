@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
-import { remoteAccessTab } from '../lib/tunnel-provider.mjs'
+import { remoteAccessTab, cloudflareCardStatus } from '../lib/tunnel-provider.mjs'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Globe,
@@ -47,6 +47,7 @@ const activeTab = ref<'overview' | 'cloudflare' | 'tailscale' | 'wireguard'>('ov
 // Overview Data
 interface OverviewData {
   cloudflare: {
+    status: string
     running: boolean
     tunnel_id: string
     tunnel_name: string
@@ -108,7 +109,7 @@ const tailscaleActionLoading = ref(false)
 const tailscaleMsg = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 
 // Tailscale Subnet Router & Exit Node Settings
-const tsAdvertiseRoutes = ref(true)
+const tsAdvertiseRoutes = ref(false)
 const tsAdvertiseExitNode = ref(false)
 const tsSavingOptions = ref(false)
 
@@ -430,7 +431,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
         </div>
         <div>
           <h1 class="text-xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-            Exposure providers & Ingress
+            Exposure providers
           </h1>
           <p class="text-xs text-slate-600">
             Unified management for Cloudflare edge tunnels, Tailscale zero-trust mesh, and WireGuard VPN
@@ -477,7 +478,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             v-else
             class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-300"
           >
-            OFFLINE
+            {{ cloudflareCardStatus(overview?.cloudflare) }}
           </span>
         </div>
         <div>
@@ -485,7 +486,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             {{ overview?.cloudflare?.ingress_count ?? 0 }} <span class="text-xs text-slate-600 font-normal">public routes</span>
           </div>
           <div class="text-[11px] text-slate-500 truncate mt-0.5" :title="overview?.cloudflare?.tunnel_id">
-            Tunnel: {{ overview?.cloudflare?.tunnel_id ? overview.cloudflare.tunnel_id.substring(0, 8) + '…' : 'Configured' }}
+            {{ overview?.cloudflare?.status === 'disabled' ? 'Choose Cloudflare when you need a public hostname.' : overview?.cloudflare?.tunnel_id ? 'Tunnel: ' + overview.cloudflare.tunnel_id.substring(0, 8) + '…' : 'No tunnel ID configured' }}
           </div>
         </div>
         <div v-if="activeTab === 'cloudflare'" class="mt-3 h-0.5 w-full bg-orange-500 rounded-full"></div>
