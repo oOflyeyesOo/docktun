@@ -215,9 +215,39 @@ func (s *Projects) isSelf(path string) bool {
 	return strings.TrimRight(path, "/") == strings.TrimRight(s.selfPath, "/")
 }
 
-func (s *Projects) Delete(id int) error {
-	_, err := s.db.Exec("DELETE FROM projects WHERE id = ?", id)
+func (s *Projects) DeleteProject(id int, down bool, removeFiles bool) error {
+	p, err := s.GetByID(id)
+	if err != nil {
+		return err
+	}
+	if s.isSelf(p.Path) {
+		return fmt.Errorf("cannot delete DockTun itself as a project")
+	}
+
+	if down && p.Path != "" {
+		cmdArgs := []string{"compose"}
+		if p.Name != "" {
+			cmdArgs = append(cmdArgs, "-p", p.Name)
+		}
+		cmdArgs = append(cmdArgs, "--project-directory", p.Path, "down")
+		cmd := exec.Command("docker", cmdArgs...)
+		cmd.Dir = p.Path
+		_ = cmd.Run()
+	}
+
+	if removeFiles && p.Path != "" && !s.isSelf(p.Path) {
+		cleanPath := filepath.Clean(p.Path)
+		if cleanPath != "/" && cleanPath != "." && cleanPath != "./projects" && cleanPath != "/opt/projects" {
+			_ = os.RemoveAll(cleanPath)
+		}
+	}
+
+	_, err = s.db.Exec("DELETE FROM projects WHERE id = ?", id)
 	return err
+}
+
+func (s *Projects) Delete(id int) error {
+	return s.DeleteProject(id, false, false)
 }
 
 func (s *Projects) GetByID(id int) (Project, error) {

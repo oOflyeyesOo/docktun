@@ -973,6 +973,11 @@ const deployBranchName = ref('main')
 
 const stackHistoryModal = ref<{ projectName: string; items: any[] } | null>(null)
 
+const showDeleteStackModal = ref<{ projectId: number; projectName: string; path?: string } | null>(null)
+const deleteStackDown = ref(true)
+const deleteStackRemoveFiles = ref(false)
+const deleteStackLoading = ref(false)
+
 const filteredContainers = computed(() => {
   return containers.value.filter((c) => {
     if (filter.value === 'running' && !c.running) return false
@@ -1732,6 +1737,34 @@ async function openStackHistory(projectId: number, projectName: string) {
     }
   } catch (e: any) {
     alert('Failed to load history: ' + (e.message || e))
+  }
+}
+
+function openDeleteStackPrompt(projectId: number, projectName: string, path?: string) {
+  showDeleteStackModal.value = { projectId, projectName, path }
+  deleteStackDown.value = true
+  deleteStackRemoveFiles.value = false
+}
+
+async function confirmDeleteStack() {
+  if (!showDeleteStackModal.value) return
+  const { projectId } = showDeleteStackModal.value
+  deleteStackLoading.value = true
+  try {
+    const downParam = deleteStackDown.value ? 'true' : 'false'
+    const removeFilesParam = deleteStackRemoveFiles.value ? 'true' : 'false'
+    await apiFetch(`/api/projects/${projectId}?down=${downParam}&remove_files=${removeFilesParam}`, {
+      method: 'DELETE',
+    })
+    showDeleteStackModal.value = null
+    if (selectedContainer.value && selectedContainer.value.project_id === projectId) {
+      selectedContainer.value = null
+    }
+    await fetchContainers()
+  } catch (err: any) {
+    alert('Failed to delete stack: ' + (err.message || err))
+  } finally {
+    deleteStackLoading.value = false
   }
 }
 
@@ -2549,6 +2582,17 @@ onUnmounted(() => {
                 title="View stack deploy history"
               >
                 <History class="h-3 w-3" />
+              </button>
+
+              <button
+                v-if="group.key !== 'docktun'"
+                @click="openDeleteStackPrompt(group.projectId, group.name, group.containers[0]?.project_path)"
+                :disabled="stackActionLoading[group.projectId]"
+                class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2 text-rose-600 hover:border-rose-400 hover:bg-rose-50/60"
+                title="Delete this stack"
+              >
+                <Trash2 class="h-3 w-3" />
+                <span>Delete</span>
               </button>
             </template>
 
@@ -3382,6 +3426,17 @@ onUnmounted(() => {
                     >
                       <History class="h-3 w-3 text-slate-600" />
                       <span>History</span>
+                    </button>
+
+                    <button
+                      v-if="selectedContainer.project_name !== 'docktun'"
+                      @click="openDeleteStackPrompt(selectedContainer.project_id, selectedContainer.project_name || selectedContainer.name, selectedContainer.project_path)"
+                      :disabled="!!stackActionLoading[selectedContainer.project_id]"
+                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-rose-600 hover:border-rose-400 hover:bg-rose-50/50"
+                      title="Delete this stack"
+                    >
+                      <Trash2 class="h-3 w-3" />
+                      <span>Delete Stack</span>
                     </button>
 
                     <button
@@ -4607,6 +4662,69 @@ onUnmounted(() => {
 
         <div class="flex items-center justify-end pt-2">
           <button @click="stackHistoryModal = null" class="cyber-btn text-xs">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================== -->
+    <!-- DELETE STACK CONFIRMATION MODAL               -->
+    <!-- ============================================== -->
+    <div
+      v-if="showDeleteStackModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs"
+      @mousedown="onBackdropMouseDown"
+      @click="onBackdropClick($event, () => showDeleteStackModal = null)"
+    >
+      <div class="w-full max-w-md rounded-xl border border-rose-200 bg-white p-6 shadow-xl space-y-4" @mousedown.stop @mouseup.stop @click.stop>
+        <div class="flex items-start gap-3">
+          <div class="rounded-full bg-rose-100 p-2 text-rose-600 shrink-0">
+            <Trash2 class="h-5 w-5" />
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">Delete Stack</h3>
+            <p class="text-xs text-slate-600 mt-0.5">
+              Are you sure you want to delete stack <strong class="text-slate-900 font-mono">{{ showDeleteStackModal.projectName }}</strong>?
+            </p>
+          </div>
+        </div>
+
+        <div class="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3.5 text-xs">
+          <label class="flex items-start gap-2 cursor-pointer">
+            <input type="checkbox" v-model="deleteStackDown" class="mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer" />
+            <div>
+              <span class="font-semibold text-slate-800">Stop and remove stack containers</span>
+              <p class="text-slate-500 text-[11px]">Executes <code class="font-mono">docker compose down</code> to cleanly stop all running containers and networks in this stack.</p>
+            </div>
+          </label>
+
+          <label class="flex items-start gap-2 cursor-pointer pt-2 border-t border-slate-200">
+            <input type="checkbox" v-model="deleteStackRemoveFiles" class="mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer" />
+            <div>
+              <span class="font-semibold text-rose-700">Delete project folder from disk</span>
+              <p class="text-slate-500 text-[11px]">Permanently removes <code class="font-mono">{{ showDeleteStackModal.path || 'the project directory' }}</code>.</p>
+            </div>
+          </label>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-2">
+          <button
+            type="button"
+            @click="showDeleteStackModal = null"
+            class="cyber-btn-secondary text-xs"
+            :disabled="deleteStackLoading"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            @click="confirmDeleteStack"
+            class="cyber-btn flex items-center gap-1.5 text-xs text-white bg-rose-600 hover:bg-rose-700 font-semibold"
+            :disabled="deleteStackLoading"
+          >
+            <RotateCcw v-if="deleteStackLoading" class="h-3.5 w-3.5 animate-spin" />
+            <Trash2 v-else class="h-3.5 w-3.5" />
+            <span>{{ deleteStackLoading ? 'Deleting…' : 'Delete Stack' }}</span>
+          </button>
         </div>
       </div>
     </div>

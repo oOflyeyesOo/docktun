@@ -131,13 +131,22 @@ func (h *Projects) Update(w http.ResponseWriter, r *http.Request) {
 
 func (h *Projects) Delete(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
-	if err := h.svc.Delete(id); err != nil {
+	p, err := h.svc.GetByID(id)
+	if err != nil {
+		jsonError(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	down := r.URL.Query().Get("down") != "false"
+	removeFiles := r.URL.Query().Get("remove_files") == "true"
+
+	if err := h.svc.DeleteProject(id, down, removeFiles); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	userID, _ := r.Context().Value("user_id").(int)
-	h.audit.Log(userID, "project_delete", chi.URLParam(r, "id"), r.RemoteAddr)
+	h.audit.Log(userID, "project_delete", fmt.Sprintf("Deleted stack %s (down=%v, remove_files=%v)", p.Name, down, removeFiles), r.RemoteAddr)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
