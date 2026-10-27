@@ -1,8 +1,6 @@
-"""Provider lifecycle in a disposable Docker-in-Docker engine.
+"""Stack creation, persistence and deletion in a disposable Docker engine.
 
-Provider processes are idle fixtures, so no Cloudflare account, WireGuard kernel
-configuration, or real tailnet is needed. Verifies the actual app/API/Docker
-creation, simultaneous state, mount mapping and missing-container recovery.
+Uses real Compose projects plus idle provider fixtures; never changes user stacks.
 """
 import json
 import os
@@ -65,7 +63,7 @@ try:
         inner('build', '-q', '-t', provider_image, '-', input=fixture)
     inner('network', 'create', 'docktun')
     inner('run', '-d', '--name', 'docktun', '--network', 'docktun', '-p', '3001:3001',
-          '--label', 'com.docker.compose.project=docktun-core', '-v', 'test-app:/app/data', '-v', 'scoped-cloudflare:/etc/cloudflared',
+          '--label', 'com.docker.compose.project=docktun-core', '-v', 'test-app:/app/data', '-v', 'test-projects:/opt/projects', '-v', 'scoped-cloudflare:/etc/cloudflared',
           '-v', '/var/run/docker.sock:/var/run/docker.sock', '-e', 'DOCKER_NETWORK=docktun', image)
     base = 'http://' + docker('port', engine, '3001/tcp')
     for _ in range(90):
@@ -80,6 +78,29 @@ try:
         raise AssertionError('providers were not staged stopped')
     secret = inner('exec', 'docktun', 'cat', '/app/data/setup.token')
     token = request('/api/setup/complete', {'setup_token': secret, 'admin_username': 'owner', 'admin_password': 'integration-password-123', 'tunnel': {'type': 'tailscale'}})['access_token']
+    # Projects created in the UI must use the mounted, persistent directory.
+    created = request('/api/projects', {'name': 'managed-example', 'compose_content': 'services:\n  app:\n    image: alpine:3.23\n    command: ["sleep", "3600"]\n', 'auto_start': True}, expected=201)
+    assert created['path'] == '/opt/projects/managed-example', created
+    for _ in range(60):
+        output = request(f"/api/projects/{created['id']}/output")
+        if output['done']:
+            assert not any('[ERROR]' in line for line in output['lines']), output
+            break
+        time.sleep(1)
+    else:
+        raise AssertionError('managed stack did not finish deploying')
+    assert inner('ps', '-q', '--filter', 'label=com.docker.compose.project=managed-example')
+    inner('restart', 'docktun')
+    for _ in range(60):
+        try:
+            request('/healthz'); break
+        except OSError:
+            time.sleep(1)
+    inner('exec', 'docktun', 'test', '-f', created['path'] + '/docker-compose.yml')
+    request(f"/api/projects/{created['id']}", method='DELETE')
+    inner('exec', 'docktun', 'test', '-f', created['path'] + '/docker-compose.yml')
+    request('/api/projects', {'name': 'unwritable-example', 'path': '/proc/docktun-unwritable', 'compose_content': 'services:\n  app:\n    image: alpine:3.23\n', 'auto_start': True}, expected=500)
+    assert not inner('ps', '-aq', '--filter', 'label=com.docker.compose.project=unwritable-example')
     # Host-side Compose file is deliberately outside the app's mounted paths.
     inner('network', 'create', 'shared-external')
     compose = """services:
@@ -129,6 +150,6 @@ networks:
     core = next(c for c in containers if c['name'] == 'docktun')
     request(f"/api/projects/{core['project_id']}", method='DELETE', expected=500)
     assert state('docktun') == 'running'
-    print('PASS: host-only Compose stack deleted; stopped/profile services removed; volumes, external network and neighboring stack preserved; failures and self-delete refused')
+    print('PASS: managed stack deployed and persisted; file errors reported; host-only Compose stack deleted; stopped/profile services removed; volumes, external network and neighboring stack preserved; failures and self-delete refused')
 finally:
     docker('rm', '-f', '-v', engine)

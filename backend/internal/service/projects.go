@@ -126,14 +126,29 @@ func (s *Projects) PruneOrphans() (int, error) {
 	return int(affected), nil
 }
 
+// ProjectsRoot uses the persistent mount in the distributed image, and an
+// absolute local folder when running the backend directly during development.
+func ProjectsRoot() string {
+	if info, err := os.Stat("/opt/projects"); err == nil && info.IsDir() {
+		return "/opt/projects"
+	}
+	root, _ := filepath.Abs("./projects")
+	return root
+}
+
 func (s *Projects) Create(name, path, repoURL, gitUsername, gitToken string) (Project, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return Project{}, err
+	}
+	path = absolute
 	if s.isSelf(path) {
 		return Project{}, fmt.Errorf("cannot add DockTun itself as a project")
 	}
 
 	// Check if a project with the same path or name already exists to prevent UNIQUE constraint errors
 	var existing Project
-	err := s.db.QueryRow("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects WHERE path = ? OR name = ?", path, name).
+	err = s.db.QueryRow("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects WHERE path = ? OR name = ?", path, name).
 		Scan(&existing.ID, &existing.Name, &existing.Path, &existing.RepoURL, &existing.GitUsername, &existing.GitToken, &existing.CreatedAt)
 	if err == nil {
 		// Update existing record
@@ -449,6 +464,16 @@ func (s *Projects) DeployStream(id int, p Project, ref string, onDone func(strin
 }
 
 func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
+	if strings.TrimSpace(path) == "" {
+		s.appendOutput(id, "[ERROR] project directory is missing")
+		return
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		s.appendOutput(id, "[ERROR] resolve project directory: "+err.Error())
+		return
+	}
+	path = absolute
 	for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
 		f := filepath.Join(path, name)
 		if fileExists(f) {
