@@ -102,6 +102,8 @@ func (h *Metrics) Get(w http.ResponseWriter, r *http.Request) {
 	// Read host disk space
 	resp.Host.DiskTotal, resp.Host.DiskUsed, resp.Host.DiskFree, resp.Host.DiskPercent = readDiskSpace()
 
+	cloudflareRunning := false
+
 	// Gather container metrics
 	if h.containers != nil {
 		if containers, err := h.containers.List(); err == nil {
@@ -111,6 +113,9 @@ func (h *Metrics) Get(w http.ResponseWriter, r *http.Request) {
 			var maxContainerLimit int64
 
 			for _, c := range containers {
+				if h.cfg != nil && c.Name == h.cfg.CloudflaredContainer && c.Running {
+					cloudflareRunning = true
+				}
 				if c.Running {
 					resp.Host.ContainersRunning++
 				} else {
@@ -186,13 +191,26 @@ func (h *Metrics) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Query Cloudflare tunnel metrics if configured
-	if h.cfg != nil && h.cfg.MetricsAddr != "" {
+	h.readTunnelMetrics(r.Context(), cloudflareRunning, &resp)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *Metrics) readTunnelMetrics(ctx context.Context, running bool, resp *metricsResponse) {
+	// A configured metrics URL does not mean the optional provider is enabled.
+	if running && h.cfg != nil && h.cfg.MetricsAddr != "" {
 		client := &http.Client{Timeout: 1200 * time.Millisecond}
-		cfResp, err := client.Get(h.cfg.MetricsAddr)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.cfg.MetricsAddr, nil)
+		if err != nil {
+			return
+		}
+		cfResp, err := client.Do(req)
 		if err == nil {
 			defer cfResp.Body.Close()
-			body, _ := io.ReadAll(cfResp.Body)
+			if cfResp.StatusCode != http.StatusOK {
+				return
+			}
+			body, _ := io.ReadAll(io.LimitReader(cfResp.Body, 2<<20))
 			raw := string(body)
 			resp.Raw = raw
 
@@ -232,8 +250,6 @@ func (h *Metrics) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
 }
 
 func readLoadAvg() [3]float64 {

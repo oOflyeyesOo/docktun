@@ -88,8 +88,9 @@ const cpuHistory = ref<number[]>([])
 const memHistory = ref<number[]>([])
 
 // Controls
-const updateInterval = ref<number>(3000) // 3s default
+const updateInterval = ref<number>(5000) // Match the visible default refresh choice
 let timer: ReturnType<typeof setInterval> | null = null
+let mounted = false
 
 // Filters & Sorting
 const searchQuery = ref('')
@@ -104,6 +105,7 @@ const targetedContainer = computed(() => {
 })
 
 async function fetchMetrics(silent = false) {
+  if (refreshing.value || (silent && document.hidden)) return
   if (!silent && !metrics.value) {
     loading.value = true
   }
@@ -135,7 +137,7 @@ function resetTimer() {
     clearInterval(timer)
     timer = null
   }
-  if (updateInterval.value > 0) {
+  if (updateInterval.value > 0 && !document.hidden) {
     timer = setInterval(() => fetchMetrics(true), updateInterval.value)
   }
 }
@@ -224,8 +226,16 @@ watch(targetedContainer, () => {
   scrollToTarget()
 })
 
+function onVisibilityChange() {
+  resetTimer()
+  if (!document.hidden && updateInterval.value > 0) void fetchMetrics(true)
+}
+
 onMounted(async () => {
+  mounted = true
+  document.addEventListener('visibilitychange', onVisibilityChange)
   await fetchMetrics()
+  if (!mounted) return
   resetTimer()
   if (targetedContainer.value) {
     setTimeout(scrollToTarget, 400)
@@ -233,6 +243,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  mounted = false
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   if (timer) clearInterval(timer)
 })
 
