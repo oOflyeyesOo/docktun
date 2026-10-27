@@ -101,6 +101,11 @@ try:
     assert connector not in json.dumps(cloudflare['Config']['Cmd'])
     mount = next(m for m in cloudflare['Mounts'] if m['Destination'] == '/etc/cloudflared')
     assert mount['Type'] == 'volume' and mount['Name'] == 'scoped-cloudflare' and not mount['RW']
+    connector_id = inner('inspect', '--format', '{{.Id}}', 'docktun-cloudflared')
+    assert inner('exec', 'docktun', 'stat', '-c', '%a', '/etc/cloudflared/tunnel.token') == '600'
+    request('/api/control/stop', {})
+    request('/api/control/start', {})
+    assert inner('inspect', '--format', '{{.Id}}', 'docktun-cloudflared') == connector_id
     request('/api/control/stop', {})
     assert state('docktun-tailscale') == 'running' and state('docktun-wireguard') == 'running'
     inner('restart', 'docktun')

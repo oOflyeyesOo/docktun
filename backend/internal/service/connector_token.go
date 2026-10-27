@@ -16,29 +16,32 @@ func (s *Cloudflared) HasConnectorToken() bool {
 // through the API or passed in process arguments/container environment.
 func sanitizeConnectorToken(raw string) string {
 	token := strings.TrimSpace(raw)
-	token = strings.Trim(token, `"' `)
-	if idx := strings.Index(token, "--token"); idx != -1 {
-		sub := strings.TrimSpace(token[idx+len("--token"):])
-		sub = strings.TrimPrefix(sub, `"`)
-		sub = strings.TrimPrefix(sub, `=`)
-		sub = strings.TrimSpace(sub)
-		parts := strings.Fields(sub)
-		if len(parts) > 0 {
-			token = parts[0]
+	fields := strings.Fields(token)
+	for i, field := range fields {
+		option := strings.Trim(field, `"'`)
+		if option == "--token" && i+1 < len(fields) {
+			return strings.Trim(fields[i+1], `"'`)
 		}
-	} else if idx := strings.Index(token, "service install"); idx != -1 {
-		sub := strings.TrimSpace(token[idx+len("service install"):])
-		parts := strings.Fields(sub)
-		if len(parts) > 0 {
-			token = parts[0]
+		if strings.HasPrefix(option, "--token=") {
+			return strings.Trim(strings.TrimPrefix(option, "--token="), `"'`)
+		}
+		if option == "service" && i+2 < len(fields) && fields[i+1] == "install" {
+			return strings.Trim(fields[i+2], `"'`)
 		}
 	}
-	return strings.Trim(token, `"' `)
+	return strings.Trim(token, `"'`)
 }
 
 func (s *Cloudflared) SaveConnectorToken(token string) error {
-	token = sanitizeConnectorToken(token)
 	if len(token) > 64*1024 || strings.ContainsAny(token, "\r\n") {
+		return fmt.Errorf("invalid connector token: paste a single token or a single-line cloudflared install command")
+	}
+	raw := token
+	token = sanitizeConnectorToken(token)
+	if token == "" && strings.TrimSpace(raw) != "" {
+		return fmt.Errorf("connector token is missing from the command")
+	}
+	if strings.ContainsAny(token, " \t\r\n") || strings.HasPrefix(token, "-") {
 		return fmt.Errorf("invalid connector token")
 	}
 	file := s.providers.tokenFile()
@@ -58,7 +61,7 @@ func (s *Cloudflared) SaveConnectorToken(token string) error {
 		return err
 	}
 	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0644); err != nil {
+	if err := tmp.Chmod(0600); err != nil {
 		tmp.Close()
 		return err
 	}
@@ -72,6 +75,8 @@ func (s *Cloudflared) SaveConnectorToken(token string) error {
 	if err := os.Rename(tmp.Name(), file); err != nil {
 		return err
 	}
-	_ = os.Chmod(file, 0644)
+	if err := os.Chmod(file, 0600); err != nil {
+		return err
+	}
 	return nil
 }

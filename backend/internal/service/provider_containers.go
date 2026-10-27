@@ -237,10 +237,9 @@ func (p *ProviderContainers) ensure(ctx context.Context, provider string, refres
 		}
 		needsRebuild := false
 		if provider == "cloudflare" && refreshAuth {
-			// Rebuild if unmanaged/legacy, if auth changed, or if existing container exited/failed when token exists
+			// Rebuild legacy containers or a changed authentication mode.
+			// A stopped managed connector reads the updated token from its shared file.
 			if labels["docktun.provider"] != provider || labels["docktun.cloudflared.auth"] != expected {
-				needsRebuild = true
-			} else if !existing.State.Running && expected == "token" {
 				needsRebuild = true
 			}
 		}
