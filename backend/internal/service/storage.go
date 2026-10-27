@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"docktun/internal/config"
@@ -17,12 +18,12 @@ import (
 )
 
 type StorageOverview struct {
-	HostDisk        DiskSpace              `json:"host_disk"`
-	DockerDF        []DockerDFItem         `json:"docker_df"`
-	ReclaimableStr  string                 `json:"reclaimable_str"`
-	ReclaimableBytes int64                 `json:"reclaimable_bytes"`
-	Counts          StorageCounts          `json:"counts"`
-	DockTunStorage  DockTunStorageInfo     `json:"docktun_storage"`
+	HostDisk         DiskSpace          `json:"host_disk"`
+	DockerDF         []DockerDFItem     `json:"docker_df"`
+	ReclaimableStr   string             `json:"reclaimable_str"`
+	ReclaimableBytes int64              `json:"reclaimable_bytes"`
+	Counts           StorageCounts      `json:"counts"`
+	DockTunStorage   DockTunStorageInfo `json:"docktun_storage"`
 }
 
 type DiskSpace struct {
@@ -44,14 +45,14 @@ type DockerDFItem struct {
 }
 
 type StorageCounts struct {
-	TotalImages      int `json:"total_images"`
-	UnusedImages     int `json:"unused_images"`
-	DanglingImages   int `json:"dangling_images"`
-	TotalContainers  int `json:"total_containers"`
+	TotalImages       int `json:"total_images"`
+	UnusedImages      int `json:"unused_images"`
+	DanglingImages    int `json:"dangling_images"`
+	TotalContainers   int `json:"total_containers"`
 	StoppedContainers int `json:"stopped_containers"`
-	TotalVolumes     int `json:"total_volumes"`
-	DanglingVolumes  int `json:"dangling_volumes"`
-	BuildCacheCount  int `json:"build_cache_count"`
+	TotalVolumes      int `json:"total_volumes"`
+	DanglingVolumes   int `json:"dangling_volumes"`
+	BuildCacheCount   int `json:"build_cache_count"`
 }
 
 type DockTunStorageInfo struct {
@@ -112,8 +113,11 @@ type ReclaimResult struct {
 }
 
 type StorageService struct {
-	db  *db.DB
-	cfg *config.Config
+	db             *db.DB
+	cfg            *config.Config
+	volumesScan    sharedStorageScan[VolumeItem]
+	imagesScan     sharedStorageScan[ImageItem]
+	containersScan sharedStorageScan[ContainerStorageItem]
 }
 
 func NewStorageService(database *db.DB, cfg *config.Config) *StorageService {
@@ -129,6 +133,17 @@ func NewStorageService(database *db.DB, cfg *config.Config) *StorageService {
 
 func (s *StorageService) GetOverview() (*StorageOverview, error) {
 	overview := &StorageOverview{}
+	// These independent scans also serve the detailed tabs. Concurrent requests
+	// share only work in flight; a later refresh always reads Docker again.
+	var vols []VolumeItem
+	var imgs []ImageItem
+	var containers []ContainerStorageItem
+	var volErr, imgErr, containerErr error
+	var scans sync.WaitGroup
+	scans.Add(3)
+	go func() { defer scans.Done(); vols, volErr = s.ListVolumes() }()
+	go func() { defer scans.Done(); imgs, imgErr = s.ListImages() }()
+	go func() { defer scans.Done(); containers, containerErr = s.ListContainersStorage() }()
 
 	// 1. Host Disk Space
 	overview.HostDisk = s.getHostDisk()
@@ -140,9 +155,16 @@ func (s *StorageService) GetOverview() (*StorageOverview, error) {
 	overview.ReclaimableStr = formatBytes(totalReclaimBytes)
 
 	// 3. Counts from Volume & Image scans
-	vols, _ := s.ListVolumes()
-	imgs, _ := s.ListImages()
-	containers, _ := s.ListContainersStorage()
+	scans.Wait()
+	if volErr != nil {
+		return nil, fmt.Errorf("load storage volumes: %w", volErr)
+	}
+	if imgErr != nil {
+		return nil, fmt.Errorf("load storage images: %w", imgErr)
+	}
+	if containerErr != nil {
+		return nil, fmt.Errorf("load container storage: %w", containerErr)
+	}
 
 	overview.Counts.TotalVolumes = len(vols)
 	for _, v := range vols {
@@ -333,6 +355,10 @@ func (s *StorageService) getDockTunStorage() DockTunStorageInfo {
 // -----------------------------------------------------------------------------
 
 func (s *StorageService) ListVolumes() ([]VolumeItem, error) {
+	return s.volumesScan.get(s.scanListVolumes)
+}
+
+func (s *StorageService) scanListVolumes() ([]VolumeItem, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -379,16 +405,7 @@ func (s *StorageService) ListVolumes() ([]VolumeItem, error) {
 	volSizes := make(map[string]string)
 	dfCmd := exec.CommandContext(ctx, "docker", "system", "df", "-v", "--format", "{{json .}}")
 	if dfOut, err := dfCmd.Output(); err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(string(dfOut)), "\n") {
-			var obj map[string]interface{}
-			if err := json.Unmarshal([]byte(line), &obj); err == nil {
-				if vName, ok := obj["VolumeName"].(string); ok && vName != "" {
-					if sz, ok := obj["Size"].(string); ok {
-						volSizes[vName] = sz
-					}
-				}
-			}
-		}
+		volSizes = parseVolumeSizes(dfOut)
 	}
 
 	// 3. List volumes
@@ -483,6 +500,10 @@ func (s *StorageService) PruneVolumes() (string, error) {
 // -----------------------------------------------------------------------------
 
 func (s *StorageService) ListImages() ([]ImageItem, error) {
+	return s.imagesScan.get(s.scanListImages)
+}
+
+func (s *StorageService) scanListImages() ([]ImageItem, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -610,6 +631,10 @@ func (s *StorageService) PruneImages(all bool) (string, error) {
 // -----------------------------------------------------------------------------
 
 func (s *StorageService) ListContainersStorage() ([]ContainerStorageItem, error) {
+	return s.containersScan.get(s.scanListContainersStorage)
+}
+
+func (s *StorageService) scanListContainersStorage() ([]ContainerStorageItem, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
