@@ -91,7 +91,15 @@ DockTun compiles the Vue 3 frontend directly into a single, high-performance Go 
 
 ## Quick Start
 
-### Option 1: Docker Compose (Recommended)
+### Option 1: Automated 1-Liner (Recommended for new servers)
+
+If your machine doesn't have Docker installed yet, or if you prefer a one-command setup, the automated installer installs Docker Engine (if missing) and launches DockTun with zero prompts:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo bash
+```
+
+### Option 2: Docker Compose (If Docker is already installed)
 
 Save the following as `compose.yml` in an empty directory:
 
