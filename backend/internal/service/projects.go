@@ -210,12 +210,19 @@ func (s *Projects) Update(id int, name, path, repoURL, gitUsername, gitToken str
 	if s.isSelf(path) {
 		return fmt.Errorf("cannot set path to DockTun itself")
 	}
-	if gitToken == "" || gitToken == maskToken("x") {
+	current, err := s.GetByID(id)
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(gitToken, "****") && gitToken != "****" && gitToken != maskToken(current.GitToken) {
+		return fmt.Errorf("saved Git token has changed; reload the project settings before saving")
+	}
+	if gitToken == "" || gitToken == "****" || gitToken == maskToken(current.GitToken) {
 		_, err := s.db.Exec("UPDATE projects SET name=?, path=?, repo_url=?, git_username=? WHERE id=?",
 			name, path, repoURL, gitUsername, id)
 		return err
 	}
-	_, err := s.db.Exec("UPDATE projects SET name=?, path=?, repo_url=?, git_username=?, git_token=? WHERE id=?",
+	_, err = s.db.Exec("UPDATE projects SET name=?, path=?, repo_url=?, git_username=?, git_token=? WHERE id=?",
 		name, path, repoURL, gitUsername, gitToken, id)
 	return err
 }
