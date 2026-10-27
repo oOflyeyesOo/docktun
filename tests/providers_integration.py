@@ -47,7 +47,7 @@ def state(name):
     return inner('inspect', '--format', '{{.State.Status}}', name)
 
 try:
-    docker('run', '-d', '--privileged', '--name', engine, '-e', 'DOCKER_TLS_CERTDIR=', '-p', '127.0.0.1::3001', 'docker:29-dind')
+    docker('run', '-d', '--privileged', '--name', engine, '-e', 'DOCKER_TLS_CERTDIR=', '-p', '127.0.0.1::3001', os.environ.get('DOCKTUN_TEST_ENGINE_IMAGE', 'docker:29-dind'))
     for _ in range(90):
         try:
             inner('info'); break
