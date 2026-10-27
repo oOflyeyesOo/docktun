@@ -195,3 +195,26 @@ func TestProjectFileRemovalRejectsUnsafePathsBeforeDocker(t *testing.T) {
 		}
 	}
 }
+
+func TestNewProjectTemplateDoesNotRequireTunnelNetwork(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	svc := NewProjects(database, "")
+	p, err := svc.Create("example", t.TempDir(), "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, compose, err := svc.GetComposeFile(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(compose, "external:") || strings.Contains(compose, "cloudflared") {
+		t.Fatalf("template forces a tunnel network: %s", compose)
+	}
+	if !strings.Contains(compose, "image: nginx:alpine") {
+		t.Fatal("default service missing")
+	}
+}

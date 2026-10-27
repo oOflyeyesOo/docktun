@@ -672,12 +672,6 @@ func (s *Projects) GetComposeFile(id int) (string, string, error) {
     restart: unless-stopped
     ports:
       - "8080:80"
-    networks:
-      - cloudflared
-
-networks:
-  cloudflared:
-    external: true
 `, p.Name, p.Name)
 	return "docker-compose.yml", defaultTmpl, nil
 }
