@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -216,5 +217,60 @@ func TestNewProjectTemplateDoesNotRequireTunnelNetwork(t *testing.T) {
 	}
 	if !strings.Contains(compose, "image: nginx:alpine") {
 		t.Fatal("default service missing")
+	}
+}
+
+func TestComposeActionsResolveLegacyRelativePathsOnce(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture targets the Linux production runtime")
+	}
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.MkdirAll("projects/example", 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("projects/example/compose.yml", []byte("services:\n  example:\n    image: alpine\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+ if [ "$1" = "--project-directory" ]; then
+  shift
+  if [ ! -f "$1/compose.yml" ]; then echo "project directory resolved twice"; exit 1; fi
+  if [ "$(pwd)" != "$1" ]; then echo "working directory mismatch"; exit 1; fi
+  echo COMPOSE_PATH_OK
+  exit 0
+ fi
+ shift
+done
+exit 1
+`
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	database, err := db.New(filepath.Join(root, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	svc := NewProjects(database, "")
+	project, err := svc.Create("example", "projects/example", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(project.Path) {
+		t.Fatal("new project path is not absolute")
+	}
+	svc.clearOutput(project.ID)
+	svc.runComposeToBuffer(project.ID, "projects/example", "up", "-d")
+	lines, _ := svc.GetOutput(project.ID)
+	output := strings.Join(lines, "\n")
+	if strings.Contains(output, "[ERROR]") || !strings.Contains(output, "COMPOSE_PATH_OK") {
+		t.Fatalf("relative stack action failed: %s", output)
 	}
 }
