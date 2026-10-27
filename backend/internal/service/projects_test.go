@@ -421,3 +421,82 @@ func TestEnvReadDistinguishesAbsentFileFromUnavailableProject(t *testing.T) {
 		t.Fatal("invalid env reported empty")
 	}
 }
+
+func TestProjectFilesConfineSymlinksAndTraversal(t *testing.T) {
+	root := t.TempDir()
+	database, err := db.New(filepath.Join(root, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	svc := NewProjects(database, "")
+	directory := filepath.Join(root, "project")
+	outside := filepath.Join(root, "outside")
+	for _, path := range []string{directory, outside} {
+		if err := os.Mkdir(path, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	secret := filepath.Join(outside, "secret")
+	if err := os.WriteFile(secret, []byte("preserve"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(directory, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	project, err := svc.Create("example", directory, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.GetFile(project.ID, "escape/secret"); err == nil {
+		t.Fatal("read escaped project")
+	}
+	if _, err := svc.ListFiles(project.ID, "escape"); err == nil {
+		t.Fatal("list escaped project")
+	}
+	if err := svc.SaveFile(project.ID, "escape/secret", "overwritten"); err == nil {
+		t.Fatal("write escaped project")
+	}
+	if err := svc.CreateFile(project.ID, "escape/new-dir", true, ""); err == nil {
+		t.Fatal("mkdir escaped project")
+	}
+	if err := svc.DeleteFile(project.ID, "escape/secret"); err == nil {
+		t.Fatal("delete escaped project")
+	}
+	if err := svc.SaveFile(project.ID, "../outside/secret", "overwritten"); err == nil {
+		t.Fatal("accepted parent traversal")
+	}
+	if err := svc.DeleteFile(project.ID, ""); err == nil {
+		t.Fatal("deleted project root")
+	}
+	if content, err := os.ReadFile(secret); err != nil || string(content) != "preserve" {
+		t.Fatal("outside file changed")
+	}
+	if err := svc.SaveFile(project.ID, "nested/file.txt", "inside"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("nested", filepath.Join(directory, "inside-link")); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := svc.GetFile(project.ID, "inside-link/file.txt"); err != nil || content != "inside" {
+		t.Fatalf("safe relative symlink: %q %v", content, err)
+	}
+	if err := svc.SaveFile(project.ID, "inside-link/file.txt", "updated"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(directory, "compose.yml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.GetComposeFile(project.ID); err == nil {
+		t.Fatal("Compose read escaped through symlink")
+	}
+	if err := svc.DeleteFile(project.ID, "escape"); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := os.ReadFile(secret); err != nil || string(content) != "preserve" {
+		t.Fatal("deleting symlink removed target")
+	}
+	if err := svc.DeleteFile(project.ID, "nested"); err != nil {
+		t.Fatal(err)
+	}
+}
