@@ -27,6 +27,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       TUNNEL_NAME: ${TUNNEL_NAME:-}
       TUNNEL_ID: ${TUNNEL_ID:-}
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
       CLOUDFLARED_CONFIG_PATH: ${CLOUDFLARED_CONFIG_PATH:-/etc/cloudflared/config.yml}
       CLOUDFLARED_CONTAINER: ${CLOUDFLARED_CONTAINER:-docktun-cloudflared}
       CLOUDFLARED_METRICS: ${CLOUDFLARED_METRICS:-http://docktun-cloudflared:2000/metrics}

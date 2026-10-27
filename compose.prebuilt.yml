@@ -20,6 +20,7 @@ services:
       CLOUDFLARED_CONTAINER: docktun-cloudflared
       CLOUDFLARED_METRICS: http://docktun-cloudflared:2000/metrics
       SELF_PATH: /opt/projects/docktun
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
     volumes:
       - docktun-data:/app/data
       - docktun-cloudflared:/etc/cloudflared

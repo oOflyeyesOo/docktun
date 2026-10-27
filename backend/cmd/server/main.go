@@ -71,11 +71,26 @@ func main() {
 
   dataDir := filepath.Dir(cfg.DBPath)
   cfAPISvc := service.NewCloudflareAPI(database)
-  // Preserve connector credentials saved by older onboarding versions.
+  // Preserve connector credentials saved by older onboarding versions or environment variables.
   if !cfdSvc.HasConnectorToken() {
-    var legacyToken string
-    if database.QueryRow(`SELECT value FROM system_settings WHERE key='cloudflare_tunnel_token'`).Scan(&legacyToken) == nil && legacyToken != "" {
-      if err := cfdSvc.SaveConnectorToken(legacyToken); err != nil { log.Printf("Migrate connector credentials: %v", err) }
+    envToken := strings.TrimSpace(os.Getenv("TUNNEL_TOKEN"))
+    if envToken == "" {
+      envToken = strings.TrimSpace(os.Getenv("CLOUDFLARE_TUNNEL_TOKEN"))
+    }
+    if envToken == "" {
+      envToken = strings.TrimSpace(os.Getenv("CF_TUNNEL_TOKEN"))
+    }
+    if envToken != "" {
+      if err := cfdSvc.SaveConnectorToken(envToken); err != nil {
+        log.Printf("[docktun] Failed to save connector token from environment: %v", err)
+      } else {
+        log.Printf("[docktun] Loaded Cloudflare tunnel connector token from environment")
+      }
+    } else {
+      var legacyToken string
+      if database.QueryRow(`SELECT value FROM system_settings WHERE key='cloudflare_tunnel_token'`).Scan(&legacyToken) == nil && legacyToken != "" {
+        if err := cfdSvc.SaveConnectorToken(legacyToken); err != nil { log.Printf("Migrate connector credentials: %v", err) }
+      }
     }
   }
   projectsSvc := service.NewProjects(database, cfg.SelfPath)
