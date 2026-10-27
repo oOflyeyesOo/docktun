@@ -177,9 +177,10 @@ func (p *ProviderContainers) definition(ctx context.Context, provider string) ([
 		if provider == "wireguard" {
 			directory, target = filepath.Join(filepath.Dir(p.cfg.DBPath), "wireguard"), "/config"
 		}
-		if err := os.MkdirAll(directory, 0700); err != nil {
+		if err := os.MkdirAll(directory, 0755); err != nil {
 			return nil, err
 		}
+		_ = os.Chmod(directory, 0755)
 		mount, err := providerMount(own, directory, target, provider == "cloudflare")
 		if err != nil {
 			return nil, err
@@ -210,13 +211,21 @@ func (p *ProviderContainers) ensure(ctx context.Context, provider string, refres
 	existing, err := p.inspect(ctx, p.name(provider))
 	var args []string
 	if err == nil {
-		// Rebuild only a DockTun-created connector when explicitly switching auth.
 		labels, _ := existing.Config["Labels"].(map[string]any)
 		expected := "config"
 		if token, _ := os.ReadFile(p.tokenFile()); len(strings.TrimSpace(string(token))) > 0 {
 			expected = "token"
 		}
-		if provider != "cloudflare" || !refreshAuth || labels["docktun.provider"] != provider || labels["docktun.cloudflared.auth"] == expected {
+		needsRebuild := false
+		if provider == "cloudflare" && refreshAuth {
+			// Rebuild if unmanaged/legacy, if auth changed, or if existing container exited/failed when token exists
+			if labels["docktun.provider"] != provider || labels["docktun.cloudflared.auth"] != expected {
+				needsRebuild = true
+			} else if !existing.State.Running && expected == "token" {
+				needsRebuild = true
+			}
+		}
+		if !needsRebuild {
 			return nil
 		}
 		args, err = p.definition(ctx, provider)
@@ -228,7 +237,7 @@ func (p *ProviderContainers) ensure(ctx context.Context, provider string, refres
 				return err
 			}
 		}
-		if _, err := p.run(ctx, "rm", p.name(provider)); err != nil {
+		if _, err := p.run(ctx, "rm", "-f", p.name(provider)); err != nil {
 			return err
 		}
 	} else if !strings.Contains(strings.ToLower(err.Error()), "no such") && !strings.Contains(strings.ToLower(err.Error()), "not found") {
@@ -268,20 +277,16 @@ func (p *ProviderContainers) Control(provider, action string) error {
 		}
 		if provider == "cloudflare" {
 			if token, _ := os.ReadFile(p.tokenFile()); len(strings.TrimSpace(string(token))) == 0 {
-				existing, _ := p.inspect(ctx, p.name(provider))
-				labels, _ := existing.Config["Labels"].(map[string]any)
-				if labels["docktun.provider"] == "cloudflare" {
-					content, err := os.ReadFile(p.cfg.CloudflaredConfig)
-					var settings struct {
-						Tunnel      string `yaml:"tunnel"`
-						Credentials string `yaml:"credentials-file"`
-					}
-					if err != nil || yaml.Unmarshal(content, &settings) != nil || settings.Tunnel == "" || settings.Credentials == "" {
-						return fmt.Errorf("Cloudflare is stopped: save a connector token, or a YAML tunnel ID and credentials-file before enabling it")
-					}
-					if _, err := os.Stat(settings.Credentials); err != nil {
-						return fmt.Errorf("Cloudflare credentials file is unavailable in DockTun: %s", settings.Credentials)
-					}
+				content, err := os.ReadFile(p.cfg.CloudflaredConfig)
+				var settings struct {
+					Tunnel      string `yaml:"tunnel"`
+					Credentials string `yaml:"credentials-file"`
+				}
+				if err != nil || yaml.Unmarshal(content, &settings) != nil || settings.Tunnel == "" || settings.Credentials == "" {
+					return fmt.Errorf("Cloudflare is stopped: save a connector token, or a YAML tunnel ID and credentials-file before enabling it")
+				}
+				if _, err := os.Stat(settings.Credentials); err != nil {
+					return fmt.Errorf("Cloudflare credentials file is unavailable in DockTun: %s", settings.Credentials)
 				}
 			}
 		}

@@ -14,8 +14,30 @@ func (s *Cloudflared) HasConnectorToken() bool {
 
 // Connector tokens are stored in the shared config directory, never returned
 // through the API or passed in process arguments/container environment.
+func sanitizeConnectorToken(raw string) string {
+	token := strings.TrimSpace(raw)
+	token = strings.Trim(token, `"' `)
+	if idx := strings.Index(token, "--token"); idx != -1 {
+		sub := strings.TrimSpace(token[idx+len("--token"):])
+		sub = strings.TrimPrefix(sub, `"`)
+		sub = strings.TrimPrefix(sub, `=`)
+		sub = strings.TrimSpace(sub)
+		parts := strings.Fields(sub)
+		if len(parts) > 0 {
+			token = parts[0]
+		}
+	} else if idx := strings.Index(token, "service install"); idx != -1 {
+		sub := strings.TrimSpace(token[idx+len("service install"):])
+		parts := strings.Fields(sub)
+		if len(parts) > 0 {
+			token = parts[0]
+		}
+	}
+	return strings.Trim(token, `"' `)
+}
+
 func (s *Cloudflared) SaveConnectorToken(token string) error {
-	token = strings.TrimSpace(token)
+	token = sanitizeConnectorToken(token)
 	if len(token) > 64*1024 || strings.ContainsAny(token, "\r\n") {
 		return fmt.Errorf("invalid connector token")
 	}
@@ -26,15 +48,17 @@ func (s *Cloudflared) SaveConnectorToken(token string) error {
 		}
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+	dir := filepath.Dir(file)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(file), ".connector-*")
+	_ = os.Chmod(dir, 0755)
+	tmp, err := os.CreateTemp(dir, ".connector-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0600); err != nil {
+	if err := tmp.Chmod(0644); err != nil {
 		tmp.Close()
 		return err
 	}
@@ -45,5 +69,9 @@ func (s *Cloudflared) SaveConnectorToken(token string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), file)
+	if err := os.Rename(tmp.Name(), file); err != nil {
+		return err
+	}
+	_ = os.Chmod(file, 0644)
+	return nil
 }

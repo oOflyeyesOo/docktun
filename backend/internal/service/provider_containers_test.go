@@ -139,3 +139,45 @@ func TestStoppedCloudflareIsNotReportedAsFailure(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizeConnectorToken(t *testing.T) {
+	for _, tc := range []struct {
+		input, want string
+	}{
+		{"eyJhIjoiMTIzNDU2In0=", "eyJhIjoiMTIzNDU2In0="},
+		{" docker run cloudflare/cloudflared:latest tunnel --no-autoupdate run --token eyJhIjoiMTIzNDU2In0= ", "eyJhIjoiMTIzNDU2In0="},
+		{"cloudflared tunnel run --token=eyJhIjoiMTIzNDU2In0=", "eyJhIjoiMTIzNDU2In0="},
+		{"sudo cloudflared service install eyJhIjoiMTIzNDU2In0=", "eyJhIjoiMTIzNDU2In0="},
+		{`"--token" "eyJhIjoiMTIzNDU2In0="`, "eyJhIjoiMTIzNDU2In0="},
+	} {
+		got := sanitizeConnectorToken(tc.input)
+		if got != tc.want {
+			t.Errorf("sanitizeConnectorToken(%q) = %q; want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestConnectorTokenFilePermissions(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{
+		CloudflaredConfig: filepath.Join(dir, "cloudflared", "config.yml"),
+	}
+	cfd := NewCloudflared(cfg, nil)
+	tok := "eyJhIjoiMTIzNDU2In0="
+	if err := cfd.SaveConnectorToken(tok); err != nil {
+		t.Fatalf("SaveConnectorToken: %v", err)
+	}
+	tokenPath := filepath.Join(dir, "cloudflared", "tunnel.token")
+	fi, err := os.Stat(tokenPath)
+	if err != nil {
+		t.Fatalf("token file not created: %v", err)
+	}
+	mode := fi.Mode().Perm()
+	if mode&0444 != 0444 {
+		t.Errorf("token file mode %o does not allow reading", mode)
+	}
+	data, err := os.ReadFile(tokenPath)
+	if err != nil || string(data) != tok {
+		t.Errorf("token file content = %q, want %q", string(data), tok)
+	}
+}

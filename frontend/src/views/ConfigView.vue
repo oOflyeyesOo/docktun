@@ -93,22 +93,45 @@ async function fetchStatus() {
 
 const connectorToken = ref('')
 const connectorPresent = ref(false)
+function cleanConnectorToken(raw: string): string {
+  let tok = raw.trim()
+  const match = tok.match(/--token(?:=|\s+)([^\s"']+)/)
+  if (match) return match[1].replace(/["']/g, '').trim()
+  if (tok.includes('service install')) {
+    const sm = tok.match(/service\s+install\s+([^\s"']+)/)
+    if (sm) return sm[1].replace(/["']/g, '').trim()
+  }
+  return tok.replace(/["']/g, '').trim()
+}
 async function fetchConnector() {
   try { connectorPresent.value = (await apiFetch<any>('/api/provider/cloudflare/credentials')).has_token } catch {}
 }
 async function saveConnector(clear = false) {
   saving.value = true
   try {
-    const result = await apiFetch<any>('/api/provider/cloudflare/credentials', { method: 'PUT', body: JSON.stringify({ token: clear ? '' : connectorToken.value }) })
+    const tokenVal = clear ? '' : cleanConnectorToken(connectorToken.value)
+    const result = await apiFetch<any>('/api/provider/cloudflare/credentials', { method: 'PUT', body: JSON.stringify({ token: tokenVal }) })
     connectorPresent.value = result.has_token
     connectorToken.value = ''
-    message.value = { type: 'success', text: 'Credentials saved. Enable or restart Cloudflare to apply them.' }
+    if (tunnelStatus.value?.running) {
+      await apiFetch('/api/control/restart', { method: 'POST' })
+      await fetchStatus()
+      message.value = { type: 'success', text: 'Connector credentials updated and Cloudflare Tunnel restarted.' }
+    } else {
+      message.value = { type: 'success', text: clear ? 'Switched to local YAML credentials.' : 'Credentials saved. Click Enable Cloudflare to start the tunnel.' }
+    }
   } catch (e: any) { message.value = { type: 'error', text: e.message } }
   finally { saving.value = false }
 }
 async function controlProvider(action: 'start' | 'stop') {
   saving.value = true
   try {
+    if (action === 'start' && connectorToken.value.trim()) {
+      const tokenVal = cleanConnectorToken(connectorToken.value)
+      const res = await apiFetch<any>('/api/provider/cloudflare/credentials', { method: 'PUT', body: JSON.stringify({ token: tokenVal }) })
+      connectorPresent.value = res.has_token
+      connectorToken.value = ''
+    }
     await apiFetch(`/api/control/${action}`, { method: 'POST' })
     await fetchStatus()
     message.value = { type: 'success', text: action === 'start' ? 'Cloudflare start requested. Check its status and logs for the connection result.' : 'Cloudflare stopped. Other providers keep their own state.' }
@@ -720,7 +743,7 @@ onUnmounted(() => {
       </div>
       <p class="text-sm text-slate-600">Use a tunnel connector token for a remotely managed tunnel, or keep a local YAML configuration and credentials file. Token-based tunnels use public-hostname rules managed in Cloudflare. The local ingress editor applies to locally managed tunnels. The Cloudflare API token below is a separate credential for DNS and account operations.</p>
       <label class="block text-sm space-y-1"><span>Tunnel connector token</span><input v-model="connectorToken" type="password" autocomplete="off" class="cyber-input w-full" :placeholder="connectorPresent ? 'Token saved — enter a replacement' : 'Paste tunnel connector token'" /></label>
-      <div class="flex flex-wrap gap-2"><button class="cyber-btn-secondary text-xs" :disabled="saving || !connectorToken.trim()" @click="saveConnector()">Save connector token</button><button v-if="connectorPresent" class="cyber-btn-secondary text-xs" :disabled="saving" @click="saveConnector(true)">Use local YAML credentials</button></div>
+      <div class="flex flex-wrap items-center gap-2"><button class="cyber-btn-secondary text-xs" :disabled="saving || !connectorToken.trim()" @click="saveConnector()">Save connector token</button><button v-if="connectorPresent" class="cyber-btn-secondary text-xs" :disabled="saving" @click="saveConnector(true)">Use local YAML credentials</button><span v-if="connectorPresent" class="inline-flex items-center gap-1 text-xs text-emerald-600 font-medium ml-1">✓ Connector token active</span></div>
     </section>
     <ProviderSetupGuide provider="cloudflare" />
     <!-- Header (shown when standalone page) -->
