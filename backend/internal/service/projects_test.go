@@ -242,7 +242,10 @@ while [ "$#" -gt 0 ]; do
   shift
   if [ ! -f "$1/compose.yml" ]; then echo "project directory resolved twice"; exit 1; fi
   if [ "$(pwd)" != "$1" ]; then echo "working directory mismatch"; exit 1; fi
-  echo COMPOSE_PATH_OK
+  case "$*" in
+   *config*) echo '{"services":{"example":{"image":"alpine"}}}' ;;
+   *) echo COMPOSE_PATH_OK ;;
+  esac
   exit 0
  fi
  shift
