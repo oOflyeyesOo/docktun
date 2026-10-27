@@ -965,7 +965,9 @@ func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
 	}
 
 	defNet := s.DefaultNetwork()
-	_ = s.EnsureNetwork(defNet)
+	if err := s.EnsureNetwork(defNet); err != nil {
+		return nil, fmt.Errorf("resolve primary network: %w", err)
+	}
 	addLog(fmt.Sprintf("Primary network: %s", defNet))
 
 	hasDocktunNet := exec.Command("docker", "network", "inspect", "docktun").Run() == nil
@@ -1041,15 +1043,8 @@ func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
 		}
 	}
 
-	// 5. Refresh DNS by restarting cloudflared to flush DNS cache and re-establish connection pools
-	if s.cloudflared != nil && s.cloudflared.Status().Status != "disabled" && s.cloudflared.IsRunning() {
-		addLog("Restarting cloudflared to flush DNS cache and re-establish connection pools...")
-		if err := s.cloudflared.Restart(); err != nil {
-			addLog(fmt.Sprintf("Cloudflared restart notice: %v", err))
-		} else {
-			addLog("✔ Cloudflared successfully restarted with refreshed DNS!")
-		}
-	}
+	// Network attachment does not require restarting the tunnel. Periodic
+	// reconciliation must not interrupt existing connections every ten minutes.
 
 	// 6. Automatically sync/reconcile Cloudflare DNS records for all public ingress routes
 	if s.cfAPI != nil && s.configMgr != nil && s.cloudflared != nil && s.cloudflared.Status().Status != "disabled" {
@@ -1074,35 +1069,19 @@ func (s *DockerContainers) EnsureNetworkID(network string) (string, error) {
 	if network == "" {
 		network = s.DefaultNetwork()
 	}
-	if network == "host" || network == "bridge" || network == "none" {
-		return network, nil
-	}
-	// Check by exact name match via docker network ls to avoid ambiguity when duplicate networks exist
-	cmd := exec.Command("docker", "network", "ls", "--filter", "name=^"+network+"$", "--format", "{{.ID}}")
-	if out, err := cmd.CombinedOutput(); err == nil {
-		ids := strings.Fields(strings.TrimSpace(string(out)))
-		if len(ids) > 0 {
-			return ids[0], nil
-		}
-	}
-	createCmd := exec.Command("docker", "network", "create", network)
-	_ = createCmd.Run()
-
-	cmdCheck := exec.Command("docker", "network", "ls", "--filter", "name=^"+network+"$", "--format", "{{.ID}}")
-	if out, err := cmdCheck.CombinedOutput(); err == nil {
-		ids := strings.Fields(strings.TrimSpace(string(out)))
-		if len(ids) > 0 {
-			return ids[0], nil
-		}
-	}
-	return network, nil
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return NewProviderContainers(s.cfg).resolveNetwork(ctx, network)
 }
 
 func (s *DockerContainers) ConnectNetwork(id string, network string) error {
 	if network == "" {
 		network = s.DefaultNetwork()
 	}
-	netTarget, _ := s.EnsureNetworkID(network)
+	netTarget, err := s.EnsureNetworkID(network)
+	if err != nil {
+		return err
+	}
 	cmd := exec.Command("docker", "network", "connect", netTarget, id)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

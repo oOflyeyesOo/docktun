@@ -16,6 +16,7 @@ import uuid
 
 engine = 'docktun-provider-engine-' + uuid.uuid4().hex[:10]
 image = os.environ.get('DOCKTUN_TEST_IMAGE', 'docktun:providers')
+network = os.environ.get('DOCKTUN_TEST_NETWORK', 'docktun')
 token = ''
 base = ''
 
@@ -63,10 +64,12 @@ try:
     fixture = 'FROM alpine:3.23\nENTRYPOINT ["/bin/sh", "-c", "exec sleep 3600", "provider-fixture"]\n'
     for provider_image in ['cloudflare/cloudflared:latest', 'tailscale/tailscale:latest', 'lscr.io/linuxserver/wireguard:latest']:
         inner('build', '-q', '-t', provider_image, '-', input=fixture)
-    inner('network', 'create', 'docktun')
-    inner('run', '-d', '--name', 'docktun', '--network', 'docktun', '-p', '3001:3001',
+    inner('network', 'create', network)
+    if '.' in network:
+        inner('network', 'create', network.replace('.', 'X'))
+    inner('run', '-d', '--name', 'docktun', '--network', network, '-p', '3001:3001',
           '-v', 'test-app:/app/data', '-v', 'scoped-cloudflare:/etc/cloudflared',
-          '-v', '/var/run/docker.sock:/var/run/docker.sock', '-e', 'DOCKER_NETWORK=docktun', image)
+          '-v', '/var/run/docker.sock:/var/run/docker.sock', '-e', 'DOCKER_NETWORK=' + network, image)
     base = 'http://' + docker('port', engine, '3001/tcp')
     for _ in range(90):
         try:
@@ -93,6 +96,12 @@ try:
     request('/api/remote-access/wireguard/control', {'action': 'start'})
     for name in ['docktun-cloudflared', 'docktun-tailscale', 'docktun-wireguard']:
         assert state(name) == 'running', name
+        attached = json.loads(inner('inspect', name))[0]['NetworkSettings']['Networks']
+        assert network in attached, attached
+        assert attached[network]['NetworkID'] == json.loads(inner('network', 'inspect', network))[0]['Id']
+    started_at = inner('inspect', '--format', '{{.State.StartedAt}}', 'docktun-cloudflared')
+    request('/api/docker/network/reconcile', {})
+    assert inner('inspect', '--format', '{{.State.StartedAt}}', 'docktun-cloudflared') == started_at
     assert inner('exec', 'docktun-cloudflared', 'cat', '/etc/cloudflared/tunnel.token') == connector
     inner('exec', 'docktun-wireguard', 'sh', '-c', 'echo persisted > /config/test-marker')
     assert inner('exec', 'docktun', 'cat', '/app/data/wireguard/test-marker') == 'persisted'

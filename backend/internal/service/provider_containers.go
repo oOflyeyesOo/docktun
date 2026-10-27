@@ -128,31 +128,76 @@ func (p *ProviderContainers) network(ctx context.Context) (string, error) {
 	if network == "" {
 		network = "docktun"
 	}
-	// Check by exact name match via docker network ls to avoid ambiguity when duplicate networks exist
-	out, err := p.run(ctx, "network", "ls", "--filter", "name=^"+network+"$", "--format", "{{.ID}}")
-	if err == nil {
-		ids := strings.Fields(strings.TrimSpace(string(out)))
-		if len(ids) > 0 {
-			return ids[0], nil
-		}
+	return p.resolveNetwork(ctx, network)
+}
+
+func (p *ProviderContainers) resolveNetwork(ctx context.Context, name string) (string, error) {
+	if name == "host" || name == "bridge" || name == "none" {
+		return name, nil
 	}
-	if _, err := p.run(ctx, "network", "create", network); err != nil {
-		// If creation failed because it already exists, look up ID again
-		if retryOut, retryErr := p.run(ctx, "network", "ls", "--filter", "name=^"+network+"$", "--format", "{{.ID}}"); retryErr == nil {
-			ids := strings.Fields(strings.TrimSpace(string(retryOut)))
-			if len(ids) > 0 {
-				return ids[0], nil
+	// Docker also accepts a network ID. Do not create a network named after it.
+	if regexp.MustCompile(`^[a-fA-F0-9]{12,64}$`).MatchString(name) {
+		out, err := p.run(ctx, "network", "inspect", "--format", "{{.Id}}", name)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	lookup := func() ([]string, error) {
+		out, err := p.run(ctx, "network", "ls", "--filter", "name=^"+regexp.QuoteMeta(name)+"$", "--no-trunc", "--format", "{{.ID}}\t{{.Name}}")
+		if err != nil {
+			return nil, err
+		}
+		var ids []string
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			fields := strings.SplitN(line, "\t", 2)
+			if len(fields) == 2 && fields[1] == name {
+				ids = append(ids, fields[0])
 			}
 		}
-		return "", err
+		return ids, nil
 	}
-	if idOut, err := p.run(ctx, "network", "ls", "--filter", "name=^"+network+"$", "--format", "{{.ID}}"); err == nil {
-		ids := strings.Fields(strings.TrimSpace(string(idOut)))
-		if len(ids) > 0 {
+	selectID := func(ids []string) (string, error) {
+		if len(ids) == 1 {
 			return ids[0], nil
 		}
+		// Duplicate Docker names are possible. Use this instance's actual network,
+		// rather than whichever row the daemon happens to return first.
+		own, err := p.self(ctx)
+		if err == nil {
+			network := own.NetworkSettings.Networks[name]
+			id, _ := network["NetworkID"].(string)
+			for _, candidate := range ids {
+				if candidate == id {
+					return id, nil
+				}
+			}
+		}
+		return "", fmt.Errorf("multiple Docker networks are named %q; select the intended network by its ID", name)
 	}
-	return network, nil
+	ids, err := lookup()
+	if err != nil {
+		return "", err
+	}
+	if len(ids) > 0 {
+		return selectID(ids)
+	}
+	out, createErr := p.run(ctx, "network", "create", name)
+	if createErr == nil && strings.TrimSpace(string(out)) != "" {
+		return strings.TrimSpace(string(out)), nil
+	}
+	// Another caller may have created it between the lookup and create.
+	ids, err = lookup()
+	if err != nil {
+		return "", err
+	}
+	if len(ids) > 0 {
+		return selectID(ids)
+	}
+	if createErr != nil {
+		return "", createErr
+	}
+	return "", fmt.Errorf("Docker did not return an ID for network %q", name)
 }
 
 func (p *ProviderContainers) tokenFile() string {
@@ -175,12 +220,13 @@ func (p *ProviderContainers) definition(ctx context.Context, provider string) ([
 			return nil, fmt.Errorf("TAILSCALE_STATE_VOLUME must be a Docker volume name, not a container or host path")
 		}
 		if custom := strings.TrimSpace(os.Getenv("TAILSCALE_NETWORK")); custom != "" && custom != network {
-			if _, err := p.run(ctx, "network", "inspect", custom); err != nil {
+			customID, err := p.resolveNetwork(ctx, custom)
+			if err != nil {
 				return nil, fmt.Errorf("TAILSCALE_NETWORK: %w", err)
 			}
 			for i := range args {
 				if i > 0 && args[i-1] == "--network" {
-					args[i] = custom
+					args[i] = customID
 					break
 				}
 			}
