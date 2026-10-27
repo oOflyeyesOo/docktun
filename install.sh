@@ -21,7 +21,7 @@ error() { echo -e "${C_RED}✖${C_RESET} $1"; exit 1; }
 
 # Root privilege check
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
-    error "This installer requires root privileges.\nPlease run with sudo:\n  ${C_BOLD}curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo bash${C_RESET}"
+    error "This installer requires root privileges.\nSave install.sh locally, then run: sudo bash install.sh"
 fi
 
 echo -e "${C_CYAN}${C_BOLD}"
@@ -40,6 +40,9 @@ echo -e "${C_RESET}"
 # 1. Install Docker & Compose if missing
 # ------------------------------------------------------------------------------
 if ! command -v docker >/dev/null 2>&1; then
+    if command -v synopkg >/dev/null 2>&1 || [ -f /etc.defaults/VERSION ]; then
+        error "Install and start Container Manager (or Docker) from Synology Package Center, then run this installer again."
+    fi
     info "Docker not found. Installing Docker Engine..."
     if command -v curl >/dev/null 2>&1; then
         curl -fsSL https://get.docker.com | sh
@@ -71,6 +74,12 @@ COMPOSE_CMD=""
 if docker compose version >/dev/null 2>&1; then
     COMPOSE_CMD="docker compose"
 elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_VERSION=$(docker-compose version --short 2>/dev/null || true)
+    COMPOSE_MAJOR=${COMPOSE_VERSION#v}
+    COMPOSE_MAJOR=${COMPOSE_MAJOR%%.*}
+    if [[ ! "$COMPOSE_MAJOR" =~ ^[0-9]+$ ]] || [ "$COMPOSE_MAJOR" -lt 2 ]; then
+        error "Docker Compose v2 or newer is required. Update Synology Container Manager or install the Compose plugin."
+    fi
     COMPOSE_CMD="docker-compose"
 else
     info "Docker Compose plugin not found. Attempting installation..."
@@ -95,12 +104,30 @@ success "Using: $COMPOSE_CMD"
 # ------------------------------------------------------------------------------
 INSTALL_DIR="${DOCKTUN_DIR:-/opt/docktun}"
 PORT="${PORT:-8080}"
+if [[ ! "$PORT" =~ ^[0-9]{1,5}$ ]] || [ "$((10#$PORT))" -lt 1 ] || [ "$((10#$PORT))" -gt 65535 ]; then
+    error "PORT must be a number between 1 and 65535."
+fi
 
 info "Preparing installation in ${C_BOLD}${INSTALL_DIR}${C_RESET}..."
 mkdir -p "${INSTALL_DIR}/projects"
 cd "${INSTALL_DIR}"
 
-cat > compose.yml << EOF
+COMPOSE_FILE=""
+for candidate in compose.yml compose.yaml docker-compose.yml docker-compose.yaml; do
+    if [ -f "$candidate" ]; then
+        if [ -n "$COMPOSE_FILE" ]; then
+            error "Multiple Compose files found in $INSTALL_DIR. Keep one active Compose file before running the installer."
+        fi
+        COMPOSE_FILE="$candidate"
+    fi
+done
+
+if [ -n "$COMPOSE_FILE" ]; then
+    info "Keeping existing ${COMPOSE_FILE}; your saved settings will not be overwritten."
+else
+COMPOSE_FILE="compose.yml"
+cat > "$COMPOSE_FILE" << EOF
+name: docktun
 services:
   docktun:
     image: ghcr.io/ooflyeyesoo/docktun:latest
@@ -141,36 +168,56 @@ networks:
     driver: bridge
 EOF
 
-success "Configuration saved to ${INSTALL_DIR}/compose.yml"
+success "Configuration saved to ${INSTALL_DIR}/${COMPOSE_FILE}"
+fi
+$COMPOSE_CMD -f "$COMPOSE_FILE" config --quiet
+if ! $COMPOSE_CMD -f "$COMPOSE_FILE" config --services | grep -qx docktun; then
+    error "Existing Compose file does not contain a docktun service. Use a separate installation directory."
+fi
 
 # ------------------------------------------------------------------------------
 # 3. Launch DockTun
 # ------------------------------------------------------------------------------
 info "Pulling image and starting DockTun container..."
-$COMPOSE_CMD up -d
+$COMPOSE_CMD -f "$COMPOSE_FILE" pull docktun
+$COMPOSE_CMD -f "$COMPOSE_FILE" up -d --no-deps docktun
 
 info "Waiting for DockTun to initialize..."
 SETUP_TOKEN=""
+READY=false
 for i in $(seq 1 15); do
-    if docker ps -q --filter "name=docktun" --filter "status=running" | grep -q .; then
-        TOKEN=$(docker exec docktun cat /app/data/setup.token 2>/dev/null || true)
-        if [ -n "$TOKEN" ]; then
-            SETUP_TOKEN="$TOKEN"
-            break
-        fi
+    if docker exec docktun curl -fsS http://127.0.0.1:3001/healthz >/dev/null 2>&1; then
+        SETUP_TOKEN=$(docker exec docktun cat /app/data/setup.token 2>/dev/null || true)
+        READY=true
+        break
     fi
     sleep 1
 done
+if [ "$READY" != true ]; then
+    error "DockTun did not become ready. Check: $COMPOSE_CMD -f $COMPOSE_FILE logs docktun"
+fi
 
 # Detect host IP
 SERVER_IP=""
 if command -v hostname >/dev/null 2>&1; then
-    SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
 fi
 if [ -z "$SERVER_IP" ] && command -v ip >/dev/null 2>&1; then
-    SERVER_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7}')
+    SERVER_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7}' || true)
 fi
 SERVER_IP="${SERVER_IP:-<your-server-ip>}"
+# Existing installations may use a different port or a loopback-only binding.
+BOUND_PORT=$($COMPOSE_CMD -f "$COMPOSE_FILE" port docktun 3001 2>/dev/null | head -n 1 || true)
+if [ -n "$BOUND_PORT" ]; then
+    PORT=${BOUND_PORT##*:}
+    BIND_ADDRESS=${BOUND_PORT%:*}
+    BIND_ADDRESS=${BIND_ADDRESS#[}
+    BIND_ADDRESS=${BIND_ADDRESS%]}
+    if [ "$BIND_ADDRESS" != "0.0.0.0" ] && [ "$BIND_ADDRESS" != "::" ]; then
+        SERVER_IP="$BIND_ADDRESS"
+    fi
+fi
+if [[ "$SERVER_IP" == *:* ]]; then SERVER_IP="[$SERVER_IP]"; fi
 
 # ------------------------------------------------------------------------------
 # 4. Completion Banner
