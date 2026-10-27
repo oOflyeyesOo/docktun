@@ -1,325 +1,245 @@
 # ☁️ DockTun
 
-Self-hosted Docker management with optional Cloudflare, Tailscale, and WireGuard exposure per container.
+Modern, self-hosted web dashboard for managing Docker containers and Compose stacks, with optional, independent per-container remote access (Cloudflare Tunnels, Tailscale, WireGuard, and local mDNS).
 
 ![Go](https://img.shields.io/badge/backend-Go-00ADD8?logo=go)
 ![Vue](https://img.shields.io/badge/frontend-Vue_3-4FC08D?logo=vue.js)
 ![Docker](https://img.shields.io/badge/deploy-Docker-2496ED?logo=docker)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-## Features
+---
 
-- **Dashboard** — tunnel status, uptime, active hostnames, container PID
-- **Control** — start, stop, restart, reload config via Docker API
-- **Logs** — realtime streaming via WebSocket with filter & search
-- **Config Editor** — edit `config.yml` with YAML validation and auto-backup
-- **Health Check** — monitor ingress endpoint availability
-- **Metrics** — cloudflared metrics visualization
-- **TCP Access** — generate `cloudflared access tcp` commands
-- **Notifications** — webhook alerts (Discord, Telegram, Slack)
-- **Audit Log** — full history of all actions
-- **Auth** — JWT-based login with session management
-- **Projects** — manage Docker Compose projects (up, down, restart, deploy with git checkout), streaming build output, per-project action history
+## Highlights
 
-## Tech Stack
+- 🐳 **Docker Container Management** — Start, stop, restart, pause, inspect, and delete containers. Live CPU, memory, and network I/O stats.
+- 📦 **Docker Compose Projects** — Deploy and manage multi-container stacks with Git clone, branch checkout, pull, and streaming build logs.
+- 🌐 **Independent Per-App Remote Access** — Expose containers individually without exposing your entire network:
+  - **Cloudflare Tunnels**: Public ingress without open ports, visual YAML config editor with auto-backups, and Cloudflare DNS sync.
+  - **Tailscale**: Connect each container as its own isolated Tailscale device (userspace mode, no host TUN or root privileges required).
+  - **WireGuard**: Mesh connectivity via companion container or existing host VPN.
+  - **Local mDNS**: Automatic local `.local` domain routing on your LAN.
+- 💻 **Web Terminal & Logs** — In-browser interactive `docker exec` terminal and real-time streaming WebSocket logs with filtering.
+- 📁 **File & Volume Explorer** — Browse container filesystems, view and edit configuration files in-place, and upload or download files.
+- 🔄 **Self-Healing & 1-Click Updates** — Automatic database companion network relinking, continuous health reconciliation, and 1-click self-updating with automated health-check rollback.
+- 🔔 **Audit Trail & Alerts** — Full SQLite action history and webhook notifications for Discord, Telegram, and Slack.
 
-| Layer | Stack |
-|-------|-------|
-| Backend | Go, Chi, gorilla/websocket, SQLite |
-| Frontend | Vue 3, Vite, Tailwind CSS |
-| Deploy | Docker Compose |
+---
+
+## 📸 Interface Preview
+
+<p align="center">
+  <img src="assets/screenshots/dashboard.png" alt="DockTun Dashboard" width="100%" />
+</p>
+
+<details open>
+<summary><b>Additional Views (Containers, Ingress Rules, Remote Access, File Explorer)</b></summary>
+<br>
+
+### 🐳 Container & Compose Stack Orchestration
+> Real-time CPU, RAM, and network meters, stack grouping, in-browser terminal, and 1-click updates.
+
+<p align="center">
+  <img src="assets/screenshots/containers.png" alt="Container Fleet" width="100%" />
+</p>
+
+### ☁️ Cloudflare Ingress Routing
+> Visual ingress rule management, public domain mapping to internal container ports, and direct Cloudflare DNS synchronization.
+
+<p align="center">
+  <img src="assets/screenshots/ingress-rules.png" alt="Cloudflare Ingress Rules" width="100%" />
+</p>
+
+### 🌐 Multi-Provider Remote Access Hub
+> Unified exposure manager supporting Cloudflare edge tunnels, Tailscale userspace devices, WireGuard VPN, and local mDNS.
+
+<p align="center">
+  <img src="assets/screenshots/remote-access.png" alt="Remote Access Hub" width="100%" />
+</p>
+
+### 📁 Storage & Docker Volume Explorer
+> Full container filesystem and Docker volume browsing with in-place file editing and uploads.
+
+<p align="center">
+  <img src="assets/screenshots/storage-explorer.png" alt="Storage and File Explorer" width="100%" />
+</p>
+
+</details>
+
+---
+
+## Architecture
+
+DockTun compiles the Vue 3 frontend directly into a single, high-performance Go binary. There is no separate Nginx container or reverse-proxy dependency.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  DockTun (Unified Container)                                 │
+│                                                              │
+│  ┌────────────────────────┐      ┌────────────────────────┐  │
+│  │  Vue 3 SPA (Embedded)  │ ───> │  Go Backend API (Chi)  │  │
+│  └────────────────────────┘      └───────────┬────────────┘  │
+│                                              │               │
+│               ┌──────────────────────────────┼──────────┐    │
+│               │                              │          │    │
+│               ▼                              ▼          ▼    │
+│       /var/run/docker.sock                SQLite    Dynamic  │
+│      (Docker Daemon Control)             (app.db)  Companions│
+└──────────────────────────────────────────────────────────────┘
+```
+
+---
 
 ## Quick Start
 
-### Option 1: Prebuilt image — no source checkout or build (recommended)
+### Option 1: Docker Compose (Recommended)
 
-**For Synology, NAS, and Linux hosts with Docker Compose**, download just [`compose.prebuilt.yml`](compose.prebuilt.yml), save it as `compose.yml` in an empty folder, then run:
+Save the following as `compose.yml` in an empty directory:
 
-```sh
-docker compose up -d
-docker compose ps
+```yaml
+services:
+  docktun:
+    image: ghcr.io/ooflyeyesoo/docktun:latest
+    container_name: docktun
+    restart: unless-stopped
+    ports:
+      - "8080:3001"
+    environment:
+      DOCKER_NETWORK: docktun
+      TAILSCALE_STATE_VOLUME: docktun-tailscale-state
+      WIREGUARD_PORT: 51820
+      DB_PATH: /app/data/app.db
+      CLOUDFLARED_CONFIG_PATH: /etc/cloudflared/config.yml
+      CLOUDFLARED_CONTAINER: docktun-cloudflared
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - docktun-data:/app/data
+      - docktun-cloudflared:/etc/cloudflared
+      - docktun-wireguard:/app/data/wireguard
+      - ./projects:/opt/projects
+    networks:
+      - docktun
+
+volumes:
+  docktun-data:
+  docktun-cloudflared:
+  docktun-wireguard:
+
+networks:
+  docktun:
+    name: docktun
+    driver: bridge
 ```
 
-DockTun pulls `ghcr.io/ooflyeyesoo/docktun:latest` instead of compiling the frontend and backend. GitHub Actions publishes multi-platform `amd64` and `arm64` images after successful `main` validation, with commit-specific `sha-...` tags available for pinning. The **GHCR package must be made public separately** before other people can pull anonymously; the GitHub repository itself can remain private.
+Start DockTun:
 
-Open `http://<server-ip>:8080`. To create your administrator account, use the ownership code, read it locally from the DockTun container:
+```bash
+docker compose up -d
+```
 
-```sh
+Open **`http://<your-server-ip>:8080`** in your browser.
+
+#### First-Time Admin Account Setup
+
+To create your administrator account on first launch, copy the ownership setup token from the container:
+
+```bash
 docker exec docktun cat /app/data/setup.token
 ```
 
-The setup token is sensitive: do not share it or publish it in logs or screenshots.
+Enter this token on the initial screen to set your administrator credentials. Alternatively, set `ADMIN_USERNAME` and `ADMIN_PASSWORD` in your Compose `environment` to configure credentials ahead of time.
 
-The Compose file persists app data, Cloudflare configuration, and WireGuard configuration. DockTun prepares the Cloudflare, shared Tailscale, and WireGuard companion containers **stopped**. Enable only what you need from Exposure providers. The first image downloads may take a few minutes; a download failure is reported and Enable retries creation. Existing containers are reused without changing their mounts or stopping running providers.
+> [!WARNING]
+> DockTun mounts the Docker daemon socket (`/var/run/docker.sock`) to control containers, which grants broad host access. Always keep DockTun behind authenticated remote access or on a trusted local network. **Never expose port 8080 directly to the public internet without authentication.**
 
-Each method is independent: Cloudflare for one app, a separate Tailscale device for another, and an existing WireGuard VPN address for a third can all be used simultaneously. Choosing a method for one app never changes another app or provider. For Tailscale, connect the app from Containers → Access; the legacy shared companion can remain stopped.
+---
 
-For Cloudflare, save a tunnel connector token or local tunnel YAML and its credentials file, then click Enable Cloudflare. The connector token is separate from a Cloudflare API token used for DNS/Access operations. WireGuard requires a working host WireGuard kernel and a valid configuration; upload an existing configuration to its persistent config directory or use an already configured VPN. DockTun does not enable host kernel modules automatically.
+### Option 2: Docker Run
 
-DockTun needs the Docker socket to manage containers, granting the app extensive host privileges. Keep the dashboard on a trusted network or behind authenticated remote access; **do not forward port 8080 directly to the public internet.** For Synology, import the single `compose.prebuilt.yml` file into Container Manager, rather than uploading a Dockerfile.
+```bash
+docker network create docktun 2>/dev/null || true
 
-### Option 2: Build from source (full repository required)
+docker run -d \
+  --name docktun \
+  -p 8080:3001 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v docktun-data:/app/data \
+  -v docktun-cloudflared:/etc/cloudflared \
+  -v docktun-wireguard:/app/data/wireguard \
+  -v $(pwd)/projects:/opt/projects \
+  --network docktun \
+  --restart unless-stopped \
+  ghcr.io/ooflyeyesoo/docktun:latest
+```
 
-Build and start DockTun from the complete repository, then create the administrator account. Configure providers independently when needed.
+---
+
+### Option 3: Build from Source
 
 ```bash
 git clone https://github.com/oOflyeyesOo/docktun.git /opt/docktun
 cd /opt/docktun
 
-# Start containers (creates network and persistent data directory automatically)
-docker network create cloudflared 2>/dev/null || true
-docker compose up -d
-
-# Docker Compose must be run from the full repository checkout.
-# If the build says "COPY frontend/package.json ... not found",
-# verify you have backend/, frontend/, Dockerfile, and docker-compose.yml
-# together under /opt/docktun (not just the Dockerfile).
-
-# Open DockTun:
-# http://localhost:8080 or http://<your-server-ip>:8080
-```
-
-### Tailscale-only installs and persistent state
-
-Connect each app to Tailscale from Containers → Access. Other providers remain available at the same time.
-
-Both the UI-created Tailscale container and the stopped shared companion use the named Docker volume `docktun-tailscale-state`. Set `TAILSCALE_STATE_VOLUME` in your Compose environment to use a different named volume. Do not set it to `/app/data/tailscale`: that path exists inside DockTun, while Docker mount sources are resolved by the host daemon. The default userspace mode needs no `/dev/net/tun` device or extra Linux capabilities, including on Synology. Kernel routing and exit-node networking require separate host configuration.
-
-Existing Tailscale containers are reused without changing their mounts. For older source installs using `./data/tailscale`, keep the existing container until you have backed up and migrated its state into the named volume before recreating it; otherwise you will need to authenticate a new node. Never remove an old state directory or volume during upgrade. Existing legacy mesh selections no longer gate other providers.
-
-### Source build troubleshooting for Synology and older Docker Compose installations
-
-**Use the complete repository source tree as the Docker build context.** The Dockerfile is not standalone. In particular, `frontend/package.json`, `frontend/pnpm-lock.yaml`, `frontend/pnpm-workspace.yaml`, `backend/go.mod`, and `backend/go.sum` must all exist beneath the directory that contains `Dockerfile` and `docker-compose.yml`. A build log that says "Sending build context to Docker daemon 1.865kB" indicates the source files were not included. Upload/extract or clone the **entire** repo into the Synology Container Manager project folder, and select that folder as the build context.
-
-For a shell-based installation:
-
-```sh
-git clone https://github.com/oOflyeyesOo/docktun.git
-cd docktun
-test -f frontend/package.json && test -f frontend/pnpm-lock.yaml && test -f frontend/pnpm-workspace.yaml
-test -f backend/go.mod && test -f Dockerfile && test -f docker-compose.yml
-docker compose config
 docker compose up -d --build
 ```
 
-If the repository is private, cloning requires authorized GitHub access. For DSM Container Manager's graphical project installer, copy the **entire** source tree to the project directory before starting the build. Do not copy only the Compose file or Dockerfile.
+---
 
-The Compose file avoids newer `env_file: [{path, required}]` syntax. A local `.env` file is **optional** for first-run setup; Compose will read it automatically for variable substitution when present. You can copy `.env.example` to `.env` to customize settings without supplying an initial administrator password. Create your administrator account on first launch.
+## Remote Access & Exposure Providers
 
-If `docker compose` is unavailable or the project still fails validation, check `docker compose version` (or `docker-compose version`). Upgrade Synology Container Manager / the Compose plugin where possible: obsolete Compose v1 installations may not support other required features, such as service profiles.
+DockTun does not enforce a single global networking mode. Every container starts internal and isolated; choose remote access per app in **Containers → Access**:
 
-Docker running as a non-root account is not the reason the Dockerfile `COPY` instruction cannot find build context files. The account will still need permissions to use the Docker daemon socket for DockTun's management features.
+- **Cloudflare Tunnel**: Enter your Cloudflare Tunnel connector token (or mount your existing `config.yml` and credentials) under **Remote Access → Cloudflare**, then click **Enable**. Map individual apps to public subdomains directly from the dashboard.
+- **Tailscale**: Connect any container with 1-click in the container's **Access** tab. DockTun spawns a dedicated userspace Tailscale helper for that app, creating a separate device identity and MagicDNS hostname on your tailnet without touching the host's networking stack.
+- **WireGuard**: Configure an existing WireGuard VPN address or use the companion container.
+- **Internal / mDNS**: Keeps containers internal, accessible via LAN or local `.local` addresses.
 
-### Option 3: Single Docker Run Command
+---
 
-```bash
-docker network create cloudflared 2>/dev/null || true
+## Updating DockTun
 
-docker run -d --name docktun \
-  -p 8080:3001 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v docktun_data:/app/data \
-  -v docktun_cloudflared:/etc/cloudflared \
-  -v docktun_wireguard:/app/data/wireguard \
-  --network cloudflared \
-  --restart unless-stopped \
-  ghcr.io/ooflyeyesoo/docktun:latest
-```
+- **From the Web UI**: Go to **Settings → Update DockTun → Check for updates → Install update**. DockTun pulls the latest image, spins up the new container while preserving all mounts and networks, verifies health, and automatically rolls back if health checks fail.
+- **Via Docker Compose**:
+  ```bash
+  docker compose pull
+  docker compose up -d
+  ```
 
-### Updates
+---
 
-Use Settings → Update DockTun to install a published image without a Git pull. Back up persistent volumes before upgrades. Source installations may rebuild with `docker compose up -d --build`.
-
-There is no installer script or provider onboarding wizard. Account creation establishes ownership; provider settings and Docker management remain available afterward.
-
-### Environment Variables
+## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `JWT_SECRET` | Secret for JWT signing (min 32 chars) | *required* |
-| `ADMIN_USERNAME` | Login username | `admin` |
-| `ADMIN_PASSWORD` | Login password | *required* |
-| `TUNNEL_NAME` | Cloudflare tunnel name | — |
-| `TUNNEL_ID` | Cloudflare tunnel UUID | — |
-| `CLOUDFLARED_CONFIG_PATH` | Config path inside container | `/etc/cloudflared/config.yml` |
+| `PORT` | Host port to publish | `8080` |
+| `LISTEN_ADDR` | Internal listen address | `0.0.0.0:3001` |
+| `JWT_SECRET` | Secret key for JWT session signing | Auto-generated in `app.db` |
+| `ADMIN_USERNAME` | Default admin username (pre-seeding) | `admin` |
+| `ADMIN_PASSWORD` | Default admin password (pre-seeding) | Generated via `setup.token` |
+| `DOCKER_NETWORK` | Bridge network name | `docktun` |
+| `DB_PATH` | Path to persistent SQLite database | `/app/data/app.db` |
+| `CLOUDFLARED_CONFIG_PATH` | Cloudflare config file path | `/etc/cloudflared/config.yml` |
 | `CLOUDFLARED_CONTAINER` | Cloudflared container name | `docktun-cloudflared` |
-| `DB_PATH` | SQLite database path | `/app/data/app.db` |
-| `LISTEN_ADDR` | Backend listen address | `0.0.0.0:3001` |
+| `TAILSCALE_STATE_VOLUME` | Named Docker volume for Tailscale state | `docktun-tailscale-state` |
+| `SELF_PATH` | Host path for self-updates | `/opt/projects/docktun` |
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────┐
-│  Docker Compose                             │
-│                                             │
-│  ┌───────────┐  ┌─────────┐  ┌──────────┐  │
-│  │ frontend  │→ │ backend │→ │cloudflared│  │
-│  │  (nginx)  │  │  (Go)   │  │ (tunnel) │  │
-│  └───────────┘  └─────────┘  └──────────┘  │
-│                      ↓                      │
-│                  ┌────────┐                 │
-│                  │ SQLite │                 │
-│                  └────────┘                 │
-└─────────────────────────────────────────────┘
-```
-
-## Project Structure
-
-```
-DockTun/
-├── docker-compose.yml
-├── .env.example
-├── cloudflared/         # Tunnel config & credentials
-├── backend/             # Go API server
-│   ├── cmd/server/
-│   └── internal/
-│       ├── handler/     # HTTP handlers
-│       ├── service/     # Business logic
-│       ├── middleware/  # Auth middleware
-│       ├── db/          # SQLite
-│       └── ws/          # WebSocket hub
-└── frontend/            # Vue 3 SPA
-    ├── src/
-    │   ├── views/
-    │   ├── components/
-    │   ├── composables/
-    │   ├── stores/
-    │   └── router/
-    └── public/
-```
-
-## API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/auth/login` | Authenticate |
-| POST | `/auth/logout` | End session |
-| POST | `/auth/refresh` | Refresh token |
-| GET | `/api/status` | Tunnel status |
-| POST | `/api/control/{action}` | start / stop / restart |
-| GET | `/api/logs/ws` | Realtime log stream (WebSocket) |
-| GET | `/api/logs/history` | Log history |
-| GET | `/api/config` | Get tunnel config |
-| PUT | `/api/config` | Update tunnel config |
-| POST | `/api/config/validate` | Validate YAML |
-| GET | `/api/config/backups` | List config backups |
-| POST | `/api/tcp-access/generate` | Generate TCP access command |
-| GET | `/api/health` | Health check |
-| GET | `/api/metrics` | Cloudflared metrics |
-| GET | `/api/notifications` | Get notification config |
-| PUT | `/api/notifications` | Update notification config |
-| GET | `/api/audit` | Audit log |
-| POST | `/api/settings/password` | Change password |
-| GET | `/api/projects` | List projects |
-| POST | `/api/projects` | Create project |
-| PUT | `/api/projects/{id}` | Update project |
-| DELETE | `/api/projects/{id}` | Delete project |
-| GET | `/api/projects/{id}/history` | Project action history |
-| POST | `/api/projects/{id}/{action}` | up / down / restart / deploy |
+---
 
 ## Development
 
-### Optional remote access and container exposure
-
-Remote access is optional. Setup starts with **No remote access**, and importing
-containers does not attach a tunnel network unless requested. Selecting Cloudflare,
-Tailscale, or WireGuard does not expose every container. Each container starts
-internal and requires an explicit exposure choice.
-
-- **Cloudflare:** configure your tunnel, then choose public exposure for individual apps.
-- **Tailscale:** choose a container, select private Tailscale access, and click
-  **Connect this app to Tailscale**. Sign in the new device, check the connection,
-  then save the app's internal TCP port and private listening port. Every selected
-  app gets a separate device, MagicDNS name/IP, and persistent named state volume.
-  Different apps can use the same private port. Tailscale grants/ACLs and device
-  sharing apply to each app's identity. DockTun itself does not need to sign in.
-  A userspace helper on a dedicated app bridge forwards only the chosen TCP port;
-  no subnet routes, exit node, SSH, public Funnel, UDP forwarding, TUN device or
-  privileged container is enabled. Host/shared-network apps must first use their
-  own Docker bridge. Existing shared-device rules remain until explicitly changed;
-  saving a connected app migrates only its matching old rule. Removing exposure
-  stops that app's helper and retains its state volume for the next connection.
-  Selected apps recreated by Compose are reattached to their own helper network
-  within 15 seconds; this never starts a stopped helper or enrolls another app.
-  Remove an obsolete device in Tailscale's admin console if it is no longer wanted.
-- **WireGuard/custom mesh:** configure the VPN's routing and any required host port
-  publishing, then save the reachable VPN address and port. Saving the address
-  does not create VPN forwarding rules. DockTun does not assume a gateway address.
-
-Removing exposure removes its managed forwarding rule without disconnecting the
-container's existing Docker networks. This does not remove independently configured
-host port mappings or routes.
-
-### Updating DockTun in the dashboard
-
-Use **Settings → Update DockTun → Check for updates → Install update**. The check
-stages `ghcr.io/ooflyeyesoo/docktun:latest`; installation runs in an independent
-helper container, preserves the inspected mounts, environment, ports and networks,
-and restores the previous container if the replacement fails its health check.
-Container rollback does not undo database migrations or other stored-data changes.
-
-Existing versions without this updater need one normal image pull/recreation first.
-After that, no Git pull is needed for dashboard updates. A source-built installation
-switches its running container to the published image; its source Compose file is
-not rewritten. Running that source Compose build again can replace the image.
-
-The Docker socket and a writable persistent data mount are required. With a custom
-container hostname, set `DOCKTUN_CONTAINER` to the running container's name.
-Self-updates refuse auto-remove containers, static Docker IP assignments, and shared
-container network namespaces, leaving those installations available for manual updates.
-`DOCKTUN_UPDATE_IMAGE` optionally selects another registry reference or an already
-loaded immutable `sha256:` image for offline installations.
-
-Storage transfers support binary and empty files, named volumes, and running or
-stopped containers. Uploads are limited to 64 MiB. Stopped/minimal-container uploads
-require the destination parent directory to exist. Downloads authenticate through
-the request header, without putting login tokens in URLs.
-
-### Regression checks
-
-Use Go 1.25 or newer (the Docker build and CI use Go 1.27).
-
 ```bash
-(cd backend && go test -race ./... && go vet ./...)
-(cd frontend && pnpm test && pnpm build)
-docker build -t docktun:test .
-python3 tests/verify_prebuilt_install.py
-DOCKTUN_TEST_IMAGE=docktun:test python3 tests/container_smoke.py
-DOCKTUN_TEST_IMAGE=docktun:test python3 tests/compose_integration.py
-DOCKTUN_TEST_IMAGE=docktun:test python3 tests/transfers_update_integration.py
-DOCKTUN_TEST_IMAGE=docktun:test python3 tests/tailscale_integration.py
-DOCKTUN_TEST_IMAGE=docktun:test python3 tests/tailscale_forwarding_integration.py
-```
-
-The Tailscale tests require the fixed `docktun-tailscale` name to be unused. The
-forwarding test creates a disposable local Headscale tailnet and uses no personal
-Tailscale account or keys. Run these tests sequentially on a disposable Docker engine.
-
-### Backend
-
-```bash
+# Backend (Go 1.25+)
 cd backend
 go mod tidy
-JWT_SECRET=dev ADMIN_PASSWORD=dev go run ./cmd/server
-```
+go run ./cmd/server
 
-### Frontend
-
-```bash
+# Frontend (Node 20+ / pnpm)
 cd frontend
-npm install
-npm run dev
+pnpm install
+pnpm run dev
 ```
 
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feat/my-feature`)
-3. Commit using [conventional commits](https://www.conventionalcommits.org/)
-4. Push and open a Pull Request
-
-See [RELEASE.md](RELEASE.md) for versioning and release details.
+---
 
 ## License
 
-MIT
+MIT License. See [LICENSE](LICENSE) for details.

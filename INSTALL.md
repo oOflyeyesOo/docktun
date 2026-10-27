@@ -1,29 +1,119 @@
-# Install DockTun
+# Installing DockTun
 
-Download `compose.prebuilt.yml`, save it as `compose.yml`, and run:
+DockTun is deployed as a Docker container with access to the Docker daemon socket (`/var/run/docker.sock`).
 
-```sh
+---
+
+## Prerequisites
+
+- **Docker Engine** (20.10+)
+- **Docker Compose** (v2.0+)
+
+---
+
+## Recommended: Docker Compose with Prebuilt Image
+
+Create a directory for DockTun, download or save the following as `compose.yml`, and launch:
+
+```yaml
+services:
+  docktun:
+    image: ghcr.io/ooflyeyesoo/docktun:latest
+    container_name: docktun
+    restart: unless-stopped
+    ports:
+      - "8080:3001"
+    environment:
+      DOCKER_NETWORK: docktun
+      TAILSCALE_STATE_VOLUME: docktun-tailscale-state
+      WIREGUARD_PORT: 51820
+      DB_PATH: /app/data/app.db
+      CLOUDFLARED_CONFIG_PATH: /etc/cloudflared/config.yml
+      CLOUDFLARED_CONTAINER: docktun-cloudflared
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - docktun-data:/app/data
+      - docktun-cloudflared:/etc/cloudflared
+      - docktun-wireguard:/app/data/wireguard
+      - ./projects:/opt/projects
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3001/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    networks:
+      - docktun
+
+volumes:
+  docktun-data:
+  docktun-cloudflared:
+  docktun-wireguard:
+
+networks:
+  docktun:
+    name: docktun
+    driver: bridge
+```
+
+Start the container:
+
+```bash
 docker compose up -d
 ```
 
-For Synology Container Manager, import the Compose file as a project. The prebuilt image supports AMD64 and ARM64; the private source repository does not need to be shared with testers.
+Open your browser at **`http://<server-ip>:8080`**.
 
-Open `http://SERVER:8080`. Create the administrator account using the ownership code from `docker exec docktun cat /app/data/setup.token`, or supply ADMIN_USERNAME and ADMIN_PASSWORD as environment variables before starting DockTun. Keep the ownership code private.
+---
 
-There is no install/setup shell script or provider onboarding. Docker inventory is available immediately after sign-in. DockTun creates unused provider companions in a stopped state, downloading images on first use if necessary. Enable retries creation if a download or mount was unavailable.
+## First-Time Administrator Setup
 
-## Independent exposure methods
+When opening the dashboard for the first time, you will be prompted for an **Ownership Setup Code** to create the initial admin account:
 
-Choose a container's exposure in Containers → Access. None, Cloudflare, Tailscale, and WireGuard are choices; apps can use different methods simultaneously.
+```bash
+docker exec docktun cat /app/data/setup.token
+```
 
-- Cloudflare: save a connector token in Exposure providers → Cloudflare, or supply a local YAML tunnel and credentials file in the shared Cloudflare configuration mount, then Enable. Cloudflare API credentials for DNS and Access are separate from connector credentials.
-- Tailscale: connect each app in its Access tab. Each has a separate device identity and forwards only the selected TCP port. The shared legacy companion may remain stopped.
-- WireGuard: use an already configured VPN address for an app, or configure the stopped WireGuard companion using its persistent config directory before enabling it. The host must support WireGuard; no host kernel module is installed automatically.
+Copy the token printed in your terminal and paste it into the setup screen.
 
-Enabling or disabling one provider does not stop another. Existing provider containers retain their mounts and running state. Use the mounted Docker socket only on a trusted system.
+*(Optional: If you prefer automated headless setups, you can define `ADMIN_USERNAME` and `ADMIN_PASSWORD` in your Compose `environment` section to pre-create credentials).*
 
-## Persistence and updates
+---
 
-The Compose file mounts app data, Cloudflare configuration, and WireGuard configuration. Provider creation resolves the actual Docker host mounts, including Compose-prefixed volumes and Synology paths. Do not substitute container-only paths such as `/app/data/tailscale` for a host bind source.
+## Platform Guides
 
-Update through Settings → Update DockTun. Back up persistent volumes before upgrading. Keep older provider state when migrating; existing containers are reused.
+### Synology DSM (Container Manager)
+1. Open **Container Manager** on your Synology NAS.
+2. Go to **Project** → **Create**.
+3. Name your project (e.g. `docktun`) and select a destination folder (e.g. `/docker/docktun`).
+4. Select **Create docker-compose.yml** and paste the Compose configuration above.
+5. Finish the wizard to build and start the project.
+6. Retrieve the setup token via Synology SSH (`sudo docker exec docktun cat /app/data/setup.token`) or container terminal.
+
+### Unraid & TrueNAS SCALE
+Create a custom Docker Compose application using the template above, ensuring `/var/run/docker.sock` is passed as a bind mount so DockTun can manage host containers.
+
+---
+
+## Persistent Volumes
+
+| Volume / Mount | Purpose |
+|----------------|---------|
+| `/var/run/docker.sock` | Communicates with the Docker daemon to monitor and control containers. |
+| `docktun-data` (`/app/data`) | Stores the SQLite database (`app.db`), user sessions, audit logs, and encryption keys. |
+| `docktun-cloudflared` (`/etc/cloudflared`) | Stores Cloudflare Tunnel YAML ingress configuration and tunnel credentials. |
+| `docktun-wireguard` (`/app/data/wireguard`) | Stores WireGuard VPN configuration and profile keys. |
+| `./projects` (`/opt/projects`) | Stores cloned Compose repositories and project working directories. |
+
+---
+
+## Updating DockTun
+
+### Via Dashboard (1-Click)
+Navigate to **Settings → Update DockTun → Check for updates → Install update**. DockTun pulls the latest published image, verifies health, and seamlessly replaces the running container without losing volumes or network attachments.
+
+### Via Docker Compose
+```bash
+docker compose pull
+docker compose up -d
+```
