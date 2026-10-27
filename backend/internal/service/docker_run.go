@@ -74,8 +74,12 @@ func ensureNetwork(netName string) error {
 	if netName == "" || netName == "host" || netName == "bridge" || netName == "none" {
 		return nil
 	}
-	if err := exec.Command("docker", "network", "inspect", netName).Run(); err == nil {
-		return nil
+	cmd := exec.Command("docker", "network", "ls", "--filter", "name=^"+netName+"$", "--format", "{{.ID}}")
+	if out, err := cmd.CombinedOutput(); err == nil {
+		ids := strings.Fields(strings.TrimSpace(string(out)))
+		if len(ids) > 0 {
+			return nil
+		}
 	}
 	return exec.Command("docker", "network", "create", netName).Run()
 }

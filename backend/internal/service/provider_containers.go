@@ -128,9 +128,28 @@ func (p *ProviderContainers) network(ctx context.Context) (string, error) {
 	if network == "" {
 		network = "docktun"
 	}
-	if _, err := p.run(ctx, "network", "inspect", network); err != nil {
-		if _, err := p.run(ctx, "network", "create", network); err != nil {
-			return "", err
+	// Check by exact name match via docker network ls to avoid ambiguity when duplicate networks exist
+	out, err := p.run(ctx, "network", "ls", "--filter", "name=^"+network+"$", "--format", "{{.ID}}")
+	if err == nil {
+		ids := strings.Fields(strings.TrimSpace(string(out)))
+		if len(ids) > 0 {
+			return ids[0], nil
+		}
+	}
+	if _, err := p.run(ctx, "network", "create", network); err != nil {
+		// If creation failed because it already exists, look up ID again
+		if retryOut, retryErr := p.run(ctx, "network", "ls", "--filter", "name=^"+network+"$", "--format", "{{.ID}}"); retryErr == nil {
+			ids := strings.Fields(strings.TrimSpace(string(retryOut)))
+			if len(ids) > 0 {
+				return ids[0], nil
+			}
+		}
+		return "", err
+	}
+	if idOut, err := p.run(ctx, "network", "ls", "--filter", "name=^"+network+"$", "--format", "{{.ID}}"); err == nil {
+		ids := strings.Fields(strings.TrimSpace(string(idOut)))
+		if len(ids) > 0 {
+			return ids[0], nil
 		}
 	}
 	return network, nil

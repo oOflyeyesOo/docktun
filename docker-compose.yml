@@ -1,3 +1,6 @@
+# DockTun Development / Source Compose File
+# Builds DockTun from the local repository Dockerfile.
+# For production setups without compiling, use compose.prebuilt.yml instead.
 name: docktun
 
 services:
@@ -8,7 +11,7 @@ services:
     container_name: docktun
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:3001/healthz"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3001/healthz"]
       interval: 30s
       timeout: 5s
       start_period: 30s
