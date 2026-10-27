@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"docktun/internal/config"
+	"docktun/internal/service"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -93,5 +94,26 @@ func TestMetricsRequestCancellationAndHTTPFailure(t *testing.T) {
 	h.readTunnelMetrics(context.Background(), true, &resp)
 	if resp.TotalRequests != 0 || resp.Raw != "" {
 		t.Fatal("HTTP error body interpreted as metrics")
+	}
+}
+
+func TestContainerCPUSummaryDistinguishesMissingUsageFromZero(t *testing.T) {
+	cases := []struct {
+		containers []service.Container
+		total      float64
+		available  bool
+	}{
+		{[]service.Container{{Running: true, CPU: "0.00%"}}, 0, true},
+		{[]service.Container{{Running: true, CPU: "150%"}, {Running: true, CPU: "50%"}}, 200, true},
+		{[]service.Container{{Running: true, CPU: ""}, {Running: true, CPU: "10%"}}, 10, false},
+		{[]service.Container{{Running: false, CPU: "old"}}, 0, true},
+		{[]service.Container{{Running: true, CPU: "NaN%"}}, 0, false},
+		{[]service.Container{{Running: true, CPU: "+Inf%"}}, 0, false},
+	}
+	for _, tc := range cases {
+		total, available := containerCPUSummary(tc.containers)
+		if total != tc.total || available != tc.available {
+			t.Fatalf("CPU total/sample availability wrong: %v %v", total, available)
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -33,6 +34,7 @@ type HostMetrics struct {
 	CPUs              int        `json:"cpus"`
 	LoadAvg           [3]float64 `json:"load_avg"`
 	TotalCPUPercent   float64    `json:"total_cpu_percent"`
+	CPUAvailable      bool       `json:"cpu_available"`
 	MemTotal          int64      `json:"mem_total"`
 	MemUsed           int64      `json:"mem_used"`
 	MemFree           int64      `json:"mem_free"`
@@ -108,7 +110,6 @@ func (h *Metrics) Get(w http.ResponseWriter, r *http.Request) {
 	if h.containers != nil {
 		if containers, err := h.containers.List(); err == nil {
 			resp.Host.ContainersTotal = len(containers)
-			var totalHostCpu float64
 			var totalContainerMem int64
 			var maxContainerLimit int64
 
@@ -137,11 +138,8 @@ func (h *Metrics) Get(w http.ResponseWriter, r *http.Request) {
 
 				if cm.CPUPercent != "" {
 					cleaned := strings.TrimSpace(strings.ReplaceAll(cm.CPUPercent, "%", ""))
-					if val, err := strconv.ParseFloat(cleaned, 64); err == nil {
+					if val, err := strconv.ParseFloat(cleaned, 64); err == nil && val >= 0 && !math.IsNaN(val) && !math.IsInf(val, 0) {
 						cm.CPUNum = val
-						if c.Running {
-							totalHostCpu += val
-						}
 					}
 				}
 
@@ -173,7 +171,7 @@ func (h *Metrics) Get(w http.ResponseWriter, r *http.Request) {
 				resp.Containers = append(resp.Containers, cm)
 			}
 
-			resp.Host.TotalCPUPercent = totalHostCpu
+			resp.Host.TotalCPUPercent, resp.Host.CPUAvailable = containerCPUSummary(containers)
 
 			// Fallback memory calculation if /proc/meminfo was unavailable
 			if resp.Host.MemTotal == 0 && totalContainerMem > 0 {
@@ -405,4 +403,22 @@ func parseBytes(s string) int64 {
 	default:
 		return int64(val)
 	}
+}
+
+// A partially sampled fleet must not be presented as a complete CPU total.
+func containerCPUSummary(containers []service.Container) (float64, bool) {
+	total := 0.0
+	complete := true
+	for _, container := range containers {
+		if !container.Running {
+			continue
+		}
+		value, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(container.CPU), "%")), 64)
+		if err != nil || value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			complete = false
+			continue
+		}
+		total += value
+	}
+	return total, complete
 }

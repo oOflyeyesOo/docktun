@@ -149,6 +149,7 @@ type DockerContainers struct {
 	statsCache     map[string]liveStats
 	statsTime      time.Time
 	statsRunning   int32
+	statsCollector func() map[string]liveStats
 	selfUpdater    *SelfUpdater
 	exposureMu     sync.Mutex
 	exposureDocker func(context.Context, ...string) ([]byte, error)
@@ -166,7 +167,7 @@ func CleanupZombieUpdaters() {
 
 func NewDockerContainers(cfg *config.Config, db *db.DB, configMgr *ConfigManager, cloudflared *Cloudflared, cfAPI *CloudflareAPI, audit *AuditLogger) *DockerContainers {
 	go CleanupZombieUpdaters()
-	return &DockerContainers{
+	service := &DockerContainers{
 		selfUpdater: NewSelfUpdater(filepath.Dir(cfg.DBPath)),
 		cfg:         cfg,
 		db:          db,
@@ -175,6 +176,8 @@ func NewDockerContainers(cfg *config.Config, db *db.DB, configMgr *ConfigManager
 		cfAPI:       cfAPI,
 		audit:       audit,
 	}
+	go service.getCachedStats()
+	return service
 }
 
 type liveStats struct {
@@ -458,46 +461,33 @@ func (s *DockerContainers) List() ([]Container, error) {
 
 func (s *DockerContainers) getCachedStats() map[string]liveStats {
 	s.statsMu.RLock()
-	cacheAge := time.Since(s.statsTime)
-	hasCache := len(s.statsCache) > 0
+	sampledAt := s.statsTime
 	cached := make(map[string]liveStats, len(s.statsCache))
-	for k, v := range s.statsCache {
-		cached[k] = v
+	for name, value := range s.statsCache {
+		cached[name] = value
 	}
 	s.statsMu.RUnlock()
-
-	// If cache is fresh (< 6s), return it immediately
-	if hasCache && cacheAge < 6*time.Second {
+	// An empty sample is valid too (or a failed daemon probe); do not retry on
+	// every HTTP request when there are no samples to return yet.
+	if !sampledAt.IsZero() && time.Since(sampledAt) < 6*time.Second {
 		return cached
 	}
-
-	// If cache exists but is older than 6s, return existing cache immediately
-	// and refresh in the background so API callers are never blocked!
-	if hasCache {
-		if atomic.CompareAndSwapInt32(&s.statsRunning, 0, 1) {
-			go func() {
-				defer atomic.StoreInt32(&s.statsRunning, 0)
-				fresh := s.collectAllStats()
-				s.statsMu.Lock()
-				s.statsCache = fresh
-				s.statsTime = time.Now()
-				s.statsMu.Unlock()
-			}()
-		}
-		return cached
-	}
-
-	// First time ever: collect synchronously
 	if atomic.CompareAndSwapInt32(&s.statsRunning, 0, 1) {
-		defer atomic.StoreInt32(&s.statsRunning, 0)
-		fresh := s.collectAllStats()
-		s.statsMu.Lock()
-		s.statsCache = fresh
-		s.statsTime = time.Now()
-		s.statsMu.Unlock()
-		return fresh
+		go func() {
+			defer atomic.StoreInt32(&s.statsRunning, 0)
+			collect := s.statsCollector
+			if collect == nil {
+				collect = s.collectAllStats
+			}
+			fresh := collect()
+			s.statsMu.Lock()
+			s.statsCache = fresh
+			s.statsTime = time.Now()
+			s.statsMu.Unlock()
+		}()
 	}
-
+	// Never block inventory or inspection on Docker's multi-second CPU sample.
+	// Missing readings stay unavailable until the next sample arrives.
 	return cached
 }
 
@@ -633,50 +623,31 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		c.Uptime = uptimeFromStartedAt(inspect.State.StartedAt)
 	}
 
-	// Fetch live stats from cache or single container fallback
+	// Use the shared background sample; stopped containers have no live usage.
 	statsMap := s.getCachedStats()
-	foundStats := false
-	if st, ok := statsMap[c.Name]; ok {
-		c.CPU = st.cpu
-		c.Memory = st.mem
-		c.Network = st.net
-		c.BlockIO = st.block
-		c.PIDs = st.pids
-		foundStats = true
-	} else if st, ok := statsMap[c.ID]; ok {
-		c.CPU = st.cpu
-		c.Memory = st.mem
-		c.Network = st.net
-		c.BlockIO = st.block
-		c.PIDs = st.pids
-		foundStats = true
-	} else if len(c.ID) >= 12 {
-		if st, ok := statsMap[c.ID[:12]]; ok {
+	if c.Running {
+		if st, ok := statsMap[c.Name]; ok {
 			c.CPU = st.cpu
 			c.Memory = st.mem
 			c.Network = st.net
 			c.BlockIO = st.block
 			c.PIDs = st.pids
-			foundStats = true
-		}
-	}
-
-	if !foundStats && c.Running {
-		sCtx, sCancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer sCancel()
-		statsCmd := exec.CommandContext(sCtx, "docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}", id)
-		if statsOut, statsErr := statsCmd.Output(); statsErr == nil {
-			parts := strings.Split(strings.TrimSpace(string(statsOut)), "\t")
-			if len(parts) >= 5 {
-				c.CPU = strings.TrimSpace(parts[0])
-				c.Memory = strings.TrimSpace(parts[1])
-				c.Network = strings.TrimSpace(parts[2])
-				c.BlockIO = strings.TrimSpace(parts[3])
-				if p, err := strconv.Atoi(strings.TrimSpace(parts[4])); err == nil {
-					c.PIDs = p
-				}
+		} else if st, ok := statsMap[c.ID]; ok {
+			c.CPU = st.cpu
+			c.Memory = st.mem
+			c.Network = st.net
+			c.BlockIO = st.block
+			c.PIDs = st.pids
+		} else if len(c.ID) >= 12 {
+			if st, ok := statsMap[c.ID[:12]]; ok {
+				c.CPU = st.cpu
+				c.Memory = st.mem
+				c.Network = st.net
+				c.BlockIO = st.block
+				c.PIDs = st.pids
 			}
 		}
+
 	}
 
 	// Formatted ports (standard Docker format: [HostIP:]HostPort->ContainerPort)
