@@ -277,3 +277,73 @@ exit 1
 		t.Fatalf("relative stack action failed: %s", output)
 	}
 }
+
+func TestListingProjectsNeverDeletesByName(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	svc := NewProjects(database, "")
+	names := []string{"public-cloudflare-tunnel-cloudflared", "personal-cloudflare-tunnel", "docktun-wireguard", "mediastorm", "mediastorm-postgres", "tun", "docktun"}
+	ids := make(map[int]bool)
+	for _, name := range names {
+		project, err := svc.Create(name, filepath.Join(t.TempDir(), name), "", "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[project.ID] = true
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		projects, err := svc.List()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(projects) != len(names) {
+			t.Fatalf("listing removed user projects: %v", projects)
+		}
+		for _, project := range projects {
+			if !ids[project.ID] {
+				t.Fatal("listing changed project identity")
+			}
+		}
+	}
+	if count, err := svc.PruneDuplicates(); err != nil || count != 0 {
+		t.Fatalf("cleanup guessed orphaned projects: %d %v", count, err)
+	}
+}
+
+func TestProjectCleanupKeepsDistinctCredentialsAndOnlyRemovesExactDuplicates(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	svc := NewProjects(database, "")
+	original, err := svc.Create("example", t.TempDir(), "https://example.invalid/project", "user", "token-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	insert := `INSERT INTO projects(name,path,repo_url,git_username,git_token) SELECT name,path,repo_url,git_username,git_token FROM projects WHERE id=?`
+	if _, err := database.Exec(insert, original.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`INSERT INTO projects(name,path,repo_url,git_username,git_token) SELECT name,path,repo_url,git_username,'token-two' FROM projects WHERE id=?`, original.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, err := svc.List()
+	if err != nil || len(before) != 3 {
+		t.Fatal("listing changed duplicate records before explicit cleanup")
+	}
+	count, err := svc.PruneDuplicates()
+	if err != nil || count != 1 {
+		t.Fatalf("cleanup removed distinct metadata: %d %v", count, err)
+	}
+	after, err := svc.List()
+	if err != nil || len(after) != 2 {
+		t.Fatal("distinct project record lost")
+	}
+	if _, err := svc.GetByID(original.ID); err != nil {
+		t.Fatal("original identity removed")
+	}
+}
