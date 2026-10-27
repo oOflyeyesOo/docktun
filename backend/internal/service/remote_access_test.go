@@ -19,6 +19,12 @@ func TestTailscaleControlMountAndReuse(t *testing.T) {
 			s := &RemoteAccessService{dataDir: "/app/data"}
 			s.runDocker = func(_ context.Context, args ...string) ([]byte, error) {
 				calls = append(calls, args)
+				if args[0] == "network" && args[1] == "ls" {
+					if strings.Contains(strings.Join(args, " "), "tester-network") {
+						return []byte("custom-network-id\ttester-network"), nil
+					}
+					return []byte("default-network-id\tdocktun"), nil
+				}
 				if args[0] == "inspect" {
 					if installed {
 						return []byte(`[{"State":{"Running":false}}]`), nil
@@ -44,7 +50,7 @@ func TestTailscaleControlMountAndReuse(t *testing.T) {
 				}
 				return
 			}
-			for _, want := range []string{"type=volume,source=tester-tailscale-state,target=/var/lib/tailscale", "--network tester-network", "TS_USERSPACE=true", "TS_STATE_DIR=/var/lib/tailscale"} {
+			for _, want := range []string{"type=volume,source=tester-tailscale-state,target=/var/lib/tailscale", "--network custom-network-id", "TS_USERSPACE=true", "TS_STATE_DIR=/var/lib/tailscale"} {
 				if !strings.Contains(got, want) {
 					t.Fatalf("missing %s: %s", want, got)
 				}

@@ -46,6 +46,10 @@ func TestProvidersStageStoppedAndOperateIndependently(t *testing.T) {
 	p.run = func(_ context.Context, args ...string) ([]byte, error) {
 		calls = append(calls, strings.Join(args, " "))
 		switch args[0] {
+		case "network":
+			if args[1] == "ls" {
+				return []byte("network123\tdocktun"), nil
+			}
 		case "inspect":
 			if args[1] == hostname {
 				return json.Marshal([]any{own})
