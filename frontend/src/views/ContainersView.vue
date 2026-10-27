@@ -3146,7 +3146,7 @@ onUnmounted(() => {
                   :disabled="!composeEditor.loaded || composeSaving"
                   rows="18"
                   spellcheck="false"
-                  placeholder="Loading compose file…"
+                  :placeholder="composeLoading ? 'Loading Compose file…' : composeEditor.loaded ? 'Enter Compose YAML' : 'Compose file unavailable. See the error above.'"
                   class="w-full rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-xs text-slate-800 focus:border-cyan-500 focus:outline-none leading-relaxed"
                 ></textarea>
               </div>
