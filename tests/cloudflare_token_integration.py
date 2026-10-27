@@ -124,7 +124,7 @@ try:
         except RuntimeError:time.sleep(1)
     else:raise AssertionError('legacy Tailscale daemon did not join the disposable tailnet')
     inner('network','create','origin-only')
-    inner('run','-d','--name','fixture-app','--network','origin-only','alpine:3.23','sh','-c','mkdir /www && echo selected-origin-ok > /www/index.html && exec httpd -f -p 8080 -h /www')
+    inner('run','-d','--name','fixture-app','--network','origin-only','python:3.13-alpine','python','-u','-c',"from http.server import BaseHTTPRequestHandler,HTTPServer\nclass Handler(BaseHTTPRequestHandler):\n def do_GET(self): self.send_response(200);self.end_headers();self.wfile.write(b'selected-origin-ok')\nHTTPServer(('0.0.0.0',8080),Handler).serve_forever()")
     inner('run','-d','--name','docktun','--network','docktun','-p','3001:3001','-v','data:/app/data','-v','cloudflare:/etc/cloudflared','-v','certs:/test-certs:ro',
         '-v','/var/run/docker.sock:/var/run/docker.sock','-e','DOCKTUN_PREPARE_PROVIDERS=false','-e','DOCKER_NETWORK=docktun',
         '-e','SSL_CERT_FILE=/test-certs/cert.pem','-e','NO_PROXY=api.cloudflare.com','-e','HTTPS_PROXY=','-e','HTTP_PROXY=',image)
@@ -153,6 +153,7 @@ try:
         try:
             assert json.loads(inner('exec','docktun-tailscale','tailscale','serve','status','--json'))=={}; break
         except (RuntimeError,AssertionError):time.sleep(1)
+    assert inner('inspect','--format','{{.State.Status}}','fixture-app')=='running'
     # The real CLI reproduces the original error when asked to remove nothing.
     try: inner('exec','docktun-tailscale','tailscale','serve','--bg','--tcp=80','off')
     except RuntimeError as error: assert 'does not exist' in str(error),error
