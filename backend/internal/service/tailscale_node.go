@@ -217,21 +217,22 @@ func (s *DockerContainers) setTailscaleRule(node string, port int, target string
 
 // Existing shared-device rules are migrated only when the user explicitly saves
 // that app. Never reset the shared daemon or touch another app's Serve rule.
-func (s *DockerContainers) verifyTailscaleRule(node string, port int, target string, expected bool) error {
+func (s *DockerContainers) verifyTailscaleRule(node string, port int, target string, expected bool) (bool, error) {
 	out, err := s.runExposure("exec", node, "tailscale", "serve", "status", "--json")
 	if err != nil {
-		return err
+		return false, err
 	}
 	var config struct {
 		TCP map[string]struct{ TCPForward string }
 	}
 	if err = json.Unmarshal(out, &config); err != nil {
-		return err
+		return false, err
 	}
 	if rule, ok := config.TCP[strconv.Itoa(port)]; ok && (!expected || rule.TCPForward != target) {
-		return fmt.Errorf("Tailscale port %d has an unrelated Serve rule; it was left unchanged", port)
+		return false, fmt.Errorf("Tailscale port %d has an unrelated Serve rule; it was left unchanged", port)
 	}
-	return nil
+	_, exists := config.TCP[strconv.Itoa(port)]
+	return exists, nil
 }
 
 func (s *DockerContainers) syncTailscaleExposure(app string, previous ExposureSettings, next *ExposureSettings) (func(), error) {
@@ -270,20 +271,23 @@ func (s *DockerContainers) syncTailscaleExposure(app string, previous ExposureSe
 		if err = s.ensureNodeResources(app); err != nil {
 			return noop, err
 		}
-		if err = s.verifyTailscaleRule(node, next.PrivatePort, oldTarget, was && oldNode == node && previous.PrivatePort == next.PrivatePort); err != nil {
+		if _, err = s.verifyTailscaleRule(node, next.PrivatePort, oldTarget, was && oldNode == node && previous.PrivatePort == next.PrivatePort); err != nil {
 			return noop, err
 		}
 		next.TailscaleNode = node
 		next.PrivateHost = status.Address
 		next.Target = "tcp://" + newTarget
 	}
+	oldRulePresent := false
 	if was {
 		if oldNode == node {
 			if _, err := s.ownedTailscaleNode(app); err != nil {
 				return noop, err
 			}
 		}
-		if err := s.verifyTailscaleRule(oldNode, previous.PrivatePort, oldTarget, true); err != nil {
+		var err error
+		oldRulePresent, err = s.verifyTailscaleRule(oldNode, previous.PrivatePort, oldTarget, true)
+		if err != nil {
 			return noop, err
 		}
 	}
@@ -292,7 +296,7 @@ func (s *DockerContainers) syncTailscaleExposure(app string, previous ExposureSe
 			return noop, err
 		}
 	}
-	if was && (!is || oldNode != node || previous.PrivatePort != next.PrivatePort) {
+	if oldRulePresent && (!is || oldNode != node || previous.PrivatePort != next.PrivatePort) {
 		if err := s.setTailscaleRule(oldNode, previous.PrivatePort, ""); err != nil {
 			if is {
 				_ = s.setTailscaleRule(node, next.PrivatePort, "")
@@ -303,7 +307,9 @@ func (s *DockerContainers) syncTailscaleExposure(app string, previous ExposureSe
 	// A disconnected device retains its named state volume, preserving identity on re-enable.
 	if !is && oldNode == node {
 		if _, err := s.runExposure("stop", node); err != nil {
-			_ = s.setTailscaleRule(oldNode, previous.PrivatePort, oldTarget)
+			if oldRulePresent {
+				_ = s.setTailscaleRule(oldNode, previous.PrivatePort, oldTarget)
+			}
 			return noop, err
 		}
 	}
@@ -311,10 +317,10 @@ func (s *DockerContainers) syncTailscaleExposure(app string, previous ExposureSe
 		if is {
 			_ = s.setTailscaleRule(node, next.PrivatePort, "")
 		}
-		if was {
-			if oldNode == node {
-				_, _ = s.runExposure("start", node)
-			}
+		if was && oldNode == node {
+			_, _ = s.runExposure("start", node)
+		}
+		if oldRulePresent {
 			_ = s.setTailscaleRule(oldNode, previous.PrivatePort, oldTarget)
 		}
 	}, nil

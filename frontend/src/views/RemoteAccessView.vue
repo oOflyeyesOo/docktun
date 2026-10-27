@@ -53,6 +53,9 @@ interface OverviewData {
     tunnel_id: string
     tunnel_name: string
     ingress_count: number
+    routes_known?: boolean
+    configuration_source?: string
+    last_error?: string
     protocol: string
   }
   tailscale: {
@@ -472,7 +475,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/30"
           >
             <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-            ACTIVE
+            CONNECTOR RUNNING
           </span>
           <span
             v-else
@@ -483,11 +486,13 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
         </div>
         <div>
           <div class="text-xl font-bold text-slate-900 font-mono">
-            {{ overview?.cloudflare?.ingress_count ?? 0 }} <span class="text-xs text-slate-600 font-normal">public routes</span>
+            {{ overview?.cloudflare?.routes_known === false ? '—' : overview?.cloudflare?.ingress_count ?? '—' }} <span class="text-xs text-slate-600 font-normal">public routes</span>
           </div>
           <div class="text-[11px] text-slate-500 truncate mt-0.5" :title="overview?.cloudflare?.tunnel_id">
-            {{ overview?.cloudflare?.status === 'disabled' ? 'Choose Cloudflare when you need a public hostname.' : overview?.cloudflare?.tunnel_id ? 'Tunnel: ' + overview.cloudflare.tunnel_id.substring(0, 8) + '…' : 'No tunnel ID configured' }}
+            {{ overview?.cloudflare?.status === 'disabled' ? 'Choose Cloudflare when you need a public hostname.' : overview?.cloudflare?.tunnel_id ? 'Tunnel: ' + overview.cloudflare.tunnel_id.substring(0, 8) + '…' : 'Tunnel identity unavailable' }}
           </div>
+          <p v-if="overview?.cloudflare?.configuration_source === 'cloudflare'" class="text-[11px] text-slate-500 mt-1">Cloudflare-managed routes</p>
+          <p v-if="overview?.cloudflare?.last_error" class="text-[11px] text-amber-700 mt-1">{{ overview.cloudflare.last_error }}</p>
         </div>
         <div v-if="activeTab === 'cloudflare'" class="mt-3 h-0.5 w-full bg-orange-500 rounded-full"></div>
       </button>

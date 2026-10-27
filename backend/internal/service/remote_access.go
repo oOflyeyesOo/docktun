@@ -28,12 +28,15 @@ type RemoteAccessOverview struct {
 }
 
 type CloudflareSummary struct {
-	Status       string `json:"status"`
-	Running      bool   `json:"running"`
-	TunnelID     string `json:"tunnel_id"`
-	TunnelName   string `json:"tunnel_name"`
-	IngressCount int    `json:"ingress_count"`
-	Protocol     string `json:"protocol"`
+	ConfigurationSource string `json:"configuration_source"`
+	RoutesKnown         bool   `json:"routes_known"`
+	LastError           string `json:"last_error,omitempty"`
+	Status              string `json:"status"`
+	Running             bool   `json:"running"`
+	TunnelID            string `json:"tunnel_id"`
+	TunnelName          string `json:"tunnel_name"`
+	IngressCount        int    `json:"ingress_count"`
+	Protocol            string `json:"protocol"`
 }
 
 type TailscaleSummary struct {
@@ -266,6 +269,35 @@ func (s *RemoteAccessService) GetOverview() (*RemoteAccessOverview, error) {
 					}
 				}
 				overview.Cloudflare.IngressCount = rulesCount
+			}
+		}
+	}
+
+	if s.configMgr != nil {
+		identity, identityErr := s.configMgr.TunnelIdentity()
+		overview.Cloudflare.ConfigurationSource = "local"
+		overview.Cloudflare.RoutesKnown = identityErr == nil
+		if identity.Remote {
+			overview.Cloudflare.ConfigurationSource = "cloudflare"
+			overview.Cloudflare.TunnelID = identity.ID
+			overview.Cloudflare.RoutesKnown = false
+			overview.Cloudflare.IngressCount = 0
+			if identityErr != nil {
+				overview.Cloudflare.LastError = identityErr.Error()
+			} else if s.cfAPISvc != nil {
+				configuration, err := s.cfAPISvc.TunnelConfiguration(identity)
+				if err != nil {
+					overview.Cloudflare.LastError = err.Error()
+				} else {
+					overview.Cloudflare.RoutesKnown = true
+					if rules, ok := configuration["ingress"].([]any); ok {
+						for _, item := range rules {
+							if rule, ok := item.(map[string]any); ok && rule["hostname"] != nil && rule["hostname"] != "" {
+								overview.Cloudflare.IngressCount++
+							}
+						}
+					}
+				}
 			}
 		}
 	}
