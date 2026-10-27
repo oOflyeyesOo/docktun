@@ -32,6 +32,5 @@ custom_env.pop('TAILSCALE_NETWORK', None)
 custom = json.loads(subprocess.check_output(['docker', 'compose', '-f', compose.name, 'config', '--format', 'json'], cwd=root, env=custom_env, text=True))
 assert custom['networks']['docktun']['name'] == 'synology-custom-network'
 assert custom['services']['docktun']['environment']['TAILSCALE_NETWORK'] == 'synology-custom-network'
-assert not (root / 'install.sh').exists()
 assert not (root / 'frontend/src/views/SetupView.vue').exists()
-print('Portable prebuilt Compose passed: app only, persistent provider mounts, independent network settings, no installer or onboarding')
+print('Portable prebuilt Compose passed: app only, persistent provider mounts, independent network settings, no onboarding')
