@@ -87,11 +87,6 @@ func (s *Projects) markDone(id int) {
 }
 
 func (s *Projects) List() ([]Project, error) {
-	// Auto-prune ghost stacks and duplicate container-name entries
-	_, _ = s.db.Exec(`DELETE FROM projects WHERE name = 'public-cloudflare-tunnel-cloudflared' OR name LIKE '%cloudflare-tunnel%'`)
-	_, _ = s.db.Exec(`DELETE FROM projects WHERE name IN ('docktun-cloudflared', 'docktun-wireguard', 'docktun-tailscale', 'docktun-zeroconf')`)
-	_, _ = s.db.Exec(`DELETE FROM projects WHERE name = 'mediastorm-postgres' AND EXISTS (SELECT 1 FROM projects p2 WHERE p2.name = 'mediastorm')`)
-	_, _ = s.db.Exec(`DELETE FROM projects WHERE name = 'tun' AND EXISTS (SELECT 1 FROM projects p2 WHERE p2.name = 'docktun')`)
 
 	rows, err := s.db.Query("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects ORDER BY name")
 	if err != nil {
@@ -108,22 +103,20 @@ func (s *Projects) List() ([]Project, error) {
 		p.GitToken = maskToken(p.GitToken)
 		projects = append(projects, p)
 	}
-	return projects, nil
+	return projects, rows.Err()
 }
 
-func (s *Projects) PruneOrphans() (int, error) {
-	res, err := s.db.Exec(`
-		DELETE FROM projects 
-		WHERE name IN ('public-cloudflare-tunnel-cloudflared', 'docktun-cloudflared', 'docktun-wireguard', 'docktun-tailscale', 'docktun-zeroconf')
-		   OR name LIKE '%cloudflare-tunnel%'
-		   OR (name = 'mediastorm-postgres' AND EXISTS (SELECT 1 FROM projects p2 WHERE p2.name = 'mediastorm'))
-		   OR (name = 'tun' AND EXISTS (SELECT 1 FROM projects p2 WHERE p2.name = 'docktun'))
-	`)
+// Cleanup is explicit and only removes records with identical project metadata.
+// A provider-like name or an inaccessible host path does not make a stack orphaned.
+func (s *Projects) PruneDuplicates() (int, error) {
+	result, err := s.db.Exec(`DELETE FROM projects WHERE id NOT IN (
+  SELECT MIN(id) FROM projects GROUP BY name,path,repo_url,git_username,git_token
+ )`)
 	if err != nil {
 		return 0, err
 	}
-	affected, _ := res.RowsAffected()
-	return int(affected), nil
+	count, err := result.RowsAffected()
+	return int(count), err
 }
 
 // ProjectsRoot uses the persistent mount in the distributed image, and an

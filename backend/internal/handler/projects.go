@@ -165,14 +165,14 @@ func (h *Projects) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Projects) Prune(w http.ResponseWriter, r *http.Request) {
-	count, err := h.svc.PruneOrphans()
+	count, err := h.svc.PruneDuplicates()
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	userID, _ := r.Context().Value("user_id").(int)
-	h.audit.Log(userID, "projects_prune", fmt.Sprintf("Pruned %d orphan/duplicate projects", count), r.RemoteAddr)
+	h.audit.Log(userID, "projects_prune", fmt.Sprintf("Removed %d duplicate project records", count), r.RemoteAddr)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "pruned": count})
