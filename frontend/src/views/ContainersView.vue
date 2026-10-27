@@ -4693,7 +4693,7 @@ onUnmounted(() => {
             <input type="checkbox" v-model="deleteStackDown" class="mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer" />
             <div>
               <span class="font-semibold text-slate-800">Stop and remove stack containers</span>
-              <p class="text-slate-500 text-[11px]">Executes <code class="font-mono">docker compose down</code> to cleanly stop all running containers and networks in this stack.</p>
+              <p class="text-slate-500 text-[11px]">Stops and removes this stack’s containers and Compose networks. Volumes, images, and external networks are kept. Uncheck to forget the saved project only; existing containers will still appear in the container list.</p>
             </div>
           </label>
 
@@ -4701,7 +4701,7 @@ onUnmounted(() => {
             <input type="checkbox" v-model="deleteStackRemoveFiles" class="mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer" />
             <div>
               <span class="font-semibold text-rose-700">Delete project folder from disk</span>
-              <p class="text-slate-500 text-[11px]">Permanently removes <code class="font-mono">{{ showDeleteStackModal.path || 'the project directory' }}</code>.</p>
+              <p class="text-slate-500 text-[11px]">Permanently removes <code class="font-mono">{{ showDeleteStackModal.path || 'the project directory' }}</code>, including files stored inside it. Only folders inside DockTun’s projects folder can be removed.</p>
             </div>
           </label>
         </div>
