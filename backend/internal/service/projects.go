@@ -482,15 +482,14 @@ func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
 		}
 	}
 
-	cmdArgs := []string{"compose", "--profile", "all", "--profile", "*"}
-	if p, err := s.GetByID(id); err == nil && p.Name != "" {
-		cmdArgs = append(cmdArgs, "-p", p.Name)
+	projectName := ""
+	if p, err := s.GetByID(id); err == nil {
+		projectName = p.Name
 	}
-	cmdArgs = append(cmdArgs, "--project-directory", path)
-	cmdArgs = append(cmdArgs, args...)
-	cmd := exec.Command("docker", cmdArgs...)
-	if path != "" {
-		cmd.Dir = path
+	cmd, err := composeProjectCommand(projectName, path, args...)
+	if err != nil {
+		s.appendOutput(id, "[ERROR] "+err.Error())
+		return
 	}
 
 	stdout, _ := cmd.StdoutPipe()

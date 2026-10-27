@@ -2343,17 +2343,13 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 
 		if isLocalBuild {
 			appendLog(fmt.Sprintf("[BUILD] Building local service %s via Docker Compose in %s...", compService, validComposeDir))
-			var buildArgs []string
-			buildArgs = append(buildArgs, "--profile", "all", "--profile", "*")
-			if composeCandidate != "" && fileExists(composeCandidate) {
-				buildArgs = append(buildArgs, "-f", composeCandidate)
-			} else {
-				buildArgs = append(buildArgs, "--project-directory", validComposeDir)
+			buildCmd, buildPlanErr := composeProjectCommandWithFile(compProj, validComposeDir, composeCandidate, "build", compService)
+			var bOut []byte
+			bErr := buildPlanErr
+			if bErr == nil {
+				bOut, bErr = buildCmd.CombinedOutput()
 			}
-			buildArgs = append(buildArgs, "build", compService)
-			buildCmd := exec.Command("docker", append([]string{"compose"}, buildArgs...)...)
-			buildCmd.Dir = validComposeDir
-			bOut, bErr := buildCmd.CombinedOutput()
+
 			appendLog(strings.TrimSpace(string(bOut)))
 			if bErr != nil {
 				appendLog(fmt.Sprintf("[WARN] Compose build notice: %v", bErr))
@@ -2361,18 +2357,12 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		}
 
 		appendLog(fmt.Sprintf("[STEP 2/4] Updating via Docker Compose in %s (service: %s)...", validComposeDir, compService))
-		var composeArgs []string
-		composeArgs = append(composeArgs, "--profile", "all", "--profile", "*")
-		if composeCandidate != "" && fileExists(composeCandidate) {
-			composeArgs = append(composeArgs, "-f", composeCandidate)
-		} else {
-			composeArgs = append(composeArgs, "--project-directory", validComposeDir)
+		upCmd, planErr := composeProjectCommandWithFile(compProj, validComposeDir, composeCandidate, "up", "-d", "--no-deps", "--force-recreate", compService)
+		if planErr != nil {
+			return logOutput.String(), fmt.Errorf("validate project before update: %w", planErr)
 		}
-		composeArgs = append(composeArgs, "up", "-d", "--no-deps", "--force-recreate", compService)
-
-		upCmd := exec.Command("docker", append([]string{"compose"}, composeArgs...)...)
-		upCmd.Dir = validComposeDir
 		upOut, upErr := upCmd.CombinedOutput()
+
 		if upErr == nil {
 			appendLog(strings.TrimSpace(string(upOut)))
 			recreated = true
@@ -2383,9 +2373,13 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 				backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
 				_ = exec.Command("docker", "stop", detail.ID).Run()
 				if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
-					retryCmd := exec.Command("docker", append([]string{"compose"}, composeArgs...)...)
-					retryCmd.Dir = validComposeDir
-					retryOut, retryErr := retryCmd.CombinedOutput()
+					retryCmd, retryPlanErr := composeProjectCommandWithFile(compProj, validComposeDir, composeCandidate, "up", "-d", "--no-deps", "--force-recreate", compService)
+					var retryOut []byte
+					retryErr := retryPlanErr
+					if retryErr == nil {
+						retryOut, retryErr = retryCmd.CombinedOutput()
+					}
+
 					if retryErr == nil {
 						recreated = true
 						_ = exec.Command("docker", "rm", "-f", backupName).Run()
@@ -2427,9 +2421,13 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 			backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
 			_ = exec.Command("docker", "stop", detail.ID).Run()
 			if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
-				upCmd := exec.Command("docker", "compose", "--profile", "all", "--profile", "*", "-f", composeFilePath, "up", "-d", "--force-recreate")
-				upCmd.Dir = destDir
-				upOut, upErr := upCmd.CombinedOutput()
+				upCmd, upPlanErr := composeProjectCommandWithFile(cname, destDir, composeFilePath, "up", "-d", "--no-deps", "--force-recreate")
+				var upOut []byte
+				upErr := upPlanErr
+				if upErr == nil {
+					upOut, upErr = upCmd.CombinedOutput()
+				}
+
 				if upErr == nil {
 					recreated = true
 					_ = exec.Command("docker", "rm", "-f", backupName).Run()

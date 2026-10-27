@@ -311,7 +311,13 @@ func (s *DockerRunService) executeAsCompose(jobID int, parsed *ParsedDockerRun, 
 	s.appendLine(jobID, fmt.Sprintf("[STEP] Registered project '%s' (ID: %d)", parsed.ContainerName, projectID))
 	s.appendLine(jobID, "[STEP] Executing: docker compose up -d")
 
-	cmd := exec.Command("docker", "compose", "-p", parsed.ContainerName, "--project-directory", projDir, "up", "-d")
+	cmd, err := composeProjectCommand(parsed.ContainerName, projDir, "up", "-d")
+	if err != nil {
+		s.appendLine(jobID, "[ERROR] "+err.Error())
+		s.markDone(jobID, 1, err.Error())
+		return
+	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		s.appendLine(jobID, "[ERROR] Pipe error: "+err.Error())
