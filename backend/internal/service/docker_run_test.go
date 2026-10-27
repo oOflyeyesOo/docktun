@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -135,5 +137,39 @@ func TestGenerateComposeYAML_NamedVolumesAndPrivileged(t *testing.T) {
 	}
 	if strings.Contains(yaml, "name: /var/run/docker.sock") {
 		t.Errorf("bind mount /var/run/docker.sock should not be declared in top-level volumes, got:\n%s", yaml)
+	}
+}
+
+func TestLaunchNameCollisionNeverDeletesOrStartsContainers(t *testing.T) {
+	for _, mode := range []string{"compose", "direct"} {
+		svc := &DockerRunService{jobs: make(map[int]*DockerRunJob)}
+		calls := 0
+		svc.runDocker = func(ctx context.Context, args ...string) ([]byte, error) {
+			calls++
+			if strings.Join(args, " ") != "container inspect existing-app" {
+				t.Fatalf("launch mutated existing resources: %v", args)
+			}
+			return []byte(`[{"Id":"existing"}]`), nil
+		}
+		job, err := svc.StartRun("docker run --name existing-app alpine", mode, false, false, "", nil)
+		if err == nil || !strings.Contains(err.Error(), "already exists") || job != nil || len(svc.jobs) != 0 || calls != 1 {
+			t.Fatalf("collision started a job: %+v %v", job, err)
+		}
+	}
+}
+
+func TestNameCheckDistinguishesMissingContainerFromUnavailableDaemon(t *testing.T) {
+	svc := &DockerRunService{}
+	for _, message := range []string{"No such container: new-app", "No such object: new-app"} {
+		svc.runDocker = func(context.Context, ...string) ([]byte, error) { return nil, fmt.Errorf("%s", message) }
+		if err := svc.checkContainerNameAvailable("new-app"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc.runDocker = func(context.Context, ...string) ([]byte, error) {
+		return nil, fmt.Errorf("Cannot connect to daemon: no such file or directory")
+	}
+	if err := svc.checkContainerNameAvailable("new-app"); err == nil {
+		t.Fatal("daemon failure treated as a free name")
 	}
 }

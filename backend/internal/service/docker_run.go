@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -55,6 +56,7 @@ type DockerRunService struct {
 	mu          sync.RWMutex
 	jobs        map[int]*DockerRunJob
 	nextID      int
+	runDocker   func(context.Context, ...string) ([]byte, error)
 }
 
 func defaultDockerNetwork() string {
@@ -132,18 +134,27 @@ func (s *DockerRunService) markDone(id int, exitCode int, errMsg string) {
 	s.mu.Unlock()
 }
 
-func (s *DockerRunService) removeConflictingContainer(jobID int, name string) {
-	if name == "" || name == "docktun" || name == "docktun-cloudflared" || isAuxiliaryDocktunService(name, "") || isDocktunContainer(name, "") {
-		return
+// Launching an app must never silently remove an existing container. Updates
+// have their own explicit action with rollback and preserved configuration.
+func (s *DockerRunService) checkContainerNameAvailable(name string) error {
+	if name == "" {
+		return nil
 	}
-	if err := exec.Command("docker", "inspect", name).Run(); err == nil {
-		s.appendLine(jobID, fmt.Sprintf("[STEP] Existing container '%s' detected. Removing to allow replacement...", name))
-		if out, rmErr := exec.Command("docker", "rm", "-f", name).CombinedOutput(); rmErr != nil {
-			s.appendLine(jobID, fmt.Sprintf("[WARN] Failed to remove conflicting container '%s': %s", name, strings.TrimSpace(string(out))))
-		} else {
-			s.appendLine(jobID, fmt.Sprintf("[STEP] Removed previous container '%s'", name))
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	run := s.runDocker
+	if run == nil {
+		run = providerDocker
 	}
+	_, err := run(ctx, "container", "inspect", name)
+	if err == nil {
+		return fmt.Errorf("container %q already exists; choose a different name or use its existing update/redeploy action", name)
+	}
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "no such container") || strings.Contains(message, "no such object") {
+		return nil
+	}
+	return fmt.Errorf("could not check container name %q: %w", name, err)
 }
 
 func (s *DockerRunService) StartRun(rawCmd string, mode string, connectCloudflared bool, createProject bool, customProjectName string, onDone func(string)) (*DockerRunJob, error) {
@@ -159,6 +170,10 @@ func (s *DockerRunService) StartRun(rawCmd string, mode string, connectCloudflar
 
 	if customProjectName != "" {
 		parsed.ContainerName = customProjectName
+	}
+
+	if err := s.checkContainerNameAvailable(parsed.ContainerName); err != nil {
+		return nil, err
 	}
 
 	if connectCloudflared && parsed.Network == "" {
@@ -234,9 +249,6 @@ func (s *DockerRunService) executeAsCompose(jobID int, parsed *ParsedDockerRun, 
 			}
 		}
 	}
-
-	// Remove unmanaged container with the same name if one exists
-	s.removeConflictingContainer(jobID, parsed.ContainerName)
 
 	s.appendLine(jobID, fmt.Sprintf("[STEP] Preparing Compose stack for '%s'...", parsed.ContainerName))
 
@@ -450,9 +462,6 @@ func (s *DockerRunService) executeDirect(jobID int, parsed *ParsedDockerRun, raw
 		}
 	}
 
-	// Remove unmanaged container with the same name if one exists
-	s.removeConflictingContainer(jobID, parsed.ContainerName)
-
 	// Pre-create host directories for bind mounts and pre-create named volumes
 	for _, vol := range parsed.Volumes {
 		src := extractVolumeSource(vol)
@@ -570,11 +579,11 @@ func ParseDockerRunCommand(raw string) (*ParsedDockerRun, error) {
 		"-u": true, "--user": true,
 		"-w": true, "--workdir": true,
 		"-h": true, "--hostname": true,
-		"--platform":   true,
-		"--pull":       true,
-		"-l":           true, "--label": true,
-		"--cpus":       true,
-		"-m":           true, "--memory": true,
+		"--platform": true,
+		"--pull":     true,
+		"-l":         true, "--label": true,
+		"--cpus": true,
+		"-m":     true, "--memory": true,
 		"--shm-size":   true,
 		"--entrypoint": true,
 		"--dns":        true,
