@@ -2,6 +2,8 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -17,20 +19,38 @@ func New(path string) (*DB, error) {
 		return nil, err
 	}
 
-	conn, err := sql.Open("sqlite", path)
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	uriPath := filepath.ToSlash(absolute)
+	if filepath.VolumeName(absolute) != "" {
+		uriPath = "/" + uriPath
+	}
+	uri := url.URL{Scheme: "file", Path: uriPath}
+	parameters := url.Values{"_pragma": {
+		"busy_timeout=5000", "foreign_keys=ON", "synchronous=NORMAL",
+		"cache_size=-20000", "temp_store=MEMORY",
+	}}
+	uri.RawQuery = parameters.Encode()
+	dsn := uri.String()
+	if path == ":memory:" {
+		dsn = "file::memory:?" + parameters.Encode()
+	}
+	// Driver parameters are applied when each pooled connection is opened.
+	conn, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
 
-	conn.Exec("PRAGMA journal_mode=WAL")
-	conn.Exec("PRAGMA foreign_keys=ON")
-	conn.Exec("PRAGMA synchronous=NORMAL")
-	conn.Exec("PRAGMA cache_size=-20000")
-	conn.Exec("PRAGMA temp_store=MEMORY")
-	conn.Exec("PRAGMA busy_timeout=5000")
+	if _, err := conn.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("enable SQLite WAL: %w", err)
+	}
 
 	d := &DB{conn}
 	if err := d.migrate(); err != nil {
+		conn.Close()
 		return nil, err
 	}
 	return d, nil
