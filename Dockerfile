@@ -1,7 +1,7 @@
 # ==============================================================================
 # Stage 1: Build Vue 3 Frontend Assets
 # ==============================================================================
-FROM node:24-alpine AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend-builder
 WORKDIR /app
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
 RUN corepack enable && corepack prepare pnpm@11.25.0 --activate && pnpm install --frozen-lockfile
@@ -11,12 +11,14 @@ RUN pnpm run build
 # ==============================================================================
 # Stage 2: Compile Pure Go Backend Server
 # ==============================================================================
-FROM golang:1.27-alpine AS backend-builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS backend-builder
 WORKDIR /app
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /server ./cmd/server
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /server ./cmd/server
 
 # ==============================================================================
 # Stage 3: Unified DockTun Minimal Runtime (No Nginx, Pure Go + Alpine)
