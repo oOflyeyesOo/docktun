@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { getPrimaryPort } from '../lib/containerPorts.mjs'
+import { getPrimaryPort, cleanContainerName, getMdnsPortSuffix } from '../lib/containerPorts.mjs'
 import ContainerExposure from "../components/ContainerExposure.vue"
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -954,6 +954,19 @@ const showGitSettings = ref(false)
 const stackActionLoading = ref<Record<number, boolean>>({})
 const stackOutputModal = ref<{ title: string; lines: string[]; done: boolean; projectId: number } | null>(null)
 let stackPollTimer: any = null
+
+const stackOutputFailed = computed(() => {
+  if (!stackOutputModal.value || !stackOutputModal.value.lines) return false
+  return stackOutputModal.value.lines.some((l) =>
+    l.includes('[ERROR]') ||
+    l.includes('unable to prepare context') ||
+    l.includes('exit status') ||
+    l.includes('Bind for') ||
+    l.includes('failed to set up container networking') ||
+    l.toLowerCase().includes('error response from daemon') ||
+    l.toLowerCase().includes('failed to')
+  )
+})
 
 const showDeployPromptModal = ref<{ projectId: number; projectName: string } | null>(null)
 const deployBranchName = ref('main')
@@ -2674,6 +2687,28 @@ onUnmounted(() => {
 
             <!-- Local Address (Default) and Public Ingress if Exposed -->
             <div class="flex flex-wrap items-center gap-3 pt-1 text-xs">
+              <div v-if="container.running" class="flex items-center gap-1.5 font-mono">
+                <span class="text-slate-500 font-sans text-[11px]">Local:</span>
+                <a
+                  :href="`http://${cleanContainerName(container.name)}.local${getMdnsPortSuffix(container.ports)}`"
+                  target="_blank"
+                  rel="noopener"
+                  @click.stop
+                  class="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-700 hover:underline font-semibold"
+                >
+                  <span>http://{{ cleanContainerName(container.name) }}.local{{ getMdnsPortSuffix(container.ports) }}</span>
+                  <ExternalLink class="h-3 w-3" />
+                </a>
+                <button
+                  @click.stop="copyToClipboard('mdns-' + container.id, `http://${cleanContainerName(container.name)}.local${getMdnsPortSuffix(container.ports)}`)"
+                  class="text-slate-400 hover:text-slate-600 ml-0.5"
+                  title="Copy local .local URL"
+                >
+                  <Check v-if="copiedKey === 'mdns-' + container.id" class="h-3 w-3 text-emerald-600" />
+                  <Copy v-else class="h-3 w-3" />
+                </button>
+              </div>
+
               <div v-if="container.exposure_mode === 'public' && container.hostname" class="flex items-center gap-1.5 font-mono">
                 <span class="text-slate-500 font-sans text-[11px]">Public:</span>
                 <a
@@ -3211,12 +3246,68 @@ onUnmounted(() => {
           <!-- TAB 2: ACCESS & NETWORKS                       -->
           <!-- ============================================== -->
           <div v-else-if="selectedTab === 'access'" class="space-y-5">
-            <div class="cyber-card space-y-2">
-              <h3 class="text-sm font-semibold">Local networking</h3>
-              <p class="text-sm text-slate-600">Published ports: <span class="font-mono">{{ selectedContainer.ports || 'None' }}</span></p>
-              <p class="text-sm text-slate-600">Docker networks: {{ selectedContainer.networks?.join(', ') || 'None' }}</p>
-              <p class="text-xs text-slate-500">Docker service names resolve within shared Docker networks. LAN access depends on published ports or a configured local proxy.</p>
+            <!-- 1. PRIMARY LOCAL ACCESS (mDNS .local) -->
+            <div class="cyber-card space-y-3.5 border-indigo-200 bg-gradient-to-br from-indigo-50/60 to-white">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-indigo-100 pb-3">
+                <div class="flex items-center gap-2">
+                  <Wifi class="h-4 w-4 text-indigo-600" />
+                  <div>
+                    <h3 class="text-sm font-bold text-slate-900">Local LAN Access (mDNS)</h3>
+                    <p class="text-xs text-slate-500">
+                      Reach this container directly from any computer, phone, or tablet on your Wi-Fi with zero configuration.
+                    </p>
+                  </div>
+                </div>
+                <span class="rounded bg-indigo-100 px-2 py-0.5 text-[10px] font-mono font-semibold text-indigo-700">
+                  Automatic .local
+                </span>
+              </div>
+
+              <!-- Local URL Box -->
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-indigo-100 bg-white p-3.5 shadow-xs">
+                <div class="space-y-0.5">
+                  <div class="text-[10px] uppercase tracking-wider font-semibold text-indigo-600">Local LAN Address</div>
+                  <div class="font-mono text-sm font-bold text-slate-900">
+                    http://{{ cleanContainerName(selectedContainer.name) }}.local{{ getMdnsPortSuffix(selectedContainer.ports) }}
+                  </div>
+                </div>
+
+                <div class="flex items-center gap-2">
+                  <a
+                    :href="`http://${cleanContainerName(selectedContainer.name)}.local${getMdnsPortSuffix(selectedContainer.ports)}`"
+                    target="_blank"
+                    rel="noopener"
+                    class="cyber-btn flex items-center gap-1.5 text-xs text-white bg-indigo-600 hover:bg-indigo-700"
+                  >
+                    <span>Open</span>
+                    <ExternalLink class="h-3 w-3" />
+                  </a>
+                  <button
+                    @click="copyToClipboard('mdns', `http://${cleanContainerName(selectedContainer.name)}.local${getMdnsPortSuffix(selectedContainer.ports)}`)"
+                    class="cyber-btn-secondary text-xs flex items-center gap-1.5"
+                    title="Copy local mDNS address"
+                  >
+                    <Check v-if="copiedKey === 'mdns'" class="h-3 w-3 text-emerald-600" />
+                    <Copy v-else class="h-3 w-3" />
+                    <span>{{ copiedKey === 'mdns' ? 'Copied' : 'Copy' }}</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Internal Network & Ports Info -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-xs text-slate-600">
+                <div class="rounded border border-slate-200 bg-slate-50/80 p-2">
+                  <span class="text-slate-500 text-[11px] block">Published host ports:</span>
+                  <span class="font-mono font-semibold text-slate-800">{{ selectedContainer.ports || 'None' }}</span>
+                </div>
+                <div class="rounded border border-slate-200 bg-slate-50/80 p-2">
+                  <span class="text-slate-500 text-[11px] block">Docker networks:</span>
+                  <span class="font-mono font-semibold text-slate-800 truncate block">{{ selectedContainer.networks?.join(', ') || 'bridge' }}</span>
+                </div>
+              </div>
             </div>
+
+            <!-- 2. REMOTE EXPOSURE (Cloudflare, Tailscale, WireGuard) -->
             <ContainerExposure :container="selectedContainer" :settings="getExpose(selectedContainer.id)" :saving="exposeSaving[selectedContainer.id]" :message="exposeMsg[selectedContainer.id]" @save="saveExposure(selectedContainer)" />
           </div>
 
@@ -4412,8 +4503,8 @@ onUnmounted(() => {
         </div>
 
         <div class="flex items-center justify-between text-xs">
-          <span :class="stackOutputModal.done ? 'text-emerald-600' : 'text-amber-600'">
-            {{ stackOutputModal.done ? '✓ Completed' : '● Processing...' }}
+          <span :class="stackOutputFailed ? 'text-rose-600 font-semibold' : (stackOutputModal.done ? 'text-emerald-600' : 'text-amber-600')">
+            {{ !stackOutputModal.done ? '● Processing...' : (stackOutputFailed ? '✗ Action Failed' : '✓ Completed') }}
           </span>
           <button @click="stackOutputModal = null" class="cyber-btn text-xs">Close</button>
         </div>

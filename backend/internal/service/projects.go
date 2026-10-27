@@ -348,7 +348,9 @@ func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
 			break
 		}
 	}
-	cmd.Wait()
+	if err := cmd.Wait(); err != nil {
+		s.appendOutput(id, "[ERROR] compose command exited with error: "+err.Error())
+	}
 }
 
 func (s *Projects) runGit(path string, args ...string) (string, error) {

@@ -22,7 +22,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /server ./cmd/server
 # Stage 3: Unified DockTun Minimal Runtime (No Nginx, Pure Go + Alpine)
 # ==============================================================================
 FROM alpine:3.23
-RUN apk --no-cache add ca-certificates docker-cli docker-cli-compose git tzdata curl && \
+RUN apk --no-cache add ca-certificates docker-cli docker-cli-compose docker-cli-buildx git tzdata curl && \
     git config --global --add safe.directory '*'
 
 WORKDIR /app
