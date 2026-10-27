@@ -305,29 +305,51 @@ func readDiskSpace() (total int64, used int64, free int64, pct float64) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "df", "-k", checkDir)
+	// -P enforces POSIX single-line output format, avoiding line wraps on long mount names
+	cmd := exec.CommandContext(ctx, "df", "-P", "-k", checkDir)
 	out, err := cmd.Output()
 	if err != nil {
-		cmdRoot := exec.CommandContext(ctx, "df", "-k", "/")
+		cmdRoot := exec.CommandContext(ctx, "df", "-P", "-k", "/")
 		out, err = cmdRoot.Output()
 	}
 
 	if err == nil {
-		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-		if len(lines) >= 2 {
-			fields := strings.Fields(lines[len(lines)-1])
-			if len(fields) >= 5 {
-				totalK, _ := strconv.ParseInt(fields[1], 10, 64)
-				usedK, _ := strconv.ParseInt(fields[2], 10, 64)
-				freeK, _ := strconv.ParseInt(fields[3], 10, 64)
+		return parseDiskOutput(string(out))
+	}
+	return
+}
 
-				total = totalK * 1024
-				used = usedK * 1024
-				free = freeK * 1024
-				if total > 0 {
-					pct = float64(used) / float64(total) * 100.0
-				}
-			}
+func parseDiskOutput(out string) (total int64, used int64, free int64, pct float64) {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) < 2 {
+		return 0, 0, 0, 0
+	}
+	fields := strings.Fields(lines[len(lines)-1])
+	if len(fields) < 3 {
+		return 0, 0, 0, 0
+	}
+
+	var totalIdx, usedIdx, freeIdx int
+	if _, err := strconv.ParseInt(fields[0], 10, 64); err == nil {
+		// Long filesystem name wrapped onto previous line; fields[0] is total blocks
+		totalIdx, usedIdx, freeIdx = 0, 1, 2
+	} else if len(fields) >= 4 {
+		// Standard layout: fields[0] is filesystem device name, fields[1] is total blocks
+		totalIdx, usedIdx, freeIdx = 1, 2, 3
+	} else {
+		return 0, 0, 0, 0
+	}
+
+	if freeIdx < len(fields) {
+		totalK, _ := strconv.ParseInt(fields[totalIdx], 10, 64)
+		usedK, _ := strconv.ParseInt(fields[usedIdx], 10, 64)
+		freeK, _ := strconv.ParseInt(fields[freeIdx], 10, 64)
+
+		total = totalK * 1024
+		used = usedK * 1024
+		free = freeK * 1024
+		if total > 0 {
+			pct = float64(used) / float64(total) * 100.0
 		}
 	}
 	return

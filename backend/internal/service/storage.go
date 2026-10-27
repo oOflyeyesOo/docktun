@@ -195,10 +195,11 @@ func (s *StorageService) getHostDisk() DiskSpace {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "df", "-k", checkDir)
+	// -P enforces POSIX single-line output format, avoiding line wraps on long mount names
+	cmd := exec.CommandContext(ctx, "df", "-P", "-k", checkDir)
 	out, err := cmd.Output()
 	if err != nil {
-		cmdRoot := exec.CommandContext(ctx, "df", "-k", "/")
+		cmdRoot := exec.CommandContext(ctx, "df", "-P", "-k", "/")
 		out, err = cmdRoot.Output()
 	}
 
@@ -206,21 +207,32 @@ func (s *StorageService) getHostDisk() DiskSpace {
 		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 		if len(lines) >= 2 {
 			fields := strings.Fields(lines[len(lines)-1])
-			if len(fields) >= 5 {
-				totalK, _ := strconv.ParseInt(fields[1], 10, 64)
-				usedK, _ := strconv.ParseInt(fields[2], 10, 64)
-				freeK, _ := strconv.ParseInt(fields[3], 10, 64)
+			if len(fields) >= 3 {
+				var totalIdx, usedIdx, freeIdx int
+				if _, parseErr := strconv.ParseInt(fields[0], 10, 64); parseErr == nil {
+					// Long filesystem name wrapped onto previous line; fields[0] is total blocks
+					totalIdx, usedIdx, freeIdx = 0, 1, 2
+				} else if len(fields) >= 4 {
+					// Standard layout: fields[0] is filesystem device name, fields[1] is total blocks
+					totalIdx, usedIdx, freeIdx = 1, 2, 3
+				}
 
-				ds.TotalBytes = totalK * 1024
-				ds.UsedBytes = usedK * 1024
-				ds.FreeBytes = freeK * 1024
+				if freeIdx < len(fields) {
+					totalK, _ := strconv.ParseInt(fields[totalIdx], 10, 64)
+					usedK, _ := strconv.ParseInt(fields[usedIdx], 10, 64)
+					freeK, _ := strconv.ParseInt(fields[freeIdx], 10, 64)
 
-				ds.TotalStr = formatBytes(ds.TotalBytes)
-				ds.UsedStr = formatBytes(ds.UsedBytes)
-				ds.FreeStr = formatBytes(ds.FreeBytes)
+					ds.TotalBytes = totalK * 1024
+					ds.UsedBytes = usedK * 1024
+					ds.FreeBytes = freeK * 1024
 
-				if ds.TotalBytes > 0 {
-					ds.Percent = float64(ds.UsedBytes) / float64(ds.TotalBytes) * 100.0
+					ds.TotalStr = formatBytes(ds.TotalBytes)
+					ds.UsedStr = formatBytes(ds.UsedBytes)
+					ds.FreeStr = formatBytes(ds.FreeBytes)
+
+					if ds.TotalBytes > 0 {
+						ds.Percent = float64(ds.UsedBytes) / float64(ds.TotalBytes) * 100.0
+					}
 				}
 			}
 		}
