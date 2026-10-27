@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -33,11 +35,12 @@ type FileInfo struct {
 }
 
 type Projects struct {
-	db       *db.DB
-	selfPath string
-	mu       sync.Mutex
-	outMu    sync.RWMutex
-	outputs  map[int]*projectOutput
+	db        *db.DB
+	selfPath  string
+	mu        sync.Mutex
+	outMu     sync.RWMutex
+	outputs   map[int]*projectOutput
+	runDocker func(context.Context, ...string) ([]byte, error)
 }
 
 type projectOutput struct {
@@ -46,7 +49,7 @@ type projectOutput struct {
 }
 
 func NewProjects(database *db.DB, selfPath string) *Projects {
-	return &Projects{db: database, selfPath: selfPath, outputs: make(map[int]*projectOutput)}
+	return &Projects{db: database, selfPath: selfPath, outputs: make(map[int]*projectOutput), runDocker: providerDocker}
 }
 
 func (s *Projects) GetOutput(id int) ([]string, bool) {
@@ -215,7 +218,12 @@ func (s *Projects) isSelf(path string) bool {
 	return strings.TrimRight(path, "/") == strings.TrimRight(s.selfPath, "/")
 }
 
+// DeleteProject removes stack resources by their exact Compose project label.
+// Compose working_dir labels refer to the daemon host, not necessarily a path
+// accessible inside DockTun. Never depend on that path to remove resources.
 func (s *Projects) DeleteProject(id int, down bool, removeFiles bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	p, err := s.GetByID(id)
 	if err != nil {
 		return err
@@ -223,27 +231,127 @@ func (s *Projects) DeleteProject(id int, down bool, removeFiles bool) error {
 	if s.isSelf(p.Path) {
 		return fmt.Errorf("cannot delete DockTun itself as a project")
 	}
-
-	if down && p.Path != "" {
-		cmdArgs := []string{"compose"}
-		if p.Name != "" {
-			cmdArgs = append(cmdArgs, "-p", p.Name)
-		}
-		cmdArgs = append(cmdArgs, "--project-directory", p.Path, "down")
-		cmd := exec.Command("docker", cmdArgs...)
-		cmd.Dir = p.Path
-		_ = cmd.Run()
-	}
-
-	if removeFiles && p.Path != "" && !s.isSelf(p.Path) {
-		cleanPath := filepath.Clean(p.Path)
-		if cleanPath != "/" && cleanPath != "." && cleanPath != "./projects" && cleanPath != "/opt/projects" {
-			_ = os.RemoveAll(cleanPath)
+	if removeFiles {
+		if err := s.validateProjectRemoval(p.Path); err != nil {
+			return err
 		}
 	}
-
+	if down {
+		if err := s.removeStackResources(p.Name); err != nil {
+			return err
+		}
+	}
+	if removeFiles {
+		if err := os.RemoveAll(filepath.Clean(p.Path)); err != nil {
+			return fmt.Errorf("containers removed but project files could not be deleted: %w", err)
+		}
+	}
 	_, err = s.db.Exec("DELETE FROM projects WHERE id = ?", id)
 	return err
+}
+
+func (s *Projects) removeStackResources(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("stack has no Compose project name")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	filter := "label=com.docker.compose.project=" + name
+	out, err := s.runDocker(ctx, "ps", "-aq", "--no-trunc", "--filter", filter)
+	if err != nil {
+		return fmt.Errorf("could not find stack containers: %w", err)
+	}
+	ids := strings.Fields(string(out))
+	// Refuse to remove the app even when an imported stack has an incorrect path.
+	if len(ids) > 0 {
+		out, err = s.runDocker(ctx, append([]string{"inspect"}, ids...)...)
+		if err != nil {
+			return fmt.Errorf("could not verify stack containers: %w", err)
+		}
+		var containers []struct {
+			ID     string `json:"Id"`
+			Name   string `json:"Name"`
+			Config struct {
+				Labels map[string]string `json:"Labels"`
+			} `json:"Config"`
+		}
+		if json.Unmarshal(out, &containers) != nil || len(containers) != len(ids) {
+			return fmt.Errorf("invalid stack container inspection")
+		}
+		hostname, _ := os.Hostname()
+		selfName := os.Getenv("DOCKTUN_CONTAINER")
+		if selfName == "" {
+			selfName = "docktun"
+		}
+		for _, c := range containers {
+			if c.Config.Labels["com.docker.compose.project"] != name {
+				return fmt.Errorf("container does not belong to selected stack")
+			}
+			if c.ID == hostname || strings.HasPrefix(c.ID, hostname) && len(hostname) >= 12 || strings.TrimPrefix(c.Name, "/") == selfName {
+				return fmt.Errorf("cannot delete the stack running DockTun")
+			}
+		}
+		if _, err := s.runDocker(ctx, append([]string{"stop", "--time", "10"}, ids...)...); err != nil {
+			return fmt.Errorf("could not stop stack containers: %w", err)
+		}
+		if _, err := s.runDocker(ctx, append([]string{"rm"}, ids...)...); err != nil {
+			return fmt.Errorf("could not remove stack containers: %w", err)
+		}
+	}
+	out, err = s.runDocker(ctx, "network", "ls", "-q", "--filter", filter)
+	if err != nil {
+		return fmt.Errorf("could not find stack networks: %w", err)
+	}
+	for _, network := range strings.Fields(string(out)) {
+		if _, err := s.runDocker(ctx, "network", "rm", network); err != nil {
+			return fmt.Errorf("could not remove stack network: %w", err)
+		}
+	}
+	// No -v: named and anonymous volumes, images and external networks survive.
+	return nil
+}
+
+func (s *Projects) validateProjectRemoval(projectPath string) error {
+	if strings.TrimSpace(projectPath) == "" {
+		return fmt.Errorf("stack has no accessible project directory; leave file removal unchecked")
+	}
+	target, err := filepath.Abs(projectPath)
+	if err != nil {
+		return err
+	}
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return fmt.Errorf("project directory is not accessible inside DockTun; leave file removal unchecked: %w", err)
+	}
+	if resolved != target {
+		return fmt.Errorf("refusing to delete a project directory through a symbolic link")
+	}
+	// File cleanup is limited to mounted/managed projects, never a host path
+	// guessed from container labels. Ancestors of DockTun are protected too.
+	roots := []string{"/opt/projects", "./projects"}
+	allowed := false
+	for _, root := range roots {
+		base, _ := filepath.Abs(root)
+		rel, err := filepath.Rel(base, target)
+		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return fmt.Errorf("file removal is only available for directories inside DockTun's projects folder; leave it unchecked to remove containers only")
+	}
+	if s.selfPath != "" {
+		self, _ := filepath.Abs(s.selfPath)
+		rel, err := filepath.Rel(target, self)
+		if err == nil && (rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))) {
+			return fmt.Errorf("cannot delete DockTun's directory or its parent")
+		}
+	}
+	info, err := os.Stat(target)
+	if err != nil || !info.IsDir() {
+		return fmt.Errorf("project path is not a directory")
+	}
+	return nil
 }
 
 func (s *Projects) Delete(id int) error {
@@ -597,4 +705,3 @@ func (s *Projects) GetEnvFile(id int) (string, error) {
 func (s *Projects) SaveEnvFile(id int, content string) error {
 	return s.SaveFile(id, ".env", content)
 }
-
