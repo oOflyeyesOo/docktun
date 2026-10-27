@@ -53,6 +53,21 @@ type cfDNSRecord struct {
 	Proxied bool   `json:"proxied"`
 }
 
+func formatCfErrorMessage(errors []cfApiError, defaultMsg, hostname string) string {
+	msg := defaultMsg
+	if len(errors) > 0 && errors[0].Message != "" {
+		msg = errors[0].Message
+	}
+	if strings.Contains(strings.ToLower(msg), "authentication failed") {
+		note := " (Verify that your Cloudflare API Token has 'Zone:DNS:Edit' permissions at dash.cloudflare.com/profile/api-tokens. A Tunnel Connector Token starting with eyJ... cannot manage DNS records)"
+		if hostname != "" {
+			note = fmt.Sprintf(" (Verify that your Cloudflare API Token has 'Zone:DNS:Edit' permissions for %s at dash.cloudflare.com/profile/api-tokens. A Tunnel Connector Token starting with eyJ... cannot manage DNS records)", hostname)
+		}
+		msg += note
+	}
+	return msg
+}
+
 func NewCloudflareAPI(db *db.DB) *CloudflareAPI {
 	return &CloudflareAPI{
 		db: db,
@@ -250,6 +265,11 @@ func (s *CloudflareAPI) GetCredentials() CloudflareCredentials {
 
 // SaveCredentials persists Cloudflare credentials into SQLite
 func (s *CloudflareAPI) SaveCredentials(token, accountID, zoneID string) error {
+	token = strings.TrimSpace(token)
+	if strings.HasPrefix(token, "eyJh") || strings.HasPrefix(token, "eyJhbGci") {
+		return fmt.Errorf("the token provided is a Cloudflare Tunnel Connector Token (starts with eyJ...), which connects the cloudflared daemon but cannot manage DNS records via REST API. Please save this token under 'Tunnel connector token' at the top of the Cloudflare settings, and use a Cloudflare User API Token (from dash.cloudflare.com/profile/api-tokens with Zone:DNS:Edit permissions) here")
+	}
+
 	if s.db == nil {
 		return fmt.Errorf("database not initialized")
 	}
@@ -452,6 +472,9 @@ func (s *CloudflareAPI) ForceReplaceDNSRecord(hostname, tunnelID string) (*DNSRe
 	if creds.APIToken == "" {
 		return nil, fmt.Errorf("Cloudflare API Token required to replace DNS records")
 	}
+	if strings.HasPrefix(creds.APIToken, "eyJh") || strings.HasPrefix(creds.APIToken, "eyJhbGci") {
+		return nil, fmt.Errorf("the configured API token is a Tunnel Connector Token (JWT starting with eyJ...), which connects the tunnel daemon but cannot edit DNS records. Please create a Cloudflare User API Token at dash.cloudflare.com/profile/api-tokens with 'Zone:DNS:Edit' permissions, or configure '%s' directly in Cloudflare Zero Trust under Public Hostnames", cleanHost)
+	}
 
 	zoneID, err := s.FindZoneID(creds.APIToken, cleanHost)
 	if err != nil || zoneID == "" {
@@ -517,10 +540,7 @@ func (s *CloudflareAPI) ForceReplaceDNSRecord(hostname, tunnelID string) (*DNSRe
 	var postCfResp cfApiResponse
 	_ = json.NewDecoder(postResp.Body).Decode(&postCfResp)
 	if !postCfResp.Success {
-		errMsg := "failed to create replacement record"
-		if len(postCfResp.Errors) > 0 {
-			errMsg = postCfResp.Errors[0].Message
-		}
+		errMsg := formatCfErrorMessage(postCfResp.Errors, "failed to create replacement record", cleanHost)
 		return nil, fmt.Errorf("cloudflare dns create: %s", errMsg)
 	}
 
@@ -560,6 +580,9 @@ func (s *CloudflareAPI) SyncDNSRecord(hostname, tunnelID string) error {
 
 	// 1. If API Token is available, use Cloudflare v4 REST API
 	if creds.APIToken != "" {
+		if strings.HasPrefix(creds.APIToken, "eyJh") || strings.HasPrefix(creds.APIToken, "eyJhbGci") {
+			return fmt.Errorf("the configured API token is a Tunnel Connector Token (JWT starting with eyJ...), which connects the tunnel daemon but cannot edit DNS records. Please create a Cloudflare User API Token at dash.cloudflare.com/profile/api-tokens with 'Zone:DNS:Edit' permissions, or configure '%s' directly in Cloudflare Zero Trust under Public Hostnames", cleanHost)
+		}
 		// Resolve zone dynamically for cleanHost first so multi-domain accounts work properly
 		zoneID, err := s.FindZoneID(creds.APIToken, cleanHost)
 		if err != nil || zoneID == "" {
@@ -669,10 +692,7 @@ func (s *CloudflareAPI) SyncDNSRecord(hostname, tunnelID string) error {
 				var postCfResp cfApiResponse
 				_ = json.NewDecoder(postResp.Body).Decode(&postCfResp)
 				if !postCfResp.Success {
-					errMsg := "failed to recreate dns record"
-					if len(postCfResp.Errors) > 0 {
-						errMsg = postCfResp.Errors[0].Message
-					}
+					errMsg := formatCfErrorMessage(postCfResp.Errors, "failed to recreate dns record", cleanHost)
 					return fmt.Errorf("cloudflare dns recreate: %s", errMsg)
 				}
 
@@ -696,10 +716,7 @@ func (s *CloudflareAPI) SyncDNSRecord(hostname, tunnelID string) error {
 		var postCfResp cfApiResponse
 		_ = json.NewDecoder(postResp.Body).Decode(&postCfResp)
 		if !postCfResp.Success {
-			errMsg := "failed to create dns record"
-			if len(postCfResp.Errors) > 0 {
-				errMsg = postCfResp.Errors[0].Message
-			}
+			errMsg := formatCfErrorMessage(postCfResp.Errors, "failed to create dns record", cleanHost)
 			return fmt.Errorf("cloudflare dns create: %s", errMsg)
 		}
 
