@@ -1,7 +1,12 @@
 package handler
 
 import (
+	"context"
+	"docktun/internal/config"
 	"math"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 )
 
@@ -47,5 +52,46 @@ func TestParseDiskOutput(t *testing.T) {
 	tE, uE, fE, pE := parseDiskOutput("")
 	if tE != 0 || uE != 0 || fE != 0 || pE != 0 {
 		t.Fatalf("expected zeroes for empty input, got %d, %d, %d, %f", tE, uE, fE, pE)
+	}
+}
+
+func TestMetricsSkipsUnusedCloudflareAndReadsRunningTunnel(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Write([]byte("cloudflared_tunnel_total_requests 42\ncloudflared_tunnel_active_streams 3\n"))
+	}))
+	defer server.Close()
+	h := NewMetrics(&config.Config{MetricsAddr: server.URL}, nil)
+	resp := metricsResponse{ResponseCodes: make(map[string]int64)}
+	h.readTunnelMetrics(context.Background(), false, &resp)
+	if requests.Load() != 0 {
+		t.Fatal("unused provider was contacted")
+	}
+	h.readTunnelMetrics(context.Background(), true, &resp)
+	if requests.Load() != 1 || resp.TotalRequests != 42 || resp.ActiveConns != 3 {
+		t.Fatalf("running provider metrics missing: %+v", resp)
+	}
+}
+
+func TestMetricsRequestCancellationAndHTTPFailure(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("cloudflared_tunnel_total_requests 99"))
+	}))
+	defer server.Close()
+	h := NewMetrics(&config.Config{MetricsAddr: server.URL}, nil)
+	resp := metricsResponse{ResponseCodes: make(map[string]int64)}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	h.readTunnelMetrics(ctx, true, &resp)
+	if requests.Load() != 0 {
+		t.Fatal("canceled request reached metrics server")
+	}
+	h.readTunnelMetrics(context.Background(), true, &resp)
+	if resp.TotalRequests != 0 || resp.Raw != "" {
+		t.Fatal("HTTP error body interpreted as metrics")
 	}
 }
