@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -538,50 +539,54 @@ func maskToken(t string) string {
 	return "****" + t[len(t)-4:]
 }
 
-func (s *Projects) resolvePath(p Project, relPath string) (string, error) {
-	cleanBase := filepath.Clean(p.Path)
-	cleanRel := filepath.Clean("/" + filepath.ToSlash(relPath))
-	fullPath := filepath.Clean(filepath.Join(cleanBase, cleanRel))
-	rel, err := filepath.Rel(cleanBase, fullPath)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return "", fmt.Errorf("invalid path: outside project root")
-	}
-	return fullPath, nil
-}
-
-func (s *Projects) ListFiles(id int, relPath string) ([]FileInfo, error) {
+// Open a filesystem root so symlink resolution cannot escape the selected stack.
+// Only an explicit create/save operation may create a missing project directory.
+func (s *Projects) projectRoot(id int, create bool) (*os.Root, error) {
 	p, err := s.GetByID(id)
 	if err != nil {
 		return nil, err
 	}
-	targetDir, err := s.resolvePath(p, relPath)
+	if create {
+		if err := os.MkdirAll(p.Path, 0755); err != nil {
+			return nil, err
+		}
+	}
+	root, err := os.OpenRoot(p.Path)
+	if err != nil {
+		return nil, fmt.Errorf("project folder is unavailable inside DockTun; mount the stack folder before accessing files: %w", err)
+	}
+	return root, nil
+}
+
+func (s *Projects) ListFiles(id int, relPath string) ([]FileInfo, error) {
+	rel, err := transferPath(relPath)
 	if err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(targetDir)
+	root, err := s.projectRoot(id, false)
 	if err != nil {
-		return nil, fmt.Errorf("project directory is unavailable inside DockTun; mount the stack folder or create the requested directory explicitly: %w", err)
+		return nil, err
 	}
-
-	cleanBase := filepath.Clean(p.Path)
-	var files []FileInfo
+	defer root.Close()
+	directory, err := root.Open(rel)
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	entries, err := directory.ReadDir(-1)
+	if err != nil {
+		return nil, err
+	}
+	files := []FileInfo{}
 	for _, entry := range entries {
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
-		entryFullPath := filepath.Join(targetDir, entry.Name())
-		relEntry, _ := filepath.Rel(cleanBase, entryFullPath)
 		files = append(files, FileInfo{
-			Name:    entry.Name(),
-			Path:    filepath.ToSlash(relEntry),
-			IsDir:   entry.IsDir(),
-			Size:    info.Size(),
-			ModTime: info.ModTime().Format(time.RFC3339),
+			Name: entry.Name(), Path: filepath.ToSlash(filepath.Join(rel, entry.Name())),
+			IsDir: entry.IsDir(), Size: info.Size(), ModTime: info.ModTime().Format(time.RFC3339),
 		})
-	}
-	if files == nil {
-		files = []FileInfo{}
 	}
 	sort.Slice(files, func(i, j int) bool {
 		if files[i].IsDir != files[j].IsDir {
@@ -593,78 +598,93 @@ func (s *Projects) ListFiles(id int, relPath string) ([]FileInfo, error) {
 }
 
 func (s *Projects) GetFile(id int, relPath string) (string, error) {
-	p, err := s.GetByID(id)
+	rel, err := transferPath(relPath)
 	if err != nil {
 		return "", err
 	}
-	targetFile, err := s.resolvePath(p, relPath)
+	root, err := s.projectRoot(id, false)
 	if err != nil {
 		return "", err
 	}
-	stat, err := os.Stat(targetFile)
+	defer root.Close()
+	info, err := root.Stat(rel)
 	if err != nil {
 		return "", err
 	}
-	if stat.IsDir() {
-		return "", fmt.Errorf("path is a directory, not a file")
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("only regular project files can be edited")
 	}
-	if stat.Size() > 5*1024*1024 {
+	file, err := root.Open(rel)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	info, err = file.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("only regular project files can be edited")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 5*1024*1024+1))
+	if err != nil {
+		return "", err
+	}
+	if len(data) > 5*1024*1024 {
 		return "", fmt.Errorf("file is too large (> 5MB)")
-	}
-	data, err := os.ReadFile(targetFile)
-	if err != nil {
-		return "", err
 	}
 	return string(data), nil
 }
 
 func (s *Projects) SaveFile(id int, relPath string, content string) error {
-	p, err := s.GetByID(id)
+	rel, err := transferPath(relPath)
 	if err != nil {
 		return err
 	}
-	targetFile, err := s.resolvePath(p, relPath)
+	if rel == "." {
+		return fmt.Errorf("cannot replace project root directory")
+	}
+	root, err := s.projectRoot(id, true)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(targetFile), 0755); err != nil {
+	defer root.Close()
+	if err := root.MkdirAll(filepath.Dir(rel), 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(targetFile, []byte(content), 0644)
+	return root.WriteFile(rel, []byte(content), 0644)
 }
 
 func (s *Projects) DeleteFile(id int, relPath string) error {
-	p, err := s.GetByID(id)
+	rel, err := transferPath(relPath)
 	if err != nil {
 		return err
 	}
-	targetFile, err := s.resolvePath(p, relPath)
-	if err != nil {
-		return err
-	}
-	cleanBase := filepath.Clean(p.Path)
-	if targetFile == cleanBase {
+	if rel == "." {
 		return fmt.Errorf("cannot delete project root directory")
 	}
-	return os.RemoveAll(targetFile)
+	root, err := s.projectRoot(id, false)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.RemoveAll(rel)
 }
 
 func (s *Projects) CreateFile(id int, relPath string, isDir bool, content string) error {
-	p, err := s.GetByID(id)
+	if !isDir {
+		return s.SaveFile(id, relPath, content)
+	}
+	rel, err := transferPath(relPath)
 	if err != nil {
 		return err
 	}
-	targetPath, err := s.resolvePath(p, relPath)
+	root, err := s.projectRoot(id, true)
 	if err != nil {
 		return err
 	}
-	if isDir {
-		return os.MkdirAll(targetPath, 0755)
-	}
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(targetPath, []byte(content), 0644)
+	defer root.Close()
+	return root.MkdirAll(rel, 0755)
 }
 
 func (s *Projects) GetComposeFile(id int) (string, string, error) {
@@ -675,9 +695,9 @@ func (s *Projects) GetComposeFile(id int) (string, string, error) {
 	candidates := []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
 	for _, candidate := range candidates {
 		fullPath := filepath.Join(p.Path, candidate)
-		content, err := os.ReadFile(fullPath)
+		content, err := s.GetFile(id, candidate)
 		if err == nil {
-			return candidate, string(content), nil
+			return candidate, content, nil
 		}
 		if !os.IsNotExist(err) {
 			return "", "", fmt.Errorf("cannot read Compose file %s: %w", fullPath, err)
