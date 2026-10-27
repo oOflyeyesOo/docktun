@@ -500,3 +500,49 @@ func TestProjectFilesConfineSymlinksAndTraversal(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestProjectSettingsPreserveMaskedGitCredentials(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	svc := NewProjects(database, "")
+	project, err := svc.Create("example", t.TempDir(), "https://example.invalid/private", "owner", "original-secret-1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := svc.List()
+	if err != nil || len(list) != 1 {
+		t.Fatal("missing project")
+	}
+	if list[0].GitToken != "****1234" {
+		t.Fatal("expected masked API credential")
+	}
+	if err := svc.Update(project.ID, "renamed", project.Path, project.RepoURL, "new-user", list[0].GitToken); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := svc.GetByID(project.ID)
+	if err != nil || saved.GitToken != "original-secret-1234" || saved.Name != "renamed" || saved.GitUsername != "new-user" {
+		t.Fatal("settings save corrupted credential or metadata")
+	}
+	if err := svc.Update(project.ID, saved.Name, saved.Path, saved.RepoURL, saved.GitUsername, "replacement-secret-5678"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Update(project.ID, "stale name", saved.Path, saved.RepoURL, saved.GitUsername, list[0].GitToken); err == nil {
+		t.Fatal("stale form overwrote replacement credential")
+	}
+	saved, err = svc.GetByID(project.ID)
+	if err != nil || saved.GitToken != "replacement-secret-5678" || saved.Name != "renamed" {
+		t.Fatal("stale save mutated project")
+	}
+	for _, unchanged := range []string{"", "****", "****5678"} {
+		if err := svc.Update(project.ID, saved.Name, saved.Path, saved.RepoURL, saved.GitUsername, unchanged); err != nil {
+			t.Fatal(err)
+		}
+		current, err := svc.GetByID(project.ID)
+		if err != nil || current.GitToken != "replacement-secret-5678" {
+			t.Fatal("unchanged credential replaced")
+		}
+	}
+}
