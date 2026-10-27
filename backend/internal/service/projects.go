@@ -558,12 +558,9 @@ func (s *Projects) ListFiles(id int, relPath string) ([]FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return nil, err
-	}
 	entries, err := os.ReadDir(targetDir)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("project directory is unavailable inside DockTun; mount the stack folder or create the requested directory explicitly: %w", err)
 	}
 
 	cleanBase := filepath.Clean(p.Path)
@@ -676,12 +673,21 @@ func (s *Projects) GetComposeFile(id int) (string, string, error) {
 		return "", "", err
 	}
 	candidates := []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
-	for _, c := range candidates {
-		fullPath := filepath.Join(p.Path, c)
-		if data, err := os.ReadFile(fullPath); err == nil {
-			return c, string(data), nil
+	for _, candidate := range candidates {
+		fullPath := filepath.Join(p.Path, candidate)
+		content, err := os.ReadFile(fullPath)
+		if err == nil {
+			return candidate, string(content), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", "", fmt.Errorf("cannot read Compose file %s: %w", fullPath, err)
 		}
 	}
+	info, err := os.Stat(p.Path)
+	if err != nil || !info.IsDir() {
+		return "", "", fmt.Errorf("stack folder %s is not available inside DockTun; mount the host's project folder before editing its Compose file", p.Path)
+	}
+
 	defaultTmpl := fmt.Sprintf(`services:
   %s:
     image: nginx:alpine
@@ -707,10 +713,19 @@ func (s *Projects) SaveComposeFile(id int, filename string, content string) erro
 
 func (s *Projects) GetEnvFile(id int) (string, error) {
 	content, err := s.GetFile(id, ".env")
-	if err != nil {
-		return "", nil
+	if err == nil {
+		return content, nil
 	}
-	return content, nil
+	if os.IsNotExist(err) {
+		project, projectErr := s.GetByID(id)
+		if projectErr != nil {
+			return "", projectErr
+		}
+		if info, statErr := os.Stat(project.Path); statErr == nil && info.IsDir() {
+			return "", nil // An optional .env may be absent in an accessible stack.
+		}
+	}
+	return "", fmt.Errorf("cannot read stack .env; ensure the project folder is mounted inside DockTun: %w", err)
 }
 
 func (s *Projects) SaveEnvFile(id int, content string) error {

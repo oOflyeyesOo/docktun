@@ -347,3 +347,77 @@ func TestProjectCleanupKeepsDistinctCredentialsAndOnlyRemovesExactDuplicates(t *
 		t.Fatal("original identity removed")
 	}
 }
+
+func TestMissingProjectFilesDoNotCreateDirectoriesOrInventCompose(t *testing.T) {
+	root := t.TempDir()
+	database, err := db.New(filepath.Join(root, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	svc := NewProjects(database, "")
+	missing := filepath.Join(root, "host-only", "example")
+	project, err := svc.Create("example", missing, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ListFiles(project.ID, ""); err == nil {
+		t.Fatal("unmounted folder shown as empty")
+	}
+	if _, _, err := svc.GetComposeFile(project.ID); err == nil {
+		t.Fatal("unmounted stack replaced with sample nginx Compose")
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatal("read operation created a shadow host directory")
+	}
+}
+
+func TestUnreadableComposeIsNotReplacedBySample(t *testing.T) {
+	root := t.TempDir()
+	database, err := db.New(filepath.Join(root, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	svc := NewProjects(database, "")
+	directory := filepath.Join(root, "project")
+	if err := os.MkdirAll(filepath.Join(directory, "docker-compose.yml"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	project, err := svc.Create("example", directory, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.GetComposeFile(project.ID); err == nil {
+		t.Fatal("invalid/unreadable Compose source silently replaced")
+	}
+}
+
+func TestEnvReadDistinguishesAbsentFileFromUnavailableProject(t *testing.T) {
+	root := t.TempDir()
+	database, err := db.New(filepath.Join(root, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	svc := NewProjects(database, "")
+	project, err := svc.Create("example", filepath.Join(root, "missing"), "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.GetEnvFile(project.ID); err == nil {
+		t.Fatal("unmounted project reported empty env")
+	}
+	if err := os.MkdirAll(project.Path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if content, err := svc.GetEnvFile(project.ID); err != nil || content != "" {
+		t.Fatalf("optional env: %q %v", content, err)
+	}
+	if err := os.Mkdir(filepath.Join(project.Path, ".env"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.GetEnvFile(project.ID); err == nil {
+		t.Fatal("invalid env reported empty")
+	}
+}
