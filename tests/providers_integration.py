@@ -83,6 +83,21 @@ try:
         raise AssertionError('providers were not staged stopped')
     secret = inner('exec', 'docktun', 'cat', '/app/data/setup.token')
     token = request('/api/setup/complete', {'setup_token': secret, 'admin_username': 'owner', 'admin_password': 'integration-password-123', 'tunnel': {'type': 'tailscale'}})['access_token']
+    existing_id = inner('run', '-d', '--name', 'already-running', 'alpine:3.23', 'sleep', '3600')
+    for mode in ['compose', 'direct']:
+        request('/api/docker/run', {'command': 'docker run --name already-running alpine:3.23 sleep 3600', 'mode': mode}, expected=400)
+        assert inner('inspect', '--format', '{{.Id}}', 'already-running') == existing_id
+        assert state('already-running') == 'running'
+    launch = request('/api/docker/run', {'command': 'docker run -d --name new-launch alpine:3.23 sleep 3600', 'mode': 'direct'}, expected=202)
+    for _ in range(30):
+        output = request(f"/api/docker/run/output/{launch['job_id']}")
+        if output['done']:
+            assert output['status'] == 'completed', output
+            break
+        time.sleep(1)
+    else:
+        raise AssertionError('new launch did not finish')
+    assert state('new-launch') == 'running'
     request('/api/provider/cloudflare/credentials', expected=401, authenticated=False)
     request('/api/control/start', {}, expected=500)  # Missing credentials must leave it stopped.
     assert state('docktun-cloudflared') == 'created'
