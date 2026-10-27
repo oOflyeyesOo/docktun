@@ -268,6 +268,7 @@ func main() {
     r.Post("/api/cloudflare/sync-all", cloudflareHandler.SyncAllRoutes)
     r.Post("/api/cloudflare/create-wildcard", cloudflareHandler.CreateWildcard)
     r.Get("/api/cloudflare/tunnel", cloudflareHandler.GetTunnelStatus)
+    r.Get("/api/cloudflare/configuration", cloudflareHandler.GetTunnelConfiguration)
     r.Get("/api/cloudflare/access-apps", cloudflareHandler.ListAccessApps)
     r.Post("/api/cloudflare/access-apps", cloudflareHandler.CreateAccessApp)
     r.Delete("/api/cloudflare/access-apps/{id}", cloudflareHandler.DeleteAccessApp)

@@ -80,3 +80,7 @@ func (s *Cloudflared) SaveConnectorToken(token string) error {
 	}
 	return nil
 }
+
+func (s *Cloudflared) TunnelIdentity() (TunnelIdentity, error) {
+	return NewConfigManager(s.cfg, nil).TunnelIdentity()
+}

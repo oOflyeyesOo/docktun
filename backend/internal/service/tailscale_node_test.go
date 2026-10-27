@@ -182,3 +182,34 @@ func TestTailscaleReconnectOnlySelectedAppAfterRecreation(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyEmptyServeDoesNotBlockOtherProviders(t *testing.T) {
+	for _, mode := range []string{"public", "internal", "private"} {
+		t.Run(mode, func(t *testing.T) {
+			var calls []string
+			svc := &DockerContainers{exposureDocker: func(_ context.Context, args ...string) ([]byte, error) {
+				cmd := strings.Join(args, " ")
+				calls = append(calls, cmd)
+				if strings.Contains(cmd, "serve status --json") {
+					return []byte(`{}`), nil
+				}
+				if strings.HasSuffix(cmd, " off") {
+					return []byte("error: failed to remove TCP service config does not exist"), fmt.Errorf("exit status 1")
+				}
+				return nil, nil
+			}}
+			previous := ExposureSettings{Mode: "private", PrivateType: "tailscale", PrivatePort: 80, Target: "app:8080"}
+			next := ExposureSettings{Mode: mode, PrivateType: "wireguard"}
+			undo, err := svc.syncTailscaleExposure("app", previous, &next)
+			if err != nil {
+				t.Fatalf("empty legacy config blocked provider switch: %v", err)
+			}
+			undo()
+			for _, cmd := range calls {
+				if strings.Contains(cmd, "serve --bg") || strings.HasPrefix(cmd, "start ") || strings.HasPrefix(cmd, "stop ") {
+					t.Fatal("modified legacy provider despite absent app rule:", calls)
+				}
+			}
+		})
+	}
+}

@@ -8,6 +8,7 @@ docker build -t docktun:test .
 export DOCKTUN_TEST_IMAGE=docktun:test
 python3 tests/container_smoke.py
 python3 tests/providers_integration.py
+python3 tests/cloudflare_token_integration.py
 DOCKTUN_TEST_ENGINE_IMAGE=docker:20.10-dind python3 tests/providers_integration.py
 DOCKTUN_TEST_NETWORK=docktun.test python3 tests/providers_integration.py
 python3 tests/stack_deletion_integration.py
@@ -41,3 +42,11 @@ DOCKER_DEFAULT_PLATFORM=linux/arm64 python3 tests/container_smoke.py
 
 ARM64 execution on an AMD64 Docker Desktop host uses emulation. A passing build
 and smoke test is not a physical ARM64 or Synology kernel test.
+
+- `cloudflare_token_integration.py`: full app against a TLS Cloudflare API fixture
+  and signed-in Tailscale on disposable local Headscale. Verifies connector-token
+  identity overrides stale YAML, API credentials/status, remote route and DNS
+  updates, preservation of other/path/catch-all rules and global settings,
+  migration from an absent legacy TCP rule, permission failures, and local-YAML
+  compatibility. It does not use a real Cloudflare account or claim live edge
+  reachability. `DOCKTUN_KEEP_TEST_ENGINE=1` retains a successful fixture for UI QA.

@@ -32,6 +32,10 @@ type cfSettingsResponse struct {
 
 func (h *CloudflareHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	creds := h.cfAPI.GetCredentials()
+	identity, _ := h.configMgr.TunnelIdentity()
+	if creds.AccountID == "" && identity.Remote {
+		creds.AccountID = identity.AccountID
+	}
 	masked := ""
 	if len(creds.APIToken) > 8 {
 		masked = creds.APIToken[:4] + "••••••••" + creds.APIToken[len(creds.APIToken)-4:]
@@ -78,7 +82,7 @@ func (h *CloudflareHandler) SyncAllRoutes(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	rawYaml, err := h.configMgr.Read()
+	rawYaml, err := h.cfAPI.ActiveConfig(h.configMgr)
 	if err != nil {
 		http.Error(w, `{"error":"failed to read config: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -145,7 +149,7 @@ func (h *CloudflareHandler) CheckDNS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawYaml, err := h.configMgr.Read()
+	rawYaml, err := h.cfAPI.ActiveConfig(h.configMgr)
 	if err != nil {
 		http.Error(w, `{"error":"failed to read config"}`, http.StatusInternalServerError)
 		return
@@ -174,7 +178,7 @@ func (h *CloudflareHandler) ReplaceDNS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawYaml, err := h.configMgr.Read()
+	rawYaml, err := h.cfAPI.ActiveConfig(h.configMgr)
 	if err != nil {
 		http.Error(w, `{"error":"failed to read config"}`, http.StatusInternalServerError)
 		return
@@ -200,7 +204,7 @@ func (h *CloudflareHandler) CreateWildcard(w http.ResponseWriter, r *http.Reques
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	rawYaml, err := h.configMgr.Read()
+	rawYaml, err := h.cfAPI.ActiveConfig(h.configMgr)
 	if err != nil {
 		http.Error(w, `{"error":"failed to read config"}`, http.StatusInternalServerError)
 		return
@@ -234,36 +238,33 @@ func (h *CloudflareHandler) CreateWildcard(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *CloudflareHandler) GetTunnelStatus(w http.ResponseWriter, r *http.Request) {
-	if h.configMgr == nil {
-		http.Error(w, `{"error":"config manager not ready"}`, http.StatusInternalServerError)
-		return
-	}
-
-	rawYaml, err := h.configMgr.Read()
+	identity, err := h.configMgr.TunnelIdentity()
 	if err != nil {
-		http.Error(w, `{"error":"failed to read config"}`, http.StatusInternalServerError)
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	var doc struct {
-		Tunnel string `yaml:"tunnel"`
-	}
-	_ = yaml.Unmarshal([]byte(rawYaml), &doc)
-	if doc.Tunnel == "" || doc.Tunnel == "YOUR_TUNNEL_ID" || doc.Tunnel == "your-tunnel-uuid" {
-		http.Error(w, `{"error":"no valid tunnel ID configured"}`, http.StatusBadRequest)
-		return
-	}
-
-	status, err := h.cfAPI.GetRemoteTunnel(doc.Tunnel)
+	status, err := h.cfAPI.TunnelStatus(identity)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
+}
+
+func (h *CloudflareHandler) GetTunnelConfiguration(w http.ResponseWriter, r *http.Request) {
+	identity, err := h.configMgr.TunnelIdentity()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	configuration, err := h.cfAPI.TunnelConfiguration(identity)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"identity": identity, "config": configuration})
 }
 
 func (h *CloudflareHandler) ListAccessApps(w http.ResponseWriter, r *http.Request) {
@@ -336,5 +337,3 @@ func (h *CloudflareHandler) DeleteAccessApp(w http.ResponseWriter, r *http.Reque
 		"message": "Zero Trust Access Application removed",
 	})
 }
-
-

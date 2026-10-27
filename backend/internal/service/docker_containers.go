@@ -1582,6 +1582,13 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 		return nil
 	}
 
+	identity, identityErr := s.configMgr.TunnelIdentity()
+	if identity.Remote {
+		if identityErr != nil {
+			return identityErr
+		}
+		return s.syncRemoteCloudflareIngress(containerName, settings, identity)
+	}
 	raw, err := s.configMgr.Read()
 	if err != nil {
 		if os.IsNotExist(err) || strings.Contains(err.Error(), "no such file") {

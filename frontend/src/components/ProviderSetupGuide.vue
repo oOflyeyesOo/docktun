@@ -15,20 +15,20 @@ defineProps<{ provider: 'cloudflare' | 'tailscale' | 'wireguard' }>()
         <li>Click <strong>Enable Cloudflare</strong>. Check that the tunnel becomes healthy in Cloudflare. Then add its public-hostname/application route in Cloudflare, such as <code>app.example.com</code> → <code>http://my-app:80</code>.</li>
         <li>The service must be reachable from the connector. Container names work on a shared Docker network. For a published host port, use a reachable host address, such as <code>http://host.docker.internal:8080</code>. <code>localhost</code> inside the connector means the connector itself.</li>
       </ol>
-      <p class="rounded-lg bg-indigo-50 p-3 text-xs text-indigo-900">Connector-token tunnels get hostname rules from Cloudflare. DockTun’s local ingress editor is for locally managed tunnels. An API token is a separate credential for the optional API &amp; Edge tools below.</p>
+      <p class="rounded-lg bg-indigo-50 p-3 text-xs text-indigo-900">Connector-token tunnels get hostname rules from Cloudflare. DockTun’s local ingress editor is for locally managed tunnels. An API token is a separate credential. Save it in API credentials above to view remote status and manage selected app routes from Containers → Access.</p>
 
       <details class="guide-details">
         <summary class="guide-summary">Optional API token: permissions, Account ID &amp; Zone ID</summary>
         <div class="guide-body">
           <p>Open <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener noreferrer" class="guide-link">My Profile → API Tokens</a> → Create Token → Create Custom Token. Scope it to the account and domain you intend to manage. Add permissions for the features you use:</p>
           <div class="overflow-x-auto"><table class="w-full text-left text-xs"><thead><tr class="border-b border-slate-200"><th class="py-2 pr-3">DockTun feature</th><th class="py-2">Token permission</th></tr></thead><tbody>
-            <tr class="border-b border-slate-100"><td class="py-2 pr-3">Read existing tunnel details</td><td>Account → Cloudflare Tunnel → Read</td></tr>
+            <tr class="border-b border-slate-100"><td class="py-2 pr-3">Read existing tunnel details</td><td>Account → Cloudflare Tunnel → Read (status) or Edit (manage app routes)</td></tr>
             <tr class="border-b border-slate-100"><td class="py-2 pr-3">Create or update DNS records</td><td>Zone → DNS → Edit</td></tr>
             <tr class="border-b border-slate-100"><td class="py-2 pr-3">Find the domain’s zone automatically</td><td>Zone → Zone → Read</td></tr>
             <tr><td class="py-2 pr-3">Manage optional Access authentication policies</td><td>Account → Access: Apps and Policies → Edit</td></tr>
           </tbody></table></div>
           <p>Some token screens use <strong>Write</strong> in place of Edit or the newer cloudflared connector permission names. Read-only tunnel access cannot change DNS or Access policies. Creating/managing tunnels through other tools needs the corresponding tunnel write permission.</p>
-          <p>Copy the generated API token into <strong>Cloudflare API &amp; Edge</strong>, then save/test it. Use the API token value, rather than the Global API Key.</p>
+          <p>Copy the generated API token into <strong>API credentials</strong> at the top of the Cloudflare page, then save/test it. Use the API token value, rather than the Global API Key.</p>
           <p><strong>Account ID:</strong> in Cloudflare search, enter “Copy account ID”. <strong>Zone ID:</strong> open your domain’s Overview and find the API section. These IDs identify resources; they are separate from the token.</p>
           <p class="flex flex-wrap gap-x-4 gap-y-1 text-xs"><a href="https://developers.cloudflare.com/fundamentals/api/get-started/create-token/" target="_blank" rel="noopener noreferrer" class="guide-link">Create an API token ↗</a><a href="https://developers.cloudflare.com/fundamentals/api/reference/permissions/" target="_blank" rel="noopener noreferrer" class="guide-link">Permission reference ↗</a><a href="https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/" target="_blank" rel="noopener noreferrer" class="guide-link">Find account / zone IDs ↗</a></p>
         </div>

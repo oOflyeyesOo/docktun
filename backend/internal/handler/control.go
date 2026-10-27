@@ -38,7 +38,12 @@ func (h *Control) Connector(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	json.NewEncoder(w).Encode(map[string]bool{"has_token": h.cfd.HasConnectorToken()})
+	identity, err := h.cfd.TunnelIdentity()
+	response := map[string]any{"has_token": h.cfd.HasConnectorToken(), "tunnel_id": identity.ID, "account_id": identity.AccountID, "remote_managed": identity.Remote}
+	if err != nil && identity.Remote {
+		response["identity_error"] = err.Error()
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
 func (h *Control) Execute(w http.ResponseWriter, r *http.Request) {
