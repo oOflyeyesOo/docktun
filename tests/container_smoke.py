@@ -56,6 +56,17 @@ try:
     diagnostics = request("/api/diagnostics", token=access)
     assert diagnostics["checks"][0]["ok"] is False
     assert diagnostics["checks"][1]["ok"] is True
+    # Host-only stack paths must produce useful errors, not invented editable files.
+    missing_path = "/app/data/host-only/stack"
+    missing = request("/api/projects", {"name": "missing-folder", "path": missing_path}, access, expected=201)
+    for suffix in ("compose", "env", "files"):
+        error = request(f"/api/projects/{missing['id']}/{suffix}", token=access, expected=500)
+        assert "mount" in str(error).lower(), error
+    assert docker("exec", name, "sh", "-c", "test ! -e /app/data/host-only/stack && echo absent") == "absent"
+    # A real existing stack may legitimately omit its optional .env.
+    accessible = request("/api/projects", {"name": "editable", "path": "/app/data/editable", "compose_content": "services: {}"}, access, expected=201)
+    assert request(f"/api/projects/{accessible['id']}/env", token=access)["content"] == ""
+    assert request(f"/api/projects/{accessible['id']}/compose", token=access)["content"] == "services: {}"
     login = {"username": "owner", "password": credentials["admin_password"]}
     request("/auth/login", login)
     docker("restart", name)

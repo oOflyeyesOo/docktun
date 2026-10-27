@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { createProjectFileEditor } from '../lib/project-file-editor.mjs'
 import { defaultComposeExample, composeTemplates } from '../lib/compose-templates.mjs'
 import { getPrimaryPort, cleanContainerName, getMdnsPortSuffix } from '../lib/containerPorts.mjs'
 import ContainerExposure from "../components/ContainerExposure.vue"
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, toRefs, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Server,
@@ -234,24 +235,33 @@ const execLoading = ref(false)
 const execExitCode = ref<number | null>(null)
 const execHistory = ref<string[]>([])
 
-// Compose state
-const composeFilename = ref('docker-compose.yml')
-const composeContent = ref('')
-const composeLoading = ref(false)
-const composeSaving = ref(false)
-const composeMsg = ref('')
 
-// .env state
-const envContent = ref('')
-const envLoading = ref(false)
-const envSaving = ref(false)
-const envMsg = ref('')
+// Compose state
+const composeEditor = reactive(createProjectFileEditor('Compose', 'docker-compose.yml'))
+const { filename: composeFilename, content: composeContent, loading: composeLoading, saving: composeSaving, message: composeMsg } = toRefs(composeEditor)
+const envEditor = reactive(createProjectFileEditor('.env'))
+const { content: envContent, loading: envLoading, saving: envSaving, message: envMsg } = toRefs(envEditor)
+let selectionRevision = 0
+let filesRevision = 0
+function resetProjectEditors() {
+  composeEditor.invalidate()
+  envEditor.invalidate()
+  filesRevision++
+  fileList.value = []
+  editingFile.value = null
+  editingFileSaving.value = false
+  editingFileMsg.value = ''
+  filesLoading.value = false
+  showNewItemModal.value = false
+  showGitSettings.value = false
+  currentProject.value = null
+}
 
 // Files state
 const currentDir = ref('')
 const fileList = ref<FileItem[]>([])
 const filesLoading = ref(false)
-const editingFile = ref<{ path: string; content: string } | null>(null)
+const editingFile = ref<{ projectId: number; path: string; content: string } | null>(null)
 const editingFileSaving = ref(false)
 const editingFileMsg = ref('')
 const showNewItemModal = ref(false)
@@ -1115,6 +1125,8 @@ async function saveExposure(container: ContainerItem) {
 // Control Center Modal Logic
 // ==========================================
 async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs' | 'exec' = 'overview') {
+  const selection = ++selectionRevision
+  resetProjectEditors()
   selectedContainer.value = { ...c } as ContainerDetail
   selectedTab.value = tab
   detailLoading.value = true
@@ -1134,6 +1146,7 @@ async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' |
 
   try {
     const detail = await apiFetch<ContainerDetail>(`/api/docker/containers/${c.id}`)
+    if (selection !== selectionRevision) return
     selectedContainer.value = detail
     if (detail.connected_to_cloudflared !== undefined) {
       c.connected_to_cloudflared = detail.connected_to_cloudflared
@@ -1160,14 +1173,16 @@ async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' |
   } catch (err: any) {
     console.error('Failed to load container details:', err)
   } finally {
-    detailLoading.value = false
+    if (selection === selectionRevision) detailLoading.value = false
   }
 
   // Load content for active tab
-  handleTabChange(tab)
+  if (selection === selectionRevision) handleTabChange(selectedTab.value)
 }
 
 function closeContainerModal() {
+  selectionRevision++
+  resetProjectEditors()
   selectedContainer.value = null
   editingFile.value = null
   composeMsg.value = ''
@@ -1247,51 +1262,26 @@ async function scaffoldProject() {
 
 // --- Compose Functions ---
 async function loadContainerCompose(projectId: number) {
-  composeLoading.value = true
-  composeMsg.value = ''
-  try {
-    const res: any = await apiFetch(`/api/projects/${projectId}/compose`)
-    composeFilename.value = res.filename || 'docker-compose.yml'
-    composeContent.value = res.content || ''
-  } catch (e: any) {
-    composeMsg.value = 'Failed to load compose: ' + e.message
-  } finally {
-    composeLoading.value = false
-  }
+  await composeEditor.load(projectId, (id) => apiFetch(`/api/projects/${id}/compose`))
 }
 
 async function saveContainerCompose(restart = false) {
-  if (!selectedContainer.value?.project_id) return
-  composeSaving.value = true
-  composeMsg.value = ''
-  try {
-    await apiFetch(`/api/projects/${selectedContainer.value.project_id}/compose`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        filename: composeFilename.value,
-        content: composeContent.value,
-      }),
-    })
-    composeMsg.value = 'Compose saved successfully!'
-    if (restart) {
-      await apiFetch(`/api/projects/${selectedContainer.value.project_id}/action/restart`, { method: 'POST' })
-      composeMsg.value = 'Compose saved and stack restarting...'
-      await fetchContainers()
-    }
-    setTimeout(() => (composeMsg.value = ''), 3500)
-  } catch (e: any) {
-    composeMsg.value = 'Save failed: ' + e.message
-  } finally {
-    composeSaving.value = false
-  }
+  if (selectedContainer.value?.project_id !== composeEditor.projectId) return
+  const saved = await composeEditor.save(
+    (id, body) => apiFetch(`/api/projects/${id}/compose`, { method: 'PUT', body: JSON.stringify(body) }),
+    restart ? (id) => apiFetch(`/api/projects/${id}/action/restart`, { method: 'POST' }) : undefined,
+  )
+  if (saved && restart) await fetchContainers()
 }
 
 // ==========================================
 // Stack & Launcher Helper Functions
 // ==========================================
 async function loadProjectInfo(projectId: number) {
+  const selection = selectionRevision
   try {
     const list: any[] = await apiFetch('/api/projects')
+    if (selection !== selectionRevision || selectedContainer.value?.project_id !== projectId) return
     if (Array.isArray(list)) {
       const found = list.find((p) => p.id === projectId)
       if (found) {
@@ -1507,99 +1497,89 @@ async function submitNewProject() {
 
 // --- .env Functions ---
 async function loadContainerEnv(projectId: number) {
-  envLoading.value = true
-  envMsg.value = ''
-  try {
-    const res: any = await apiFetch(`/api/projects/${projectId}/env`)
-    envContent.value = res.content || ''
-  } catch (e: any) {
-    envMsg.value = 'Failed to load .env: ' + e.message
-  } finally {
-    envLoading.value = false
-  }
+  await envEditor.load(projectId, (id) => apiFetch(`/api/projects/${id}/env`))
 }
 
 async function saveContainerEnv(restart = false) {
-  if (!selectedContainer.value?.project_id) return
-  envSaving.value = true
-  envMsg.value = ''
-  try {
-    await apiFetch(`/api/projects/${selectedContainer.value.project_id}/env`, {
-      method: 'PUT',
-      body: JSON.stringify({ content: envContent.value }),
-    })
-    envMsg.value = '.env saved successfully!'
-    if (restart) {
-      await apiFetch(`/api/projects/${selectedContainer.value.project_id}/action/restart`, { method: 'POST' })
-      envMsg.value = '.env saved and stack restarting...'
-      await fetchContainers()
-    }
-    setTimeout(() => (envMsg.value = ''), 3500)
-  } catch (e: any) {
-    envMsg.value = 'Save failed: ' + e.message
-  } finally {
-    envSaving.value = false
-  }
+  if (selectedContainer.value?.project_id !== envEditor.projectId) return
+  const saved = await envEditor.save(
+    (id, body) => apiFetch(`/api/projects/${id}/env`, { method: 'PUT', body: JSON.stringify({ content: body.content }) }),
+    restart ? (id) => apiFetch(`/api/projects/${id}/action/restart`, { method: 'POST' }) : undefined,
+  )
+  if (saved && restart) await fetchContainers()
 }
 
 // --- Files Functions ---
 async function loadContainerFiles(projectId: number, path = '') {
+  const revision = ++filesRevision
+  const selection = selectionRevision
   filesLoading.value = true
   currentDir.value = path
+  fileList.value = []
+  editingFileMsg.value = ''
   editingFile.value = null
   try {
     const res: any = await apiFetch(`/api/projects/${projectId}/files?path=${encodeURIComponent(path)}`)
-    fileList.value = res || []
-  } catch {
-    fileList.value = []
+    if (revision === filesRevision && selection === selectionRevision) fileList.value = res || []
+  } catch (e: any) {
+    if (revision === filesRevision && selection === selectionRevision) {
+      fileList.value = []
+      editingFileMsg.value = 'Failed to list files: ' + e.message
+    }
   } finally {
-    filesLoading.value = false
+    if (revision === filesRevision && selection === selectionRevision) filesLoading.value = false
   }
 }
 
 async function openContainerFile(f: FileItem) {
-  if (!selectedContainer.value?.project_id) return
+  const projectId = selectedContainer.value?.project_id
+  if (!projectId) return
   if (f.is_dir) {
-    loadContainerFiles(selectedContainer.value.project_id, f.path)
+    loadContainerFiles(projectId, f.path)
     return
   }
+  const revision = ++filesRevision
+  const selection = selectionRevision
+  editingFile.value = null
+  editingFileMsg.value = ''
   filesLoading.value = true
   try {
-    const res: any = await apiFetch(`/api/projects/${selectedContainer.value.project_id}/file?path=${encodeURIComponent(f.path)}`)
-    editingFile.value = { path: f.path, content: res.content || '' }
+    const res: any = await apiFetch(`/api/projects/${projectId}/file?path=${encodeURIComponent(f.path)}`)
+    if (revision === filesRevision && selection === selectionRevision) editingFile.value = { projectId, path: f.path, content: res.content || '' }
   } catch (e: any) {
-    alert('Failed to read file: ' + e.message)
+    if (revision === filesRevision && selection === selectionRevision) editingFileMsg.value = 'Failed to read file: ' + e.message
   } finally {
-    filesLoading.value = false
+    if (revision === filesRevision && selection === selectionRevision) filesLoading.value = false
   }
 }
 
 async function saveCurrentContainerFile() {
-  if (!selectedContainer.value?.project_id || !editingFile.value) return
+  const file = editingFile.value
+  if (!file || selectedContainer.value?.project_id !== file.projectId || editingFileSaving.value) return
+  const selection = selectionRevision
+  const revision = filesRevision
   editingFileSaving.value = true
   editingFileMsg.value = ''
   try {
-    await apiFetch(`/api/projects/${selectedContainer.value.project_id}/file`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        path: editingFile.value.path,
-        content: editingFile.value.content,
-      }),
+    await apiFetch(`/api/projects/${file.projectId}/file`, {
+      method: 'PUT', body: JSON.stringify({ path: file.path, content: file.content }),
     })
-    editingFileMsg.value = 'File saved successfully!'
-    setTimeout(() => (editingFileMsg.value = ''), 3000)
+    if (selection === selectionRevision && revision === filesRevision) editingFileMsg.value = 'File saved successfully!'
   } catch (e: any) {
-    editingFileMsg.value = 'Save failed: ' + e.message
+    if (selection === selectionRevision && revision === filesRevision) editingFileMsg.value = 'Save failed: ' + e.message
   } finally {
-    editingFileSaving.value = false
+    if (selection === selectionRevision) editingFileSaving.value = false
   }
 }
 
 async function createContainerFileItem() {
   if (!selectedContainer.value?.project_id || !newItemName.value) return
   const targetPath = currentDir.value ? `${currentDir.value}/${newItemName.value}` : newItemName.value
+  const projectId = selectedContainer.value.project_id
+  const directory = currentDir.value
+  const selection = selectionRevision
   try {
-    await apiFetch(`/api/projects/${selectedContainer.value.project_id}/file`, {
+    await apiFetch(`/api/projects/${projectId}/file`, {
       method: 'POST',
       body: JSON.stringify({
         path: targetPath,
@@ -1607,9 +1587,10 @@ async function createContainerFileItem() {
         content: '',
       }),
     })
+    if (selection !== selectionRevision) return
     showNewItemModal.value = false
     newItemName.value = ''
-    loadContainerFiles(selectedContainer.value.project_id, currentDir.value)
+    if (selection === selectionRevision) loadContainerFiles(projectId, directory)
   } catch (e: any) {
     alert('Create failed: ' + e.message)
   }
@@ -1618,11 +1599,14 @@ async function createContainerFileItem() {
 async function deleteContainerFile(path: string) {
   if (!selectedContainer.value?.project_id) return
   if (!confirm(`Delete ${path}?`)) return
+  const projectId = selectedContainer.value.project_id
+  const directory = currentDir.value
+  const selection = selectionRevision
   try {
-    await apiFetch(`/api/projects/${selectedContainer.value.project_id}/file?path=${encodeURIComponent(path)}`, {
+    await apiFetch(`/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`, {
       method: 'DELETE',
     })
-    loadContainerFiles(selectedContainer.value.project_id, currentDir.value)
+    if (selection === selectionRevision) loadContainerFiles(projectId, directory)
   } catch (e: any) {
     alert('Delete failed: ' + e.message)
   }
@@ -3037,7 +3021,7 @@ onUnmounted(() => {
 
                   <!-- Stack Action Buttons -->
                   <div class="flex flex-wrap items-center gap-1.5">
-                    <span v-if="composeMsg" class="text-xs text-emerald-600 font-medium mr-1">
+                    <span v-if="composeMsg" class="text-xs font-medium mr-1" :class="composeEditor.error ? 'text-red-600' : 'text-emerald-600'">
                       {{ composeMsg }}
                     </span>
 
@@ -3103,7 +3087,7 @@ onUnmounted(() => {
 
                     <button
                       @click="saveContainerCompose(false)"
-                      :disabled="composeSaving"
+                      :disabled="composeSaving || composeLoading || !composeEditor.loaded"
                       class="cyber-btn text-xs flex items-center gap-1 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
                       title="Save edits to docker-compose.yml"
                     >
@@ -3159,6 +3143,7 @@ onUnmounted(() => {
               <div class="relative">
                 <textarea
                   v-model="composeContent"
+                  :disabled="!composeEditor.loaded || composeSaving"
                   rows="18"
                   spellcheck="false"
                   placeholder="Loading compose file…"
@@ -3213,7 +3198,7 @@ onUnmounted(() => {
                 </div>
 
                 <div class="flex items-center gap-2">
-                  <span v-if="envMsg" class="text-xs text-emerald-600 font-medium">
+                  <span v-if="envMsg" class="text-xs font-medium" :class="envEditor.error ? 'text-red-600' : 'text-emerald-600'">
                     {{ envMsg }}
                   </span>
                   <button
@@ -3226,7 +3211,7 @@ onUnmounted(() => {
                   </button>
                   <button
                     @click="saveContainerEnv(false)"
-                    :disabled="envSaving"
+                    :disabled="envSaving || envLoading || !envEditor.loaded"
                     class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
                   >
                     <Save class="h-3.5 w-3.5" />
@@ -3234,7 +3219,7 @@ onUnmounted(() => {
                   </button>
                   <button
                     @click="saveContainerEnv(true)"
-                    :disabled="envSaving"
+                    :disabled="envSaving || envLoading || !envEditor.loaded"
                     class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-700 border-emerald-600 bg-emerald-50/40 hover:bg-emerald-100/50"
                   >
                     <RotateCcw class="h-3.5 w-3.5" />
@@ -3246,6 +3231,7 @@ onUnmounted(() => {
               <!-- .env Editor -->
               <textarea
                 v-model="envContent"
+                :disabled="!envEditor.loaded || envSaving"
                 rows="18"
                 spellcheck="false"
                 placeholder="# Enter KEY=VALUE environment variables&#10;PORT=8080&#10;DEBUG=false"
@@ -3312,6 +3298,7 @@ onUnmounted(() => {
                 </div>
               </div>
 
+              <p v-if="editingFileMsg" role="status" class="text-xs font-medium" :class="editingFileMsg.startsWith('Failed') || editingFileMsg.startsWith('Save failed') ? 'text-red-600' : 'text-emerald-600'">{{ editingFileMsg }}</p>
               <!-- Active File Editor if editing a file -->
               <div v-if="editingFile" class="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
                 <div class="flex items-center justify-between border-b border-slate-200 pb-2">
@@ -3320,7 +3307,6 @@ onUnmounted(() => {
                     <span>{{ editingFile.path }}</span>
                   </div>
                   <div class="flex items-center gap-2">
-                    <span v-if="editingFileMsg" class="text-xs text-emerald-600 font-medium">{{ editingFileMsg }}</span>
                     <button
                       @click="saveCurrentContainerFile"
                       :disabled="editingFileSaving"
