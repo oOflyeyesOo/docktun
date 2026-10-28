@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -447,6 +448,11 @@ func (s *RemoteAccessService) TailscaleUp(authKey, hostname string) error {
 	if err != nil {
 		return fmt.Errorf("tailscale up failed: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
+	if s.dockerContainersSvc != nil {
+		s.dockerContainersSvc.exposureMu.Lock()
+		defer s.dockerContainersSvc.exposureMu.Unlock()
+		return s.dockerContainersSvc.waitPendingTailscaleRules("docktun-tailscale")
+	}
 	return nil
 }
 
@@ -506,11 +512,28 @@ func (s *RemoteAccessService) defaultNetwork() string {
 }
 
 func (s *RemoteAccessService) TailscaleControl(action string) error {
+	action = strings.ToLower(action)
+	if s.dockerContainersSvc != nil {
+		s.dockerContainersSvc.exposureMu.Lock()
+		defer s.dockerContainersSvc.exposureMu.Unlock()
+	}
 	p := NewProviderContainers(s.cfg)
 	if s.runDocker != nil {
 		p.run = s.runDocker
 	}
-	return p.Control("tailscale", strings.ToLower(action))
+	if err := p.Control("tailscale", action); err != nil {
+		return err
+	}
+	if action != "stop" && s.dockerContainersSvc != nil {
+		if err := s.dockerContainersSvc.waitPendingTailscaleRules("docktun-tailscale"); err != nil {
+			if errors.Is(err, errTailscaleNeedsConnection) {
+				return nil // Preserve cleanup until interactive login completes.
+			}
+			_ = p.Control("tailscale", "stop")
+			return err
+		}
+	}
+	return nil
 }
 
 // ==============================================================================

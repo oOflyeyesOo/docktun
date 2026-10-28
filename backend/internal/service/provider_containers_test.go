@@ -86,6 +86,9 @@ func TestProvidersStageStoppedAndOperateIndependently(t *testing.T) {
 		}
 	}
 	staged := strings.Join(calls, "\n")
+	if !strings.Contains(staged, "-e TS_STATE_DIR=/var/lib/tailscale -e TS_AUTH_ONCE=true") {
+		t.Fatal("Tailscale startup must preserve interactive login and settings", staged)
+	}
 	if strings.Contains(staged, "private-test-connector-token") || strings.Contains(staged, "run -d") {
 		t.Fatal("leaked token or started during preparation")
 	}

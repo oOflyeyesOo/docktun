@@ -13,8 +13,8 @@ func fakeNodeRunner(app string, calls *[]string) func(context.Context, ...string
 		cmd := strings.Join(args, " ")
 		*calls = append(*calls, cmd)
 		node := tailscaleNodeName(app)
-		if cmd == "container inspect "+node {
-			return []byte(fmt.Sprintf(`[{"Config":{"Labels":{"%s":%q}}}]`, tailscaleOwnerLabel, app)), nil
+		if cmd == "container inspect "+node || cmd == "container inspect docktun-tailscale" {
+			return []byte(fmt.Sprintf(`[{"State":{"Running":true},"Config":{"Labels":{"%s":%q}}}]`, tailscaleOwnerLabel, app)), nil
 		}
 		if cmd == "container inspect "+app {
 			return []byte(fmt.Sprintf(`[{"State":{"Running":true},"NetworkSettings":{"Networks":{%q:{}}}}]`, node)), nil
@@ -190,6 +190,9 @@ func TestLegacyEmptyServeDoesNotBlockOtherProviders(t *testing.T) {
 			svc := &DockerContainers{exposureDocker: func(_ context.Context, args ...string) ([]byte, error) {
 				cmd := strings.Join(args, " ")
 				calls = append(calls, cmd)
+				if cmd == "container inspect docktun-tailscale" {
+					return []byte(`[{"State":{"Running":true}}]`), nil
+				}
 				if strings.Contains(cmd, "serve status --json") {
 					return []byte(`{}`), nil
 				}

@@ -198,7 +198,7 @@ docker compose up -d --build
 
 DockTun does not enforce a single global networking mode. Every container starts internal and isolated; choose remote access per app in **Containers → Access**:
 
-- **Cloudflare Tunnel**: Enter your Cloudflare Tunnel connector token (or mount your existing `config.yml` and credentials) under **Remote Access → Cloudflare**, then click **Enable**. Map individual apps to public subdomains directly from the dashboard.
+- **Cloudflare Tunnel**: Enter your Cloudflare Tunnel connector token (or mount your existing `config.yml` and credentials) under **Remote Access → Cloudflare**, then click **Enable**. The connector token runs the tunnel. To publish Cloudflare-managed app routes from DockTun, also save an API token with account **Cloudflare Tunnel Edit/Write** and zone **DNS Edit** permissions; a DNS-only zone token cannot edit tunnel routes. Add **Zone Read** for automatic zone discovery, or supply the Zone ID. The Cloudflare page includes token creation steps and current permission names. Routes managed directly in Cloudflare do not require an API token in DockTun.
 - **Tailscale**: Connect any container with 1-click in the container's **Access** tab. DockTun spawns a dedicated userspace Tailscale helper for that app, creating a separate device identity and MagicDNS hostname on your tailnet without touching the host's networking stack.
 - **WireGuard**: Configure an existing WireGuard VPN address or use the companion container.
 - **Internal / mDNS**: Keeps containers internal, accessible via LAN or local `.local` addresses.

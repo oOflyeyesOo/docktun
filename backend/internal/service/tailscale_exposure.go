@@ -46,7 +46,11 @@ func (s *DockerContainers) runExposure(args ...string) ([]byte, error) {
 		out, err = exec.CommandContext(ctx, "docker", args...).CombinedOutput()
 	}
 	if err != nil {
-		return nil, fmt.Errorf("Tailscale forwarding failed: %s (%w)", strings.TrimSpace(string(out)), err)
+		operation := args[0]
+		if len(args) > 1 && args[0] == "exec" {
+			operation += " in " + args[1]
+		}
+		return nil, fmt.Errorf("Tailscale forwarding failed (%s): %s (%w)", operation, strings.TrimSpace(string(out)), err)
 	}
 	return out, nil
 }

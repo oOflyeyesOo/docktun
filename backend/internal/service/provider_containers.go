@@ -231,7 +231,9 @@ func (p *ProviderContainers) definition(ctx context.Context, provider string) ([
 				}
 			}
 		}
-		return append(args, "--hostname", "docktun", "--mount", "type=volume,source="+volume+",target=/var/lib/tailscale", "-e", "TS_USERSPACE=true", "-e", "TS_STATE_DIR=/var/lib/tailscale", "tailscale/tailscale:latest"), nil
+		// The UI configures login/options interactively. Reusing persisted state
+		// must not run a fresh tailscale up that rejects or resets those options.
+		return append(args, "--hostname", "docktun", "--mount", "type=volume,source="+volume+",target=/var/lib/tailscale", "-e", "TS_USERSPACE=true", "-e", "TS_STATE_DIR=/var/lib/tailscale", "-e", "TS_AUTH_ONCE=true", "tailscale/tailscale:latest"), nil
 	case "cloudflare", "wireguard":
 		own, err := p.self(ctx)
 		if err != nil {
