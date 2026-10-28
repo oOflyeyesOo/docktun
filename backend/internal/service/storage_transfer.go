@@ -59,7 +59,11 @@ func (s *StorageFilesService) GetDownloadStream(kind, id, value string) (io.Read
 	}
 	name := path.Base(rel)
 	if kind == "docktun" || kind == "project" {
-		root, err := os.OpenRoot(s.resolveHostBasePath(kind, id))
+		basePath, err := s.resolveHostBasePath(kind, id)
+		if err != nil {
+			return nil, "", 0, err
+		}
+		root, err := os.OpenRoot(basePath)
 		if err != nil {
 			return nil, "", 0, err
 		}
@@ -144,7 +148,11 @@ func (s *StorageFilesService) UploadFile(kind, id, directory, filename string, r
 	}
 	target := path.Join(dir, filename)
 	if kind == "docktun" || kind == "project" {
-		root, err := os.OpenRoot(s.resolveHostBasePath(kind, id))
+		basePath, err := s.resolveHostBasePath(kind, id)
+		if err != nil {
+			return err
+		}
+		root, err := os.OpenRoot(basePath)
 		if err != nil {
 			return err
 		}

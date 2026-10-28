@@ -169,12 +169,18 @@ func (s *StorageFilesService) ListTargets() ([]StorageTarget, error) {
 // -----------------------------------------------------------------------------
 
 func (s *StorageFilesService) ListFiles(targetType, targetID, relPath string) ([]FileNode, error) {
-	relPath = cleanRelPath(relPath)
+	var err error
+	relPath, err = cleanRelPath(relPath)
+	if err != nil {
+		return nil, err
+	}
 
 	switch targetType {
 	case "docktun", "project":
-		basePath := s.resolveHostBasePath(targetType, targetID)
-		fullPath := filepath.Join(basePath, relPath)
+		fullPath, err := s.resolveHostPath(targetType, targetID, relPath, false)
+		if err != nil {
+			return nil, err
+		}
 		return listLocalDirectory(fullPath, relPath)
 
 	case "volume":
@@ -359,7 +365,11 @@ func sortNodes(nodes []FileNode) {
 // -----------------------------------------------------------------------------
 
 func (s *StorageFilesService) ReadFile(targetType, targetID, relPath string) (*FileReadResult, error) {
-	relPath = cleanRelPath(relPath)
+	var err error
+	relPath, err = cleanRelPath(relPath)
+	if err != nil {
+		return nil, err
+	}
 	if relPath == "" || relPath == "." {
 		return nil, fmt.Errorf("file path required")
 	}
@@ -368,8 +378,10 @@ func (s *StorageFilesService) ReadFile(targetType, targetID, relPath string) (*F
 
 	switch targetType {
 	case "docktun", "project":
-		basePath := s.resolveHostBasePath(targetType, targetID)
-		fullPath := filepath.Join(basePath, relPath)
+		fullPath, err := s.resolveHostPath(targetType, targetID, relPath, false)
+		if err != nil {
+			return nil, err
+		}
 
 		fi, err := os.Stat(fullPath)
 		if err != nil {
@@ -475,15 +487,21 @@ func (s *StorageFilesService) ReadFile(targetType, targetID, relPath string) (*F
 // -----------------------------------------------------------------------------
 
 func (s *StorageFilesService) WriteFile(targetType, targetID, relPath, content string) error {
-	relPath = cleanRelPath(relPath)
+	var err error
+	relPath, err = cleanRelPath(relPath)
+	if err != nil {
+		return err
+	}
 	if relPath == "" || relPath == "." {
 		return fmt.Errorf("target file path required")
 	}
 
 	switch targetType {
 	case "docktun", "project":
-		basePath := s.resolveHostBasePath(targetType, targetID)
-		fullPath := filepath.Join(basePath, relPath)
+		fullPath, err := s.resolveHostPath(targetType, targetID, relPath, true)
+		if err != nil {
+			return err
+		}
 
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 			return err
@@ -534,15 +552,21 @@ func (s *StorageFilesService) WriteFile(targetType, targetID, relPath, content s
 // -----------------------------------------------------------------------------
 
 func (s *StorageFilesService) CreateItem(targetType, targetID, relPath string, isDir bool) error {
-	relPath = cleanRelPath(relPath)
+	var err error
+	relPath, err = cleanRelPath(relPath)
+	if err != nil {
+		return err
+	}
 	if relPath == "" || relPath == "." {
 		return fmt.Errorf("path required")
 	}
 
 	switch targetType {
 	case "docktun", "project":
-		basePath := s.resolveHostBasePath(targetType, targetID)
-		fullPath := filepath.Join(basePath, relPath)
+		fullPath, err := s.resolveHostPath(targetType, targetID, relPath, true)
+		if err != nil {
+			return err
+		}
 
 		if isDir {
 			return os.MkdirAll(fullPath, 0755)
@@ -607,20 +631,20 @@ func (s *StorageFilesService) CreateItem(targetType, targetID, relPath string, i
 // -----------------------------------------------------------------------------
 
 func (s *StorageFilesService) DeleteItem(targetType, targetID, relPath string) error {
-	relPath = cleanRelPath(relPath)
+	var err error
+	relPath, err = cleanRelPath(relPath)
+	if err != nil {
+		return err
+	}
 	if relPath == "" || relPath == "." || relPath == "/" {
 		return fmt.Errorf("cannot delete root path")
 	}
 
 	switch targetType {
 	case "docktun", "project":
-		basePath := s.resolveHostBasePath(targetType, targetID)
-		fullPath := filepath.Join(basePath, relPath)
-
-		cleanBase := filepath.Clean(basePath)
-		cleanTarget := filepath.Clean(fullPath)
-		if cleanTarget == cleanBase || !strings.HasPrefix(cleanTarget, cleanBase+string(filepath.Separator)) {
-			return fmt.Errorf("access denied: cannot delete outside root")
+		fullPath, err := s.resolveHostPath(targetType, targetID, relPath, false)
+		if err != nil {
+			return err
 		}
 
 		return os.RemoveAll(fullPath)
@@ -676,42 +700,101 @@ func (s *StorageFilesService) getRunnerImage() string {
 	return "alpine:3.19"
 }
 
-func (s *StorageFilesService) resolveHostBasePath(targetType, targetID string) string {
+func (s *StorageFilesService) resolveHostBasePath(targetType, targetID string) (string, error) {
 	if targetType == "docktun" {
 		switch targetID {
 		case "app_data":
-			return "/app/data"
+			return "/app/data", nil
 		case "cloudflared":
-			return "/etc/cloudflared"
+			return "/etc/cloudflared", nil
 		case "projects":
-			return "/opt/projects"
+			return "/opt/projects", nil
 		default:
-			return "/app/data"
+			return "", fmt.Errorf("unknown DockTun storage target: %s", targetID)
 		}
 	}
 
 	if targetType == "project" {
-		pid, _ := strconv.Atoi(targetID)
-		var path string
-		_ = s.db.QueryRow("SELECT path FROM projects WHERE id = ?", pid).Scan(&path)
-		if path != "" {
-			return path
+		pid, err := strconv.Atoi(targetID)
+		if err != nil || pid <= 0 {
+			return "", fmt.Errorf("invalid project target: %s", targetID)
 		}
-		return "/opt/projects"
+		var path string
+		if err := s.db.QueryRow("SELECT path FROM projects WHERE id = ?", pid).Scan(&path); err != nil || strings.TrimSpace(path) == "" {
+			return "", fmt.Errorf("project not found: %s", targetID)
+		}
+		return path, nil
 	}
 
-	return "/app/data"
+	return "", fmt.Errorf("unsupported host storage target: %s", targetType)
 }
 
-func cleanRelPath(p string) string {
+func (s *StorageFilesService) resolveHostPath(targetType, targetID, relPath string, allowMissing bool) (string, error) {
+	basePath, err := s.resolveHostBasePath(targetType, targetID)
+	if err != nil {
+		return "", err
+	}
+	basePath, err = filepath.EvalSymlinks(basePath)
+	if err != nil {
+		return "", fmt.Errorf("storage root unavailable: %w", err)
+	}
+	fullPath := filepath.Join(basePath, filepath.FromSlash(relPath))
+	cleanBase := filepath.Clean(basePath)
+	cleanTarget := filepath.Clean(fullPath)
+	if cleanTarget == cleanBase || !strings.HasPrefix(cleanTarget, cleanBase+string(filepath.Separator)) {
+		if relPath != "" {
+			return "", fmt.Errorf("access denied: path is outside storage root")
+		}
+		return cleanBase, nil
+	}
+	checkPath := cleanTarget
+	if allowMissing {
+		for {
+			if _, statErr := os.Lstat(checkPath); statErr == nil {
+				break
+			}
+			parent := filepath.Dir(checkPath)
+			if parent == checkPath {
+				return "", fmt.Errorf("invalid storage path")
+			}
+			checkPath = parent
+		}
+	}
+	resolved, err := filepath.EvalSymlinks(checkPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid storage path: %w", err)
+	}
+	if resolved != cleanBase && !strings.HasPrefix(resolved, cleanBase+string(filepath.Separator)) {
+		return "", fmt.Errorf("access denied: path resolves outside storage root")
+	}
+	if checkPath != cleanTarget {
+		relative, err := filepath.Rel(checkPath, cleanTarget)
+		if err != nil {
+			return "", fmt.Errorf("invalid storage path: %w", err)
+		}
+		fullPath = filepath.Join(resolved, relative)
+	}
+	return fullPath, nil
+}
+
+func cleanRelPath(p string) (string, error) {
 	p = strings.TrimSpace(p)
+	p = strings.ReplaceAll(p, "\\", "/")
+	if strings.ContainsAny(p, "\x00\r\n") {
+		return "", fmt.Errorf("invalid path")
+	}
+	for _, part := range strings.Split(p, "/") {
+		if part == ".." {
+			return "", fmt.Errorf("parent directory traversal is not allowed")
+		}
+	}
 	p = filepath.Clean(p)
 	p = strings.TrimPrefix(p, "/")
 	p = strings.TrimPrefix(p, "\\")
 	if p == "." {
-		return ""
+		return "", nil
 	}
-	return filepath.ToSlash(p)
+	return filepath.ToSlash(p), nil
 }
 
 func isBinaryContent(data []byte) bool {

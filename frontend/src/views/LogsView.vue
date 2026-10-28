@@ -58,17 +58,24 @@ const wsStatus = ref('DISCONNECTED')
 const loadingContainerLogs = ref(false)
 const copied = ref(false)
 
-const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/logs/ws?token=${authStore.token}`
 let ws: WebSocket | null = null
 let containerPollTimer: any = null
 
-function connectWs() {
+async function connectWs() {
   if (ws) {
     ws.close()
     ws = null
   }
-  ws = new WebSocket(wsUrl)
   wsStatus.value = 'CONNECTING'
+  try {
+    const { ticket } = await apiFetch<{ ticket: string }>('/api/logs/ws-ticket', { method: 'POST' })
+    if (!ticket) throw new Error('WebSocket ticket was not returned')
+    const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/logs/ws?ticket=${encodeURIComponent(ticket)}`
+    ws = new WebSocket(wsUrl)
+  } catch {
+    wsStatus.value = 'CLOSED'
+    return
+  }
   ws.onopen = () => {
     wsStatus.value = 'OPEN'
   }

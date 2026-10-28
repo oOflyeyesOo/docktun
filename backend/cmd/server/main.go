@@ -103,7 +103,7 @@ func main() {
 
   statusHandler := handler.NewStatus(cfdSvc, cfg)
   controlHandler := handler.NewControl(cfdSvc, auditSvc)
-  logsHandler := handler.NewLogs(hub, cfg.JWTSecret)
+  logsHandler := handler.NewLogs(hub)
   configHandler := handler.NewConfig(configSvc, auditSvc, cfAPISvc)
   tcpHandler := handler.NewTcpAccess(cfdSvc)
   auditHandler := handler.NewAudit(auditSvc)
@@ -148,6 +148,7 @@ func main() {
     r.Put("/api/provider/cloudflare/credentials", controlHandler.Connector)
 
     r.Get("/api/logs/history", logsHandler.History)
+    r.Post("/api/logs/ws-ticket", logsHandler.IssueTicket)
 
     r.Get("/api/config", configHandler.Get)
     r.Put("/api/config", configHandler.Update)

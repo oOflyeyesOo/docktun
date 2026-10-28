@@ -1,37 +1,63 @@
 package handler
 
 import (
+	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"docktun/internal/ws"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 )
 
 var upgrader = websocket.Upgrader{}
 
 type Logs struct {
-	hub    *ws.Hub
-	secret string
+	hub     *ws.Hub
+	tickets map[string]time.Time
+	mu      sync.Mutex
 }
 
-func NewLogs(hub *ws.Hub, secret string) *Logs {
-	return &Logs{hub: hub, secret: secret}
+func NewLogs(hub *ws.Hub) *Logs {
+	return &Logs{hub: hub, tickets: make(map[string]time.Time)}
+}
+
+func (h *Logs) IssueTicket(w http.ResponseWriter, r *http.Request) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		http.Error(w, `{"error":"unable to create WebSocket ticket"}`, http.StatusInternalServerError)
+		return
+	}
+	ticket := fmt.Sprintf("%x", raw)
+	h.mu.Lock()
+	now := time.Now()
+	for existing, expires := range h.tickets {
+		if !expires.After(now) {
+			delete(h.tickets, existing)
+		}
+	}
+	h.tickets[ticket] = time.Now().Add(60 * time.Second)
+	h.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"ticket": ticket})
 }
 
 func (h *Logs) Stream(w http.ResponseWriter, r *http.Request) {
-	tokenStr := r.URL.Query().Get("token")
-	if tokenStr == "" {
+	ticket := r.URL.Query().Get("ticket")
+	if ticket == "" {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
-	_, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
-		return []byte(h.secret), nil
-	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired())
-	if err != nil {
+	h.mu.Lock()
+	expires, ok := h.tickets[ticket]
+	if ok {
+		delete(h.tickets, ticket)
+	}
+	h.mu.Unlock()
+	if !ok || time.Now().After(expires) {
 		http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 		return
 	}
