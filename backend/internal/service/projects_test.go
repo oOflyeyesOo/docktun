@@ -546,3 +546,70 @@ func TestProjectSettingsPreserveMaskedGitCredentials(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteOptionsChecksFolderWithoutChangingIt(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	database, err := db.New(filepath.Join(root, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	svc := NewProjects(database, "")
+	folder := filepath.Join(root, "projects", "available")
+	if err := os.MkdirAll(folder, 0755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(folder, "keep.txt")
+	if err := os.WriteFile(marker, []byte("untouched"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	project, err := svc.Create("available", folder, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, err := svc.DeleteOptions(project.ID)
+	if err != nil || !options.CanRemoveFiles || options.Path != folder || options.Reason != "" {
+		t.Fatalf("available folder: %+v %v", options, err)
+	}
+	if content, err := os.ReadFile(marker); err != nil || string(content) != "untouched" {
+		t.Fatal("availability check changed files")
+	}
+	for _, path := range []string{filepath.Join(root, "projects", "missing"), root, marker} {
+		other, err := svc.Create("other", path, "", "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := svc.DeleteOptions(other.ID)
+		if err != nil || result.CanRemoveFiles || result.Reason == "" {
+			t.Fatalf("unsafe/unavailable folder: %+v %v", result, err)
+		}
+	}
+	link := filepath.Join(root, "projects", "linked")
+	if err := os.Symlink(folder, link); err != nil {
+		t.Fatal(err)
+	}
+	linked, err := svc.Create("linked", link, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := svc.DeleteOptions(linked.ID); err != nil || result.CanRemoveFiles {
+		t.Fatalf("symlink offered for removal: %+v %v", result, err)
+	}
+	// The actual deletion must still recheck: the folder may disappear after the dialog opens.
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(folder); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteProject(project.ID, false, true); err == nil {
+		t.Fatal("stale availability bypassed deletion guard")
+	}
+	if _, err := svc.GetByID(project.ID); err != nil {
+		t.Fatal("failed file removal deleted stack record")
+	}
+	if result, err := svc.DeleteOptions(project.ID); err != nil || result.CanRemoveFiles {
+		t.Fatalf("missing folder stayed selectable: %+v %v", result, err)
+	}
+}

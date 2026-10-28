@@ -649,6 +649,9 @@ const showDeleteStackModal = ref<{ projectId: number; projectName: string; path?
 const deleteStackDown = ref(true)
 const deleteStackRemoveFiles = ref(false)
 const deleteStackLoading = ref(false)
+const deleteStackFolderChecking = ref(false)
+const deleteStackFolderAvailable = ref(false)
+const deleteStackFolderReason = ref('')
 
 const filteredContainers = computed(() => {
   return containers.value.filter((c) => {
@@ -1392,10 +1395,26 @@ async function openStackHistory(projectId: number, projectName: string) {
   }
 }
 
-function openDeleteStackPrompt(projectId: number, projectName: string, path?: string) {
+async function openDeleteStackPrompt(projectId: number, projectName: string, path?: string) {
   showDeleteStackModal.value = { projectId, projectName, path }
+  const dialog = showDeleteStackModal.value
   deleteStackDown.value = true
   deleteStackRemoveFiles.value = false
+  deleteStackFolderAvailable.value = false
+  deleteStackFolderReason.value = ''
+  deleteStackFolderChecking.value = true
+  try {
+    const options = await apiFetch<{ path: string; can_remove_files: boolean; reason?: string }>(`/api/projects/${projectId}/delete-options`)
+    if (showDeleteStackModal.value?.projectId !== projectId || showDeleteStackModal.value !== dialog) return
+    deleteStackFolderAvailable.value = options.can_remove_files === true
+    deleteStackFolderReason.value = options.reason || 'Folder removal is unavailable. You can still remove the stack containers.'
+    showDeleteStackModal.value.path = options.path
+  } catch {
+    if (showDeleteStackModal.value?.projectId !== projectId || showDeleteStackModal.value !== dialog) return
+    deleteStackFolderReason.value = 'Could not check this folder. You can still remove the stack containers.'
+  } finally {
+    if (showDeleteStackModal.value === dialog) deleteStackFolderChecking.value = false
+  }
 }
 
 async function confirmDeleteStack() {
@@ -1404,7 +1423,7 @@ async function confirmDeleteStack() {
   deleteStackLoading.value = true
   try {
     const downParam = deleteStackDown.value ? 'true' : 'false'
-    const removeFilesParam = deleteStackRemoveFiles.value ? 'true' : 'false'
+    const removeFilesParam = deleteStackRemoveFiles.value && deleteStackFolderAvailable.value && !deleteStackFolderChecking.value ? 'true' : 'false'
     await apiFetch(`/api/projects/${projectId}?down=${downParam}&remove_files=${removeFilesParam}`, {
       method: 'DELETE',
     })
@@ -4345,11 +4364,15 @@ onUnmounted(() => {
             </div>
           </label>
 
-          <label class="flex items-start gap-2 cursor-pointer pt-2 border-t border-slate-200">
-            <input type="checkbox" v-model="deleteStackRemoveFiles" class="mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer" />
+          <label class="flex items-start gap-2 pt-2 border-t border-slate-200" :class="deleteStackFolderAvailable && !deleteStackLoading ? 'cursor-pointer' : 'cursor-not-allowed'">
+            <input type="checkbox" v-model="deleteStackRemoveFiles" :disabled="deleteStackFolderChecking || !deleteStackFolderAvailable || deleteStackLoading" aria-describedby="delete-stack-folder-help" class="mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500 disabled:opacity-40 disabled:cursor-not-allowed" />
             <div>
-              <span class="font-semibold text-rose-700">Delete project folder from disk</span>
-              <p class="text-slate-500 text-[11px]">Permanently removes <code class="font-mono">{{ showDeleteStackModal.path || 'the project directory' }}</code>, including files stored inside it. Only folders inside DockTun’s projects folder can be removed.</p>
+              <span class="font-semibold" :class="deleteStackFolderAvailable ? 'text-rose-700' : 'text-slate-400'">Delete project folder from disk</span>
+              <p id="delete-stack-folder-help" role="status" aria-live="polite" class="text-slate-500 text-[11px]">
+                <template v-if="deleteStackFolderChecking">Checking whether the project folder can be removed…</template>
+                <template v-else-if="!deleteStackFolderAvailable">{{ deleteStackFolderReason }}</template>
+                <template v-else>Permanently removes <code class="font-mono">{{ showDeleteStackModal.path }}</code>, including files stored inside it. Only folders inside DockTun’s projects folder can be removed.</template>
+              </p>
             </div>
           </label>
         </div>

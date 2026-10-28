@@ -141,6 +141,22 @@ func (h *Projects) Update(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
+func (h *Projects) DeleteOptions(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		jsonError(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+	options, err := h.svc.DeleteOptions(id)
+	if err != nil {
+		jsonError(w, "project not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(options)
+}
+
 func (h *Projects) Delete(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
 	p, err := h.svc.GetByID(id)

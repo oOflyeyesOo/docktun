@@ -194,6 +194,7 @@ func main() {
     r.Post("/api/projects/prune", projectsHandler.Prune)
     r.Put("/api/projects/{id}", projectsHandler.Update)
     r.Delete("/api/projects/{id}", projectsHandler.Delete)
+    r.Get("/api/projects/{id}/delete-options", projectsHandler.DeleteOptions)
     r.Get("/api/projects/{id}/history", projectsHandler.History)
     r.Get("/api/projects/{id}/output", projectsHandler.Output)
     r.Post("/api/projects/{id}/{action}", projectsHandler.Action)
