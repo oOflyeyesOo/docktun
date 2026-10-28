@@ -82,6 +82,10 @@ try:
     managed_compose = 'services:\n  app:\n    image: alpine:3.23\n    command: ["sleep", "3600"]\n    volumes:\n      - ./content:/content:ro\n    secrets: [key]\n    configs:\n      - source: settings\n        target: /etc/app.conf\n  optional:\n    image: alpine:3.23\n    command: ["sleep", "3600"]\n    profiles: [optional]\nsecrets:\n  key:\n    file: ./content/key\nconfigs:\n  settings:\n    file: ./content/settings\n'
     created = request('/api/projects', {'name': 'managed-example', 'compose_content': managed_compose, 'auto_start': False}, expected=201)
     assert created['path'] == '/opt/projects/managed-example', created
+    request(f"/api/projects/{created['id']}/delete-options", expected=401, authenticated=False)
+    available = request(f"/api/projects/{created['id']}/delete-options")
+    assert available['can_remove_files'] and available['path'] == created['path'], available
+
     inner('exec', 'docktun', 'mkdir', '-p', created['path'] + '/content')
     inner('exec', 'docktun', 'sh', '-c', 'printf shared-project-marker > /opt/projects/managed-example/content/marker')
     inner('exec', 'docktun', 'sh', '-c', 'printf shared-secret-marker > /opt/projects/managed-example/content/key; printf shared-config-marker > /opt/projects/managed-example/content/settings')
@@ -165,6 +169,9 @@ networks:
     if isinstance(containers, dict): containers = containers['containers']
     target = next(c for c in containers if c.get('project_name') == 'deletion-test')
     project_id = target['project_id']
+    unavailable = request(f'/api/projects/{project_id}/delete-options')
+    assert not unavailable['can_remove_files'] and unavailable['reason'], unavailable
+
     before_volumes = set(inner('volume', 'ls', '-q').splitlines())
     before_ids = set(inner('ps', '-aq', '--filter', 'label=com.docker.compose.project=deletion-test').splitlines())
     assert len(before_ids) == 2

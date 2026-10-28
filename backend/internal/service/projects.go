@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -325,6 +326,35 @@ func (s *Projects) removeStackResources(name string) error {
 	}
 	// No -v: named and anonymous volumes, images and external networks survive.
 	return nil
+}
+
+// DeleteOptions checks the same folder policy enforced again during deletion.
+// This is advisory: files can change after the dialog is opened.
+type ProjectDeleteOptions struct {
+	Path           string `json:"path"`
+	CanRemoveFiles bool   `json:"can_remove_files"`
+	Reason         string `json:"reason,omitempty"`
+}
+
+func (s *Projects) DeleteOptions(id int) (ProjectDeleteOptions, error) {
+	project, err := s.GetByID(id)
+	if err != nil {
+		return ProjectDeleteOptions{}, err
+	}
+	options := ProjectDeleteOptions{Path: project.Path}
+	if err := s.validateProjectRemoval(project.Path); err != nil {
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			options.Reason = "This folder is not available inside DockTun. You can still remove the stack containers."
+		case errors.Is(err, os.ErrPermission):
+			options.Reason = "DockTun cannot access this folder. You can still remove the stack containers."
+		default:
+			options.Reason = err.Error()
+		}
+		return options, nil
+	}
+	options.CanRemoveFiles = true
+	return options, nil
 }
 
 func (s *Projects) validateProjectRemoval(projectPath string) error {
