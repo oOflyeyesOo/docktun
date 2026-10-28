@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { Cpu, HardDrive, MemoryStick, Clock, RefreshCw, Plus, ArrowRight, AlertCircle } from 'lucide-vue-next'
+import { Cpu, HardDrive, MemoryStick, Clock, RefreshCw, Plus, ArrowRight, AlertCircle, CheckCircle2, Server, ShieldCheck, Activity } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
+import { useAuthStore } from '../stores/auth'
 import { summarizeInventory, summarizeUsage, formatBytes, formatUptime } from '../lib/overview-stats.mjs'
 const { apiFetch } = useApi()
+const authStore = useAuthStore()
 const containers = ref<any[] | null>(null)
 const metrics = ref<any>(null)
 const status = ref<any>(null)
@@ -43,6 +45,12 @@ const resourceCards = computed(() => {
 const wireguardCompanion = computed(() => containers.value?.find(c => c.name === 'docktun-wireguard'))
 const cloudflareState = computed(() => statusError.value ? 'Unavailable' : !status.value ? 'Loading' : status.value.running ? 'Running' : status.value.status === 'not installed' ? 'Not installed' : status.value.status || 'Unknown')
 const wireguardState = computed(() => error.value ? 'Unavailable' : !containers.value ? 'Loading' : !wireguardCompanion.value ? 'Existing VPN' : wireguardCompanion.value.running ? 'Companion running' : 'Companion stopped')
+const overallHealth = computed(() => {
+  if (error.value && statusError.value) return { label: 'Connection unavailable', detail: 'DockTun could not read Docker or service state.', tone: 'rose' }
+  if (stats.value.attention.length || status.value?.running === false) return { label: 'Attention required', detail: `${stats.value.attention.length || 0} container issue${stats.value.attention.length === 1 ? '' : 's'} reported.`, tone: 'amber' }
+  if (!containers.value || !status.value) return { label: 'Collecting status', detail: 'Waiting for the first health snapshot.', tone: 'indigo' }
+  return { label: 'All systems operational', detail: 'Docker and managed containers are responding normally.', tone: 'emerald' }
+})
 let pending = false
 let timer: ReturnType<typeof setInterval>
 async function refresh() {
@@ -78,58 +86,73 @@ onUnmounted(() => clearInterval(timer))
 
 <template>
   <div class="space-y-6">
-    <header class="flex flex-wrap items-center justify-between gap-4">
-      <div><div class="flex flex-wrap items-center gap-3"><h1 class="text-2xl font-bold text-slate-900">Docker overview</h1><button v-if="stats.attention.length" class="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800" @click="attentionPanel?.scrollIntoView({ behavior: 'smooth', block: 'start' })">{{ stats.attention.length }} need attention</button></div><p class="mt-1 text-sm text-slate-600">Container health, resource usage, and optional exposure at a glance.</p><p class="mt-1 text-xs text-slate-500">Refreshes every 15 seconds<span v-if="lastUpdated"> · Inventory and usage updated {{ lastUpdated.toLocaleTimeString() }}</span></p></div>
-      <div class="flex gap-2"><button class="cyber-btn-secondary" :disabled="loading" @click="refresh" aria-label="Refresh overview"><RefreshCw class="h-4 w-4" :class="{ 'animate-spin': loading }" /></button><router-link to="/containers?launch=true" class="cyber-btn inline-flex items-center gap-2"><Plus class="h-4 w-4" />Create container</router-link></div>
+    <header class="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-600">Workspace status</p>
+        <h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-950">Good morning, {{ authStore?.username || 'admin' }}</h1>
+        <p class="mt-1 text-sm text-slate-600">A live view of Docker, containers, resources, and exposure.</p>
+      </div>
+      <div class="flex gap-2">
+        <button class="cyber-btn-secondary" :disabled="loading" @click="refresh" aria-label="Refresh overview"><RefreshCw class="h-4 w-4" :class="{ 'animate-spin': loading }" /></button>
+        <router-link to="/containers?launch=true" class="cyber-btn inline-flex items-center gap-2"><Plus class="h-4 w-4" />Create container</router-link>
+      </div>
     </header>
+
+    <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div class="flex flex-wrap items-center justify-between gap-5 border-b border-slate-100 bg-gradient-to-r from-indigo-50 via-white to-sky-50 px-5 py-5 sm:px-7">
+        <div class="flex items-center gap-4">
+          <div class="flex h-12 w-12 items-center justify-center rounded-2xl" :class="overallHealth.tone === 'emerald' ? 'bg-emerald-100 text-emerald-700' : overallHealth.tone === 'amber' ? 'bg-amber-100 text-amber-700' : overallHealth.tone === 'rose' ? 'bg-rose-100 text-rose-700' : 'bg-indigo-100 text-indigo-700'">
+            <CheckCircle2 v-if="overallHealth.tone === 'emerald'" class="h-6 w-6" />
+            <AlertCircle v-else class="h-6 w-6" />
+          </div>
+          <div><div class="flex flex-wrap items-center gap-2"><h2 class="text-lg font-semibold text-slate-950">{{ overallHealth.label }}</h2><span class="rounded-full bg-white/80 px-2 py-0.5 text-xs text-slate-600">{{ lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString()}` : 'Updating…' }}</span></div><p class="mt-1 text-sm text-slate-600">{{ overallHealth.detail }}</p></div>
+        </div>
+        <button v-if="stats.attention.length" class="text-sm font-medium text-amber-800 underline underline-offset-2" @click="attentionPanel?.scrollIntoView({ behavior: 'smooth', block: 'start' })">Review {{ stats.attention.length }} issue{{ stats.attention.length === 1 ? '' : 's' }}</button>
+        <span v-else class="inline-flex items-center gap-2 text-sm font-medium text-emerald-700"><ShieldCheck class="h-4 w-4" />No active alerts</span>
+      </div>
+      <div class="grid grid-cols-2 divide-x divide-slate-100 sm:grid-cols-4">
+        <router-link v-for="item in inventoryCards.slice(0, 4)" :key="item.label" :to="{ path: '/containers', query: { filter: item.filter } }" class="px-5 py-4 transition hover:bg-slate-50 sm:px-7"><p class="text-xs text-slate-500">{{ item.label }}</p><p class="mt-1 text-2xl font-semibold tabular-nums text-slate-950">{{ containers ? item.value : '—' }}</p></router-link>
+      </div>
+    </section>
+
     <p v-if="error" role="alert" class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{{ error }} {{ containers ? 'Previous inventory is shown.' : 'Inventory is unavailable.' }}</p>
-    <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-      <router-link v-for="item in inventoryCards" :key="item.label" :to="{ path: '/containers', query: { filter: item.filter } }" class="cyber-card block !p-4 hover:border-indigo-300"><p class="text-xs text-slate-600">{{ item.label }}</p><p class="mt-2 text-2xl font-semibold text-slate-900">{{ containers ? item.value : '—' }}</p></router-link>
-    </div>
     <section class="space-y-3" aria-label="System resource usage">
-      <div class="flex flex-wrap items-center justify-between gap-2"><h2 class="font-semibold">Resources</h2><router-link to="/metrics" class="text-sm text-indigo-700">Detailed metrics →</router-link></div>
+      <div class="flex flex-wrap items-center justify-between gap-2"><div><h2 class="text-lg font-semibold text-slate-950">Resource pulse</h2><p class="text-sm text-slate-500">Live capacity across the Docker host and managed containers.</p></div><router-link to="/metrics" class="inline-flex items-center gap-1 text-sm font-medium text-indigo-700">Open full metrics <ArrowRight class="h-4 w-4" /></router-link></div>
       <p v-if="metricsError" role="status" class="text-sm text-amber-800">{{ metricsError }} {{ metrics ? 'Previous samples are shown.' : 'No resource samples are available.' }}</p>
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <router-link v-for="card in resourceCards" :key="card.label" :to="card.to" class="cyber-card block space-y-3 hover:border-indigo-300">
+        <router-link v-for="card in resourceCards" :key="card.label" :to="card.to" class="cyber-card block space-y-3 hover:-translate-y-0.5 hover:border-indigo-300">
           <div class="flex items-center justify-between text-sm text-slate-600"><span>{{ card.label }}</span><component :is="card.icon" class="h-4 w-4 text-indigo-600" /></div>
-          <p class="text-2xl font-semibold text-slate-900">{{ card.value }}</p>
+          <p class="text-2xl font-semibold tabular-nums text-slate-950">{{ card.value }}</p>
           <div v-if="card.progress !== null" role="progressbar" :aria-label="card.label" :aria-valuenow="Math.min(100, Math.max(0, card.progress))" aria-valuemin="0" aria-valuemax="100" class="h-1.5 overflow-hidden rounded-full bg-slate-100"><div class="h-full rounded-full" :class="card.progress >= 90 ? 'bg-amber-500' : 'bg-indigo-500'" :style="{ width: `${Math.min(100, Math.max(0, card.progress))}%` }"></div></div>
           <p class="text-xs text-slate-500">{{ card.detail }}</p>
         </router-link>
       </div>
-      <p class="text-xs text-slate-500">CPU covers containers, excluding other host processes. Memory and uptime describe the Linux host or Docker VM; disk capacity covers the filesystem serving DockTun’s data.</p>
-      <div class="flex flex-wrap gap-x-4 gap-y-1 rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
-        <span class="font-medium" :class="engine?.server_version ? 'text-emerald-700' : 'text-slate-500'">Docker {{ engine?.server_version || (loading ? 'loading…' : 'unavailable') }}</span><span v-if="engine?.operating_system">{{ engine.operating_system }}</span><span v-if="engine?.architecture">{{ engine.architecture }}</span><span v-if="engine?.cpus">{{ engine.cpus }} CPUs</span><span v-if="engine?.server_version">{{ engine.images_count ?? 0 }} images</span>
-      </div>
-      <p v-if="statusError" class="text-xs text-amber-800">{{ statusError }}</p>
+      <div class="flex flex-wrap gap-x-4 gap-y-1 rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600"><span class="font-medium" :class="engine?.server_version ? 'text-emerald-700' : 'text-slate-500'">Docker {{ engine?.server_version || (loading ? 'loading…' : 'unavailable') }}</span><span v-if="engine?.operating_system">{{ engine.operating_system }}</span><span v-if="engine?.architecture">{{ engine.architecture }}</span><span v-if="engine?.cpus">{{ engine.cpus }} CPUs</span><span v-if="engine?.server_version">{{ engine.images_count ?? 0 }} images</span></div>
     </section>
-    <div class="grid items-start gap-6 xl:grid-cols-2">
+
+    <div class="grid items-start gap-6 xl:grid-cols-[1.25fr_0.75fr]">
       <section class="cyber-card space-y-4">
-        <div class="flex items-center justify-between gap-2"><h2 class="font-semibold">Busiest containers</h2><router-link to="/metrics" class="text-sm text-indigo-700">All usage →</router-link></div>
-        <p v-if="metricsError" class="text-xs text-amber-800">Usage could not be refreshed.</p>
+        <div class="flex items-center justify-between gap-2"><div><h2 class="font-semibold">Busiest containers</h2><p class="text-xs text-slate-500">Sorted by current CPU usage.</p></div><router-link to="/metrics" class="text-sm text-indigo-700">All usage →</router-link></div>
         <p v-if="!usage.busiest.length" class="text-sm text-slate-500">{{ containers && !stats.running ? 'No running containers.' : 'Waiting for CPU samples from running containers.' }}</p>
         <div v-else class="overflow-x-auto"><table class="w-full text-left text-sm"><thead><tr class="border-b border-slate-200 text-xs text-slate-500"><th class="pb-2 pr-3 font-medium">Container</th><th class="pb-2 pr-3 font-medium">CPU</th><th class="pb-2 pr-3 font-medium">Memory</th><th class="pb-2 font-medium">Network I/O</th></tr></thead><tbody><tr v-for="container in usage.busiest" :key="container.id || container.name" class="border-b border-slate-100 last:border-0"><td class="py-3 pr-3"><router-link :to="{ path: '/containers', query: { name: container.name } }" class="font-medium text-indigo-700 hover:underline">{{ container.name }}</router-link></td><td class="whitespace-nowrap py-3 pr-3 tabular-nums">{{ container.cpu.toFixed(1) }}%</td><td class="whitespace-nowrap py-3 pr-3 tabular-nums">{{ container.mem_usage || '—' }}</td><td class="whitespace-nowrap py-3 text-xs tabular-nums">{{ container.net_io || '—' }}</td></tr></tbody></table></div>
-        <p class="text-xs text-slate-500">Sorted by CPU; 100% in this table means one core. Network I/O is cumulative, not a transfer rate.</p>
+        <p class="text-xs text-slate-500">100% represents one CPU core. Network I/O is cumulative.</p>
       </section>
       <section class="cyber-card space-y-4">
-        <div class="flex items-center justify-between"><h2 class="font-semibold">Exposure overview</h2><router-link to="/access" class="text-sm text-indigo-700">Providers →</router-link></div>
-        <p class="text-xs text-slate-500">All methods are optional. App counts reflect saved settings.</p>
-        <router-link to="/access?tab=cloudflare" class="block rounded-lg border border-slate-200 p-3 hover:border-indigo-300"><div class="flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-medium">Cloudflare</span><span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs" :class="status?.running && !statusError ? 'text-emerald-700' : 'text-slate-600'">{{ cloudflareState }}</span></div><p class="mt-1 text-xs text-slate-500">{{ containers ? stats.cloudflare : '—' }} apps configured<span v-if="status && !statusError"> · {{ status.ingress_count }} local ingress hostnames</span></p></router-link>
-        <router-link to="/access?tab=tailscale" class="block rounded-lg border border-slate-200 p-3 hover:border-indigo-300"><div class="flex items-center justify-between gap-2"><span class="text-sm font-medium">Tailscale</span><span class="text-xs text-slate-600">Per-app devices</span></div><p class="mt-1 text-xs text-slate-500">{{ containers ? stats.tailscale : '—' }} apps configured · {{ containers ? stats.tailscaleProxiesRunning : '—' }} app proxies running</p><p class="mt-1 text-xs text-slate-500">Device sign-in and connectivity are checked in each app’s Access tab.</p></router-link>
-        <router-link to="/access?tab=wireguard" class="block rounded-lg border border-slate-200 p-3 hover:border-indigo-300"><div class="flex flex-wrap items-center justify-between gap-2"><span class="text-sm font-medium">WireGuard</span><span class="text-xs text-slate-600">{{ wireguardState }}</span></div><p class="mt-1 text-xs text-slate-500">{{ containers ? stats.wireguard : '—' }} saved VPN addresses · VPN routing is configured separately.</p></router-link>
-        <router-link to="/containers?filter=exposed" class="inline-flex items-center gap-2 text-sm text-indigo-700">Manage app exposure <ArrowRight class="h-4 w-4" /></router-link>
+        <div class="flex items-center justify-between"><div><h2 class="font-semibold">Connectivity</h2><p class="text-xs text-slate-500">Exposure providers and managed routes.</p></div><Globe class="h-5 w-5 text-indigo-600" /></div>
+        <router-link to="/access?tab=cloudflare" class="flex items-center justify-between rounded-lg border border-slate-200 p-3 hover:border-indigo-300"><span class="flex items-center gap-2 text-sm font-medium"><Activity class="h-4 w-4 text-indigo-600" />Cloudflare</span><span class="text-xs text-slate-600">{{ cloudflareState }}</span></router-link>
+        <router-link to="/access?tab=tailscale" class="flex items-center justify-between rounded-lg border border-slate-200 p-3 hover:border-indigo-300"><span class="flex items-center gap-2 text-sm font-medium"><Globe class="h-4 w-4 text-indigo-600" />Tailscale</span><span class="text-xs text-slate-600">{{ containers ? stats.tailscale : '—' }} apps</span></router-link>
+        <router-link to="/access?tab=wireguard" class="flex items-center justify-between rounded-lg border border-slate-200 p-3 hover:border-indigo-300"><span class="flex items-center gap-2 text-sm font-medium"><ShieldCheck class="h-4 w-4 text-indigo-600" />WireGuard</span><span class="text-xs text-slate-600">{{ wireguardState }}</span></router-link>
+        <router-link to="/access" class="inline-flex items-center gap-2 text-sm text-indigo-700">Manage providers <ArrowRight class="h-4 w-4" /></router-link>
       </section>
     </div>
     <section ref="attentionPanel" class="cyber-card space-y-4">
-      <div class="flex flex-wrap items-center justify-between gap-2"><h2 class="font-semibold">Needs attention <span v-if="containers" class="ml-1 text-sm text-slate-500">{{ stats.attention.length }}</span></h2><router-link to="/containers" class="text-sm text-indigo-700">All containers →</router-link></div>
+      <div class="flex flex-wrap items-center justify-between gap-2"><div><h2 class="font-semibold">Needs attention <span v-if="containers" class="ml-1 text-sm text-slate-500">{{ stats.attention.length }}</span></h2><p class="text-xs text-slate-500">Restarting, unhealthy, dead, or paused containers.</p></div><router-link to="/containers" class="text-sm text-indigo-700">All containers →</router-link></div>
       <p v-if="error" class="text-sm text-slate-600">Refresh to check current health.</p>
-      <p v-else-if="!stats.attention.length" class="text-sm text-slate-600">{{ !containers ? 'Loading containers…' : stats.total ? 'No restarting, dead, or unhealthy containers reported.' : 'No containers found. Create a container or import a Compose stack to get started.' }}</p>
-      <p v-if="stats.paused" class="text-xs text-slate-500">{{ stats.paused }} paused containers; paused and restarting states are included in the not-running count.</p>
+      <p v-else-if="!stats.attention.length" class="flex items-center gap-2 text-sm text-emerald-700"><CheckCircle2 class="h-4 w-4" />{{ !containers ? 'Loading containers…' : stats.total ? 'No container issues reported.' : 'No containers found. Create one to get started.' }}</p>
       <router-link v-for="container in stats.attention.slice(0, 6)" :key="container.id" :to="{ path: '/containers', query: { name: container.name } }" class="flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 p-3"><span class="flex items-center gap-2 text-sm font-medium"><AlertCircle class="h-4 w-4 text-amber-700" />{{ container.name }}</span><span class="text-xs text-slate-600">{{ container.status || container.state }}</span></router-link>
-      <p v-if="stats.attention.length > 6" class="text-xs text-slate-500">{{ stats.attention.length - 6 }} more containers need attention. Open the container list to review them.</p>
     </section>
     <section class="cyber-card space-y-4">
-      <div class="flex items-center justify-between"><h2 class="font-semibold">Recent activity</h2><router-link to="/logs?tab=audit" class="text-sm text-indigo-700">View audit log →</router-link></div>
+      <div class="flex items-center justify-between"><div><h2 class="font-semibold">Recent activity</h2><p class="text-xs text-slate-500">The latest changes recorded by DockTun.</p></div><router-link to="/logs?tab=audit" class="text-sm text-indigo-700">View audit log →</router-link></div>
       <p v-if="auditError" class="text-sm text-amber-800">{{ auditError }} {{ events.length ? 'Previous activity is shown.' : '' }}</p>
       <p v-else-if="!events.length" class="text-sm text-slate-500">No recent activity to show.</p>
       <div v-for="(event, index) in events" :key="event.id || index" class="flex flex-wrap justify-between gap-2 border-t border-slate-100 pt-3 text-sm"><span class="text-slate-700">{{ event.details || event.action }}</span><time class="text-xs text-slate-500">{{ eventTime(event.created_at || event.timestamp) }}</time></div>
