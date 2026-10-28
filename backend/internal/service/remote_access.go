@@ -506,11 +506,25 @@ func (s *RemoteAccessService) defaultNetwork() string {
 }
 
 func (s *RemoteAccessService) TailscaleControl(action string) error {
+	action = strings.ToLower(action)
+	if s.dockerContainersSvc != nil {
+		s.dockerContainersSvc.exposureMu.Lock()
+		defer s.dockerContainersSvc.exposureMu.Unlock()
+	}
 	p := NewProviderContainers(s.cfg)
 	if s.runDocker != nil {
 		p.run = s.runDocker
 	}
-	return p.Control("tailscale", strings.ToLower(action))
+	if err := p.Control("tailscale", action); err != nil {
+		return err
+	}
+	if action != "stop" && s.dockerContainersSvc != nil {
+		if err := s.dockerContainersSvc.waitPendingTailscaleRules("docktun-tailscale"); err != nil {
+			_ = p.Control("tailscale", "stop")
+			return err
+		}
+	}
+	return nil
 }
 
 // ==============================================================================

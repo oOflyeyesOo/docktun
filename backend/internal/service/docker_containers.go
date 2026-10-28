@@ -27,6 +27,7 @@ import (
 )
 
 type ExposureSettings struct {
+	cleanup           *tailscaleRuleCleanup
 	TailscaleNode     string `json:"tailscale_node,omitempty"`
 	Mode              string `json:"mode"`
 	Hostname          string `json:"hostname,omitempty"`
@@ -1316,12 +1317,22 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 
 func (s *DockerContainers) Start(id string) error {
 	_ = s.EnsureDatabaseLinks(id)
-	return dockerCommand("start", id)
+	s.exposureMu.Lock()
+	defer s.exposureMu.Unlock()
+	if err := dockerCommand("start", id); err != nil {
+		return err
+	}
+	return s.finishTailscaleStart(id)
 }
 func (s *DockerContainers) Stop(id string) error { return dockerCommand("stop", id) }
 func (s *DockerContainers) Restart(id string) error {
 	_ = s.EnsureDatabaseLinks(id)
-	return dockerCommand("restart", id)
+	s.exposureMu.Lock()
+	defer s.exposureMu.Unlock()
+	if err := dockerCommand("restart", id); err != nil {
+		return err
+	}
+	return s.finishTailscaleStart(id)
 }
 
 type BatchActionResult struct {
@@ -1788,7 +1799,12 @@ func (s *DockerContainers) saveExposureToDB(name string, exp ExposureSettings) e
 		exp.ZeroTrustSession = "24h"
 	}
 
-	_, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`
 		INSERT INTO container_exposures (container_name, mode, hostname, target, private_type, private_host, private_port, notes, zero_trust_enabled, zero_trust_emails, zero_trust_app_id, zero_trust_auth_type, zero_trust_session, tailscale_node, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(container_name) DO UPDATE SET
@@ -1807,7 +1823,18 @@ func (s *DockerContainers) saveExposureToDB(name string, exp ExposureSettings) e
 			tailscale_node = excluded.tailscale_node,
 			updated_at = CURRENT_TIMESTAMP
 	`, name, exp.Mode, exp.Hostname, exp.Target, exp.PrivateType, exp.PrivateHost, exp.PrivatePort, exp.Notes, ztInt, exp.ZeroTrustEmails, exp.ZeroTrustAppID, exp.ZeroTrustAuthType, exp.ZeroTrustSession, exp.TailscaleNode)
-	return err
+	if err != nil {
+		return err
+	}
+	// A stopped helper cannot run the CLI. Record its exact old rule in the
+	// same transaction as the new exposure, for cleanup on explicit re-enable.
+	if pending := exp.cleanup; pending != nil {
+		if _, err = tx.Exec(`INSERT INTO tailscale_rule_cleanup (app, node, port, target) VALUES (?, ?, ?, ?)
+			ON CONFLICT(app, node, port) DO UPDATE SET target = excluded.target`, name, pending.Node, pending.Port, pending.Target); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *DockerContainers) updateZeroTrustAppID(name, appID string) error {

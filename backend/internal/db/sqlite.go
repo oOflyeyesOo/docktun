@@ -113,6 +113,14 @@ func (d *DB) migrate() error {
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
+		CREATE TABLE IF NOT EXISTS tailscale_rule_cleanup (
+			app TEXT NOT NULL,
+			node TEXT NOT NULL,
+			port INTEGER NOT NULL,
+			target TEXT NOT NULL,
+			PRIMARY KEY (app, node, port)
+		);
+
 		CREATE TABLE IF NOT EXISTS container_updates (
 			container_id TEXT PRIMARY KEY,
 			container_name TEXT NOT NULL,

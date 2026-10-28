@@ -40,6 +40,10 @@ const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: fa
 const { apiFetch } = useApi()
 const route = useRoute()
 
+function focusApiCredentials() {
+  document.getElementById('cloudflare-api-token')?.focus()
+}
+
 interface IngressRule {
   hostname: string
   service: string
@@ -773,7 +777,7 @@ onUnmounted(() => {
     </section>
     <section class="cyber-card p-5 space-y-4" aria-label="Cloudflare API credentials">
       <h2 class="font-semibold">API credentials</h2>
-      <p class="text-sm text-slate-600">This is separate from the connector token. Use Cloudflare Tunnel Read to view status and routes, Cloudflare Tunnel Edit to expose apps, and Zone DNS Edit to create their DNS records. Account ID is detected from a connector token when available.</p>
+      <p class="text-sm text-slate-600">The connector token runs the tunnel. Publishing Cloudflare-managed routes from DockTun requires a separate API token with account Cloudflare Tunnel Edit/Write and zone DNS Edit permissions; a DNS-only zone token cannot publish routes. Tunnel Read allows status and route queries. Account ID is detected from a connector token when available. See the setup guide below for token creation and permission names.</p>
         <div class="grid gap-4 md:grid-cols-2">
           <div class="col-span-full">
             <div class="flex items-center justify-between mb-1">
@@ -923,12 +927,12 @@ onUnmounted(() => {
       <div class="flex items-center gap-2 shrink-0">
         <button
           v-if="message.action === 'token_required'"
-          @click="activeTab = 'api'"
+          @click="focusApiCredentials"
           class="cyber-btn-secondary text-[11px] px-2.5 py-1 text-cyan-700 border-cyan-300 bg-cyan-100/60 hover:bg-cyan-200/60 font-sans font-bold flex items-center gap-1"
-          title="Open Cloudflare API & Edge tab to enter your API Token"
+          title="Enter your API token in API credentials above"
         >
           <KeyRound class="h-3 w-3 text-cyan-600" />
-          <span>Enter API Token (Tab 4)</span>
+          <span>Enter API token</span>
         </button>
         <button
           v-else-if="message.action === 'force_overwrite'"
