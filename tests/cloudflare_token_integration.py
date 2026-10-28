@@ -56,6 +56,20 @@ def api_writes():
     return [item for line in trace.splitlines() if (item := json.loads(line))['method'] != 'GET']
 
 
+def failure_diagnostics(names):
+    # These are disposable fixtures only. Keep diagnostics bounded and avoid
+    # full container inspect output, which would include environment settings.
+    for name in dict.fromkeys(names):
+        for label, args in [('state', ['inspect','--format','{{json .State}}',name]),
+                            ('logs', ['logs','--tail','25',name])]:
+            try:
+                result=subprocess.run(['docker','exec',engine,'docker',*args],text=True,capture_output=True,timeout=15)
+                output=(result.stdout+result.stderr).strip()
+                print('DIAGNOSTIC '+name+' '+label+' (exit '+str(result.returncode)+'):\n'+output[-6000:],flush=True)
+            except (OSError,subprocess.TimeoutExpired) as error:
+                print('DIAGNOSTIC '+name+' '+label+' unavailable: '+str(error),flush=True)
+
+
 public_exposure = {'mode':'public','hostname':'app.example.com','target':'http://fixture-app:8080'}
 
 server = r'''
@@ -202,7 +216,8 @@ try:
     authkey=json.loads(inner('exec','headscale','headscale','preauthkeys','create','--user',str(user['id']),'--expiration','1h','-o','json'))['key']
     inner('run','-d','--name','docktun-tailscale','--network','docktun',
         '-v','legacy-tailscale-state:/var/lib/tailscale','-v','certs:/testcert:ro',
-        '-e','SSL_CERT_FILE=/testcert/cert.pem','-e','TS_USERSPACE=true','-e','TS_STATE_DIR=/var/lib/tailscale','tailscale/tailscale:latest')
+        '-e','SSL_CERT_FILE=/testcert/cert.pem','-e','TS_USERSPACE=true','-e','TS_STATE_DIR=/var/lib/tailscale',
+        '-e','TS_AUTH_ONCE=true','tailscale/tailscale:latest')
     for _ in range(30):
         try: inner('exec','docktun-tailscale','tailscale','up','--login-server=https://headscale:443','--authkey='+authkey,'--hostname=legacy-shared','--accept-dns=false');break
         except RuntimeError:time.sleep(1)
@@ -399,6 +414,9 @@ try:
     passed = True
     if os.environ.get('DOCKTUN_KEEP_TEST_ENGINE')=='1':
         Path('../../outputs/cloudflare-test-preview.json').write_text(json.dumps({'engine':engine,'url':base,'username':'owner','password':'fixture-password-123'},indent=2))
+except Exception:
+    failure_diagnostics(['docktun','docktun-tailscale']+([node] if 'node' in globals() else []))
+    raise
 finally:
     if not passed or os.environ.get('DOCKTUN_KEEP_TEST_ENGINE')!='1':
         subprocess.run(['docker','rm','-f','-v',engine],stdout=subprocess.DEVNULL,check=False)
