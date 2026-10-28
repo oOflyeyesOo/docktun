@@ -3,6 +3,7 @@ package service
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -29,6 +30,7 @@ type ContainerTailscaleStatus struct {
 func (s *DockerContainers) ReconcileTailscaleAppNetworks() {
 	s.exposureMu.Lock()
 	defer s.exposureMu.Unlock()
+	s.reconcilePendingTailscaleRules()
 	for app, exposure := range s.loadAllExposuresFromDB() {
 		node := tailscaleNodeName(app)
 		if !tailscaleExposure(exposure) || exposure.TailscaleNode != node {
@@ -151,6 +153,9 @@ func (s *DockerContainers) ensureNodeResources(app string) error {
 	}
 	// Clean dormant rules before the app can be reached from this helper again.
 	if err = s.waitPendingTailscaleRules(node); err != nil {
+		if errors.Is(err, errTailscaleNeedsConnection) {
+			return nil // Sign-in can proceed; keep the app detached until cleanup.
+		}
 		return err
 	}
 	if _, connected := apps[0].NetworkSettings.Networks[node]; !connected {

@@ -2,7 +2,9 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -10,6 +12,42 @@ import (
 type tailscaleRuleCleanup struct {
 	App, Node, Target string
 	Port              int
+}
+
+var errTailscaleNeedsConnection = errors.New("connect Tailscale before cleaning its previous routes")
+
+// A login may finish after the start request returns. Retry only already
+// running, connected devices; never enable an unused provider from the ticker.
+func (s *DockerContainers) reconcilePendingTailscaleRules() {
+	if s.db == nil {
+		return
+	}
+	rows, err := s.db.Query(`SELECT app, node FROM tailscale_rule_cleanup`)
+	if err != nil {
+		return
+	}
+	nodes := map[string]string{}
+	for rows.Next() {
+		var app, node string
+		if rows.Scan(&app, &node) == nil {
+			nodes[node] = app
+		}
+	}
+	rows.Close()
+	for node, app := range nodes {
+		_, running, err := s.tailscaleNodeState(app, node)
+		if err != nil || !running {
+			continue
+		}
+		out, err := s.runExposure("exec", node, "tailscale", "status", "--json")
+		var status struct{ BackendState string }
+		if err != nil || json.Unmarshal(out, &status) != nil || status.BackendState != "Running" {
+			continue
+		}
+		if err := s.cleanPendingTailscaleRules(node); err != nil {
+			log.Printf("[docktun] pending Tailscale cleanup in %s: %v", node, err)
+		}
+	}
 }
 
 // Inspect before exec: an absent or stopped provider cannot have an active
@@ -100,13 +138,30 @@ func (s *DockerContainers) waitPendingTailscaleRules(node string) error {
 }
 
 func (s *DockerContainers) waitTailscaleServe(node string) error {
-	// A newly started tailscaled needs a moment to create its local socket.
+	// The socket can answer with an empty Serve configuration before the
+	// persisted profile has loaded. Wait for the connected backend as well.
 	var err error
+	var status struct{ BackendState string }
 	for attempt := 0; attempt < 20; attempt++ {
-		if _, err = s.runExposure("exec", node, "tailscale", "serve", "status", "--json"); err == nil {
-			return nil
+		var out []byte
+		out, err = s.runExposure("exec", node, "tailscale", "status", "--json")
+		if err == nil {
+			if err = json.Unmarshal(out, &status); err != nil {
+				return fmt.Errorf("invalid Tailscale backend status in %s: %w", node, err)
+			}
+			if status.BackendState == "Running" {
+				if _, err = s.runExposure("exec", node, "tailscale", "serve", "status", "--json"); err == nil {
+					return nil
+				}
+			}
 		}
 		time.Sleep(300 * time.Millisecond)
+	}
+	if err == nil && (status.BackendState == "NeedsLogin" || status.BackendState == "Stopped") {
+		return errTailscaleNeedsConnection
+	}
+	if err == nil {
+		err = fmt.Errorf("backend is %s", status.BackendState)
 	}
 	return fmt.Errorf("cannot clean previous Tailscale routes in %s: %w", node, err)
 }
@@ -128,6 +183,9 @@ func (s *DockerContainers) finishTailscaleStart(id string) error {
 		return err
 	}
 	if err = s.waitPendingTailscaleRules(name); err != nil {
+		if errors.Is(err, errTailscaleNeedsConnection) {
+			return nil // Leave the helper available for interactive sign-in.
+		}
 		_ = dockerCommand("stop", id)
 	}
 	return err

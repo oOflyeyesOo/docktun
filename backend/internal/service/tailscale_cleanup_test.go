@@ -221,7 +221,7 @@ func TestTailscaleUndoRestoresRuleBeforeAppConnectivity(t *testing.T) {
 			undo()
 			want := []string{"network connect " + node + " app"}
 			if running {
-				want = append([]string{"start " + node, "exec " + node + " tailscale serve status --json", "exec " + node + " tailscale serve --bg --tcp=80 tcp://app:8080"}, want...)
+				want = append([]string{"start " + node, "exec " + node + " tailscale status --json", "exec " + node + " tailscale serve status --json", "exec " + node + " tailscale serve --bg --tcp=80 tcp://app:8080"}, want...)
 			}
 			if strings.Join(calls, "\n") != strings.Join(want, "\n") {
 				t.Fatalf("unsafe rollback order: got %v, want %v", calls, want)
@@ -264,13 +264,140 @@ func TestTailscaleUndoWaitsForControlSocket(t *testing.T) {
 	undo()
 	want := []string{
 		"start " + node,
+		"exec " + node + " tailscale status --json",
 		"exec " + node + " tailscale serve status --json",
+		"exec " + node + " tailscale status --json",
 		"exec " + node + " tailscale serve status --json",
 		"exec " + node + " tailscale serve --bg --tcp=80 tcp://app:8080",
 		"network connect " + node + " app",
 	}
 	if statusAttempts != 2 || strings.Join(calls, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("rollback did not recover after socket startup: attempts %d, calls %v", statusAttempts, calls)
+	}
+}
+
+func TestPendingTailscaleCleanupWaitsForPersistedProfile(t *testing.T) {
+	setup := setupFixture(t)
+	var calls []string
+	node := tailscaleNodeName("app")
+	base := fakeNodeRunner("app", &calls)
+	backendChecks := 0
+	svc := &DockerContainers{db: setup.db}
+	svc.exposureDocker = func(ctx context.Context, args ...string) ([]byte, error) {
+		cmd := strings.Join(args, " ")
+		if cmd == "exec "+node+" tailscale status --json" {
+			calls = append(calls, cmd)
+			backendChecks++
+			pending, err := svc.pendingTailscaleRules(node)
+			if err != nil || len(pending) != 1 {
+				t.Fatalf("cleanup was consumed before the persisted profile loaded: %#v, %v", pending, err)
+			}
+			if backendChecks == 1 {
+				return []byte(`{"BackendState":"Starting"}`), nil
+			}
+			return []byte(`{"BackendState":"Running"}`), nil
+		}
+		if cmd == "exec "+node+" tailscale serve status --json" {
+			calls = append(calls, cmd)
+			if backendChecks < 2 {
+				// The real CLI can return this before loading persisted Serve rules.
+				return []byte(`{}`), nil
+			}
+			return []byte(`{"TCP":{"80":{"TCPForward":"app:8080"}}}`), nil
+		}
+		return base(ctx, args...)
+	}
+	if err := svc.saveExposureToDB("app", ExposureSettings{Mode: "public", cleanup: &tailscaleRuleCleanup{App: "app", Node: node, Port: 80, Target: "app:8080"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.waitPendingTailscaleRules(node); err != nil {
+		t.Fatal(err)
+	}
+	if backendChecks < 2 || !strings.Contains(strings.Join(calls, "\n"), "exec "+node+" tailscale serve --bg --tcp=80 off") {
+		t.Fatalf("early empty Serve response skipped persisted rule cleanup: %v", calls)
+	}
+	pending, err := svc.pendingTailscaleRules(node)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("loaded profile was not cleaned: %#v, %v", pending, err)
+	}
+}
+
+func TestSignedOutTailscaleKeepsCleanupAndAppDetachedUntilLogin(t *testing.T) {
+	setup := setupFixture(t)
+	var calls []string
+	node := tailscaleNodeName("app")
+	missingNode := tailscaleNodeName("missing-app")
+	stoppedNode := "docktun-tailscale"
+	backendState := "NeedsLogin"
+	base := fakeNodeRunner("app", &calls)
+	svc := &DockerContainers{db: setup.db, exposureDocker: func(ctx context.Context, args ...string) ([]byte, error) {
+		cmd := strings.Join(args, " ")
+		switch cmd {
+		case "container inspect app":
+			calls = append(calls, cmd)
+			return []byte(`[{"State":{"Running":true},"NetworkSettings":{"Networks":{"original":{}}}}]`), nil
+		case "container inspect " + missingNode:
+			calls = append(calls, cmd)
+			return []byte("No such container"), fmt.Errorf("exit status 1")
+		case "container inspect " + stoppedNode:
+			calls = append(calls, cmd)
+			return []byte(`[{"State":{"Running":false}}]`), nil
+		case "exec " + node + " tailscale status --json":
+			calls = append(calls, cmd)
+			return json.Marshal(map[string]string{"BackendState": backendState})
+		case "exec " + node + " tailscale serve status --json":
+			calls = append(calls, cmd)
+			if backendState != "Running" {
+				return []byte(`{}`), nil
+			}
+			return []byte(`{"TCP":{"80":{"TCPForward":"app:8080"},"443":{"TCPForward":"unrelated:443"}}}`), nil
+		}
+		return base(ctx, args...)
+	}}
+	for _, rule := range []tailscaleRuleCleanup{
+		{App: "app", Node: node, Port: 80, Target: "app:8080"},
+		{App: "missing-app", Node: missingNode, Port: 80, Target: "missing-app:8080"},
+		{App: "stopped-app", Node: stoppedNode, Port: 80, Target: "stopped-app:8080"},
+	} {
+		if err := svc.saveExposureToDB(rule.App, ExposureSettings{Mode: "public", cleanup: &rule}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := svc.ensureNodeResources("app"); err != nil {
+		t.Fatalf("signed-out helper was not left available for login: %v", err)
+	}
+	if strings.Contains(strings.Join(calls, "\n"), "network connect "+node+" app") {
+		t.Fatalf("attached app before profile cleanup: %v", calls)
+	}
+	pending, err := svc.pendingTailscaleRules(node)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("signed-out helper lost pending cleanup: %#v, %v", pending, err)
+	}
+	calls = nil
+	svc.ReconcileTailscaleAppNetworks()
+	pending, err = svc.pendingTailscaleRules(node)
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("ticker consumed signed-out profile cleanup: %#v, %v", pending, err)
+	}
+	backendState = "Running"
+	svc.ReconcileTailscaleAppNetworks()
+	pending, err = svc.pendingTailscaleRules(node)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("ticker failed cleanup after login: %#v, %v", pending, err)
+	}
+	if !strings.Contains(strings.Join(calls, "\n"), "exec "+node+" tailscale serve --bg --tcp=80 off") {
+		t.Fatalf("ticker did not remove selected old rule: %v", calls)
+	}
+	for _, dormant := range []string{missingNode, stoppedNode} {
+		pending, err := svc.pendingTailscaleRules(dormant)
+		if err != nil || len(pending) != 1 {
+			t.Fatalf("ticker discarded dormant cleanup in %s: %#v, %v", dormant, pending, err)
+		}
+	}
+	for _, call := range calls {
+		if strings.HasPrefix(call, "start ") || strings.HasPrefix(call, "run ") || strings.HasPrefix(call, "stop ") || strings.HasPrefix(call, "network connect ") || strings.Contains(call, "--tcp=443") || strings.Contains(call, "exec "+missingNode+" ") || strings.Contains(call, "exec "+stoppedNode+" ") {
+			t.Fatalf("ticker enabled a provider or touched unrelated connectivity: %v", calls)
+		}
 	}
 }
 

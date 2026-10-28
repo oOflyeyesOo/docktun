@@ -167,7 +167,9 @@ class API(http.server.BaseHTTPRequestHandler):
   else: status=404; result={'success':False,'errors':[{'message':'unexpected fixture request'}]}
   encoded=json.dumps(result).encode()
   self.send_response(status);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(encoded)
-  (root/'config.json').write_text(json.dumps(configuration))
+  # Avoid config.json: Headscale shares these test certificates and its CLI
+  # discovers config.* beside config.yaml when a config path is not explicit.
+  (root/'cloudflare-config.json').write_text(json.dumps(configuration))
 httpd=http.server.ThreadingHTTPServer(('0.0.0.0',443),API)
 ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);ctx.load_cert_chain('/certs/cert.pem','/certs/key.pem')
 httpd.socket=ctx.wrap_socket(httpd.socket,server_side=True);httpd.serve_forever()
@@ -210,10 +212,10 @@ try:
     inner('exec','-i','api-fixture','python','-c',"import sys,pathlib; pathlib.Path('/certs/config.yaml').write_text(sys.stdin.read())",input=json.dumps(headscale_config))
     inner('run','-d','--name','headscale','--network','docktun','-v','certs:/etc/headscale','-v','headscale-data:/var/lib/headscale','headscale/headscale:0.29.6','serve')
     for _ in range(30):
-        try: user=json.loads(inner('exec','headscale','headscale','users','create','tester','-o','json'));break
+        try: user=json.loads(inner('exec','headscale','headscale','--config','/etc/headscale/config.yaml','users','create','tester','-o','json'));break
         except RuntimeError:time.sleep(1)
     else:raise AssertionError('test Headscale did not start')
-    authkey=json.loads(inner('exec','headscale','headscale','preauthkeys','create','--user',str(user['id']),'--expiration','1h','-o','json'))['key']
+    authkey=json.loads(inner('exec','headscale','headscale','--config','/etc/headscale/config.yaml','preauthkeys','create','--user',str(user['id']),'--expiration','1h','-o','json'))['key']
     inner('run','-d','--name','docktun-tailscale','--network','docktun',
         '-v','legacy-tailscale-state:/var/lib/tailscale','-v','certs:/testcert:ro',
         '-e','SSL_CERT_FILE=/testcert/cert.pem','-e','TS_USERSPACE=true','-e','TS_STATE_DIR=/var/lib/tailscale',
@@ -272,7 +274,7 @@ try:
     request('/api/docker/containers/fixture-app/exposure',public_exposure)
     assert request('/api/docker/containers/fixture-app/exposure')['mode']=='public'
     assert inner('exec','docktun-cloudflared','wget','-qO-','http://fixture-app:8080')=='selected-origin-ok'
-    config=json.loads(inner('exec','api-fixture','cat','/certs/config.json'))
+    config=json.loads(inner('exec','api-fixture','cat','/certs/cloudflare-config.json'))
     assert config['ingress'][0]['originRequest']['httpHostHeader']=='preserve'
     assert config['ingress'][1]['path']=='/special'
     assert config['ingress'][-1]['service']=='http_status:503'
@@ -333,7 +335,7 @@ try:
         '-v',node+'-state:/var/lib/tailscale','-v','certs:/testcert:ro','-e','SSL_CERT_FILE=/testcert/cert.pem',
         '--entrypoint','tailscaled','tailscale/tailscale:latest','--tun=userspace-networking','--state=/var/lib/tailscale/tailscaled.state')
     inner('network','connect','docktun',node)
-    helper_key=json.loads(inner('exec','headscale','headscale','preauthkeys','create','--user',str(user['id']),'--expiration','1h','-o','json'))['key']
+    helper_key=json.loads(inner('exec','headscale','headscale','--config','/etc/headscale/config.yaml','preauthkeys','create','--user',str(user['id']),'--expiration','1h','-o','json'))['key']
     for _ in range(30):
         try:
             inner('exec',node,'tailscale','up','--login-server=https://headscale:443','--authkey='+helper_key,
@@ -415,7 +417,7 @@ try:
     if os.environ.get('DOCKTUN_KEEP_TEST_ENGINE')=='1':
         Path('../../outputs/cloudflare-test-preview.json').write_text(json.dumps({'engine':engine,'url':base,'username':'owner','password':'fixture-password-123'},indent=2))
 except Exception:
-    failure_diagnostics(['docktun','docktun-tailscale']+([node] if 'node' in globals() else []))
+    failure_diagnostics(['docktun','docktun-tailscale','headscale']+([node] if 'node' in globals() else []))
     raise
 finally:
     if not passed or os.environ.get('DOCKTUN_KEEP_TEST_ENGINE')!='1':
