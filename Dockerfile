@@ -20,7 +20,7 @@ ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /server ./cmd/server
 COPY zeroconf/ /zeroconf-src/
-RUN cd /zeroconf-src && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /zeroconf .
+RUN cd /zeroconf-src && go test ./... && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /zeroconf .
 
 # ==============================================================================
 # Stage 3: Unified DockTun Minimal Runtime (No Nginx, Pure Go + Alpine)

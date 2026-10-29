@@ -380,7 +380,7 @@ func (m *mDNSManager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		origDirector := proxy.Director
 		proxy.Director = func(req *http.Request) {
 			origDirector(req)
-			req.Host = docktunURL.Host
+			// Preserve the public .local Host so application redirects stay portless.
 			req.Header.Set("X-Forwarded-Host", r.Host)
 			req.Header.Set("X-Forwarded-Proto", "http")
 			if clientIP, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
@@ -403,7 +403,7 @@ func (m *mDNSManager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				origDirector := proxy.Director
 				proxy.Director = func(req *http.Request) {
 					origDirector(req)
-					req.Host = targetURL.Host
+					// Preserve the public .local Host so application redirects stay portless.
 					req.Header.Set("X-Forwarded-Host", r.Host)
 					req.Header.Set("X-Forwarded-Proto", "http")
 					if clientIP, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {

@@ -3,9 +3,34 @@ package main
 import (
 	"encoding/binary"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestProxyKeepsLocalHostnameForApplicationRedirects(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://"+r.Host+"/login?next=home", http.StatusFound)
+	}))
+	defer origin.Close()
+	u, _ := url.Parse(origin.URL)
+	port, _ := strconv.Atoi(u.Port())
+	for _, host := range []string{"web.local", "docktun.local"} {
+		t.Run(host, func(t *testing.T) {
+			mgr := newMDNSManager("local", u.Port())
+			mgr.routes["web"] = &containerRoute{Name: "web", IP: "127.0.0.1", Port: port}
+			request := httptest.NewRequest(http.MethodGet, "http://"+host+"/", nil)
+			response := httptest.NewRecorder()
+			mgr.ServeHTTP(response, request)
+			if got, want := response.Header().Get("Location"), "http://"+host+"/login?next=home"; got != want {
+				t.Fatalf("redirect leaked upstream host/port: got %q, want %q", got, want)
+			}
+		})
+	}
+}
 
 func TestBuildResponseRFC6762(t *testing.T) {
 	targetIP := net.ParseIP("192.168.1.166").To4()
