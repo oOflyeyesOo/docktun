@@ -20,21 +20,26 @@ import (
 const defaultUpdateImage = "ghcr.io/ooflyeyesoo/docktun:latest"
 
 type SelfUpdateState struct {
-	Phase        string    `json:"phase"`
-	Message      string    `json:"message"`
-	Image        string    `json:"image"`
-	CurrentImage string    `json:"current_image,omitempty"`
-	Revision     string    `json:"revision,omitempty"`
-	Available    bool      `json:"available"`
-	Checked      bool      `json:"checked"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	Helper       string    `json:"helper,omitempty"`
+	Running      *RunningBuildInfo `json:"running,omitempty"`
+	Phase        string            `json:"phase"`
+	Message      string            `json:"message"`
+	Image        string            `json:"image"`
+	CurrentImage string            `json:"current_image,omitempty"`
+	Revision     string            `json:"revision,omitempty"`
+	Available    bool              `json:"available"`
+	Checked      bool              `json:"checked"`
+	UpdatedAt    time.Time         `json:"updated_at"`
+	Helper       string            `json:"helper,omitempty"`
 }
 
 var selfUpdateMu sync.Mutex
 
 type SelfUpdater struct {
-	statePath string
+	statePath    string
+	buildMu      sync.Mutex
+	build        RunningBuildInfo
+	buildAt      time.Time
+	inspectBuild func(context.Context) (RunningBuildInfo, error)
 }
 
 func NewSelfUpdater(dataDir string) *SelfUpdater {
@@ -140,6 +145,7 @@ func selfContainer(ctx context.Context) (updateContainer, error) {
 }
 
 func (s *SelfUpdater) save(state SelfUpdateState) error {
+	state.Running = nil // Running identity is live metadata, never update history.
 	state.UpdatedAt = time.Now().UTC()
 	b, err := json.Marshal(state)
 	if err != nil {
@@ -189,6 +195,8 @@ func (s *SelfUpdater) Status() SelfUpdateState {
 		state.Phase = "failed"
 		state.Message = "The previous update was interrupted. Check the container logs before retrying."
 	}
+	build := s.runningBuild()
+	state.Running = &build
 	return state
 }
 

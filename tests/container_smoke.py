@@ -64,6 +64,7 @@ try:
         assert "mount" in str(error).lower(), error
     assert docker("exec", name, "sh", "-c", "test ! -e /app/data/host-only/stack && echo absent") == "absent"
     # A real existing stack may legitimately omit its optional .env.
+    docker("exec", name, "mkdir", "-p", "/app/data/editable")
     accessible = request("/api/projects", {"name": "editable", "path": "/app/data/editable", "compose_content": "services: {}"}, access, expected=201)
     assert request(f"/api/projects/{accessible['id']}/env", token=access)["content"] == ""
     assert request(f"/api/projects/{accessible['id']}/compose", token=access)["content"] == "services: {}"

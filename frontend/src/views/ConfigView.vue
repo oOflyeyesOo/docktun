@@ -784,6 +784,7 @@ onUnmounted(() => {
 
 <template>
   <div class="space-y-6">
+
     <!-- Header (shown when standalone page) -->
     <div v-if="!embedded" class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
@@ -1643,15 +1644,16 @@ onUnmounted(() => {
 
             <div>
               <label for="cloudflare-zone-id" class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                Cloudflare Zone ID (Optional)
+                Cloudflare Zone ID (avoids Zone Read)
               </label>
               <input
-                id="cloudflare-zone-id"
+                id="cloudflare-zone-id" aria-describedby="zone-id-help"
                 v-model="cfZoneId"
                 type="text"
-                placeholder="For DNS CNAME verification"
+                placeholder="Domain Overview → API → Zone ID"
                 class="cyber-input text-xs font-mono"
               />
+            <p id="zone-id-help" class="text-xs text-slate-600">Enter the domain’s Zone ID from Cloudflare → your domain → Overview → API. This differs from Account ID. With Zone ID entered, Zone Read is unnecessary; zone DNS Edit/Write is still required. Zone Read is optional only for automatic discovery when this field is blank.</p>
             </div>
           </div>
 

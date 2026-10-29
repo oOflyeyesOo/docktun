@@ -24,14 +24,11 @@ func (s *CloudflareAPI) replaceTunnelDNS(hostname, tunnelID string) (*DNSReplace
 		return nil, fmt.Errorf("Cloudflare API Token required to replace DNS records")
 	}
 	if isConnectorToken(creds.APIToken) {
-		return nil, fmt.Errorf("the configured token is a Tunnel Connector Token; save it under Tunnel connector token and use a Cloudflare User API Token with Zone:DNS:Edit here")
+		return nil, fmt.Errorf("the configured token is a Tunnel Connector Token; save it under Tunnel connector token and use a Cloudflare API token with Zone:DNS:Edit (DNS Write) for the intended zone here")
 	}
-	zone, zoneErr := s.FindZoneID(creds.APIToken, host)
-	if zone == "" {
-		zone = creds.ZoneID
-	}
-	if zone == "" {
-		return nil, fmt.Errorf("could not resolve Cloudflare zone for %s: %w", host, zoneErr)
+	zone, err := s.resolveDNSZone(creds, host)
+	if err != nil {
+		return nil, err
 	}
 	endpoint := "https://api.cloudflare.com/client/v4/zones/" + url.PathEscape(zone) + "/dns_records"
 	target := tunnelID + ".cfargotunnel.com"
@@ -119,12 +116,26 @@ func (s *CloudflareAPI) dnsRequest(method, endpoint, token, hostname string, pay
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || !result.Success {
 		message := formatCfErrorMessage(result.Errors, "Cloudflare rejected the DNS request", hostname)
+		if len(result.Errors) > 0 && result.Errors[0].Code != 0 {
+			message += fmt.Sprintf(" (Cloudflare code %d)", result.Errors[0].Code)
+		}
 		if response.StatusCode == 401 || response.StatusCode == 403 {
-			message += "; use a User API Token with Zone:DNS:Edit for this zone and Zone:Zone:Read for automatic zone discovery"
+			message += "; use an API token with Zone DNS Write/Edit (Zone:DNS:Edit) for the intended zone; Account DNS Settings Write does not grant DNS record access; enter the domain's Zone ID in API credentials to skip zone discovery, or optionally grant Zone Read (Zone:Zone:Read) for discovery"
 		}
 		return result, fmt.Errorf("%s (HTTP %d)", message, response.StatusCode)
 	}
 	return result, nil
+}
+
+func (s *CloudflareAPI) resolveDNSZone(credentials CloudflareCredentials, hostname string) (string, error) {
+	if zone := strings.TrimSpace(credentials.ZoneID); zone != "" {
+		return zone, nil
+	}
+	zone, err := s.FindZoneID(credentials.APIToken, hostname)
+	if err != nil {
+		return "", fmt.Errorf("enter the domain's Zone ID in API credentials, or optionally grant Zone Read (Zone:Zone:Read) for discovery: %w", err)
+	}
+	return zone, nil
 }
 
 // cloudflared encodes its a/s/t credential fields as Base64 JSON, not a JWT.

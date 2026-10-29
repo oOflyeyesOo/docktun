@@ -87,7 +87,11 @@ try:
         docker('volume', 'create', volume); volumes.append(volume)
     tag = prefix + ':candidate'
     images.append(tag)
-    docker('build', '-t', tag, '-', input=f'FROM {image}\nLABEL test.release="candidate"\n')
+    installed_tag = prefix + ':installed'
+    images.append(installed_tag)
+    installed_revision, candidate_revision = 'a' * 40, 'b' * 40
+    docker('build', '-t', installed_tag, '-', input=f'FROM {image}\nLABEL org.opencontainers.image.revision="{installed_revision}"\n')
+    docker('build', '-t', tag, '-', input=f'FROM {image}\nLABEL test.release="candidate" org.opencontainers.image.revision="{candidate_revision}"\n')
     candidate_id = docker('image', 'inspect', '--format', '{{.Id}}', tag)
     containers.append(fixture)
     docker('run', '-d', '--name', fixture, '--network', network, 'alpine:3.23', 'sleep', '600')
@@ -96,7 +100,7 @@ try:
            '-p', '127.0.0.1::3001', '-v', data + ':/app/data', '-v', '/extra',
            '-v', '/var/run/docker.sock:/var/run/docker.sock',
            '-e', 'DOCKTUN_PREPARE_PROVIDERS=false', '-e', 'DOCKTUN_UPDATE_IMAGE=' + candidate_id, '-e', 'DOCKER_NETWORK=' + network,
-           '-e', 'LITERAL_VALUE=spaces $HOME $(never-execute) "quoted"', image)
+           '-e', 'LITERAL_VALUE=spaces $HOME $(never-execute) "quoted"', installed_tag)
     ready()
     before = json.loads(docker('inspect', app))[0]
     anonymous = next(m['Name'] for m in before['Mounts'] if m['Destination'] == '/extra')
@@ -105,6 +109,12 @@ try:
     token = request('/api/setup/complete', {'setup_token': setup_token, 'admin_username': 'tester', 'admin_password': 'integration-password-123', 'tunnel': {'type': 'none'}})['access_token']
     request('/api/self-update', expected=401, authenticated=False)
     request('/api/self-update?token=' + token, expected=401, authenticated=False)
+    running = request('/api/self-update')['running']
+    assert running['revision'] == installed_revision and running['image_id'] == before['Image'], running
+    # Update history and a staged candidate must not impersonate the installed image.
+    forged = json.dumps({'phase':'idle','running':{'revision':'f'*40,'image_id':candidate_id}})
+    docker('exec',app,'sh','-c','printf %s "$1" > /app/data/self-update.json','sh',forged)
+    assert request('/api/self-update')['running']['revision'] == installed_revision
     payload = bytes(range(256)) * 4096
     filename = 'binary " $(touch injected) file.bin'
     for kind, ident, directory in [('docktun', 'app_data', 'uploads'), ('volume', files, 'nested'), ('container', fixture, 'tmp')]:
@@ -120,9 +130,11 @@ try:
     print('Transfers passed: binary/empty files, volume/local/container, stopped container, filename quoting, auth and limits', flush=True)
     checked = request('/api/self-update/check', {})
     assert checked['available'], checked
+    assert request('/api/self-update')['running']['revision'] == installed_revision
     request('/api/self-update/install', {}, expected=202)
     complete = wait_update('complete')
     after = json.loads(docker('inspect', app))[0]
+    assert complete['running']['revision'] == candidate_revision and complete['running']['image_id'] == candidate_id, complete
     assert before['Id'] != after['Id']
     assert after['HostConfig']['PortBindings'] == before['HostConfig']['PortBindings']
     assert next(m['Name'] for m in after['Mounts'] if m['Destination'] == '/extra') == anonymous
@@ -139,8 +151,23 @@ try:
     wait_update('rolled_back')
     restored = json.loads(docker('inspect', app))[0]
     assert restored['Id'] == after['Id']
+    rollback_build = request('/api/self-update')['running']
+    assert rollback_build['image_id'] == candidate_id, rollback_build
+    # Docker's containerd store may discard the old image metadata when this
+    # locally built tag is replaced. The running container still works; report
+    # that identity as unverified instead of adopting the replacement's label.
+    assert rollback_build.get('revision') == candidate_revision or (
+        not rollback_build.get('revision') and rollback_build.get('error')
+    ), rollback_build
     assert download('docktun', 'app_data', 'uploads/' + filename) == payload
     print('Rollback passed: failed replacement restores previous healthy container with data and login intact', flush=True)
+except Exception:
+    try:
+        print('Runtime-build diagnostic:', json.dumps(request('/api/self-update').get('running')), flush=True)
+        print('Restored hostname:', docker('inspect', '--format', '{{.Id}} {{.Config.Hostname}} {{.Image}}', app), flush=True)
+    except Exception as diagnostic_error:
+        print('Unable to collect runtime-build diagnostic:', str(diagnostic_error)[:800], flush=True)
+    raise
 finally:
     # Only remove uniquely named fixtures and helpers explicitly targeting their IDs.
     ids = []

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -27,20 +28,22 @@ import (
 )
 
 type ExposureSettings struct {
-	cleanup           *tailscaleRuleCleanup
-	TailscaleNode     string `json:"tailscale_node,omitempty"`
-	Mode              string `json:"mode"`
-	Hostname          string `json:"hostname,omitempty"`
-	Target            string `json:"target,omitempty"`
-	PrivateType       string `json:"private_type,omitempty"`
-	PrivateHost       string `json:"private_host,omitempty"`
-	PrivatePort       int    `json:"private_port,omitempty"`
-	Notes             string `json:"notes,omitempty"`
-	ZeroTrustEnabled  bool   `json:"zero_trust_enabled,omitempty"`
-	ZeroTrustEmails   string `json:"zero_trust_emails,omitempty"`
-	ZeroTrustAuthType string `json:"zero_trust_auth_type,omitempty"`
-	ZeroTrustSession  string `json:"zero_trust_session,omitempty"`
-	ZeroTrustAppID    string `json:"zero_trust_app_id,omitempty"`
+	cleanup                  *tailscaleRuleCleanup
+	previousCloudflareHost   string
+	previousCloudflareTarget string
+	TailscaleNode            string `json:"tailscale_node,omitempty"`
+	Mode                     string `json:"mode"`
+	Hostname                 string `json:"hostname,omitempty"`
+	Target                   string `json:"target,omitempty"`
+	PrivateType              string `json:"private_type,omitempty"`
+	PrivateHost              string `json:"private_host,omitempty"`
+	PrivatePort              int    `json:"private_port,omitempty"`
+	Notes                    string `json:"notes,omitempty"`
+	ZeroTrustEnabled         bool   `json:"zero_trust_enabled,omitempty"`
+	ZeroTrustEmails          string `json:"zero_trust_emails,omitempty"`
+	ZeroTrustAuthType        string `json:"zero_trust_auth_type,omitempty"`
+	ZeroTrustSession         string `json:"zero_trust_session,omitempty"`
+	ZeroTrustAppID           string `json:"zero_trust_app_id,omitempty"`
 }
 
 type ContainerMount struct {
@@ -154,6 +157,7 @@ type DockerContainers struct {
 	selfUpdater    *SelfUpdater
 	exposureMu     sync.Mutex
 	exposureDocker func(context.Context, ...string) ([]byte, error)
+	networkDocker  func(context.Context, ...string) ([]byte, error)
 }
 
 // Only completed, explicitly labelled helpers may be removed. A long pull is not a zombie.
@@ -240,6 +244,7 @@ func (s *DockerContainers) List() ([]Container, error) {
 	dbExposures := s.loadAllExposuresFromDB()
 	projectsByPath, projectsByName := s.loadAllProjectsMap()
 	cachedUpdates := s.loadAllUpdatesFromDB()
+	exposureNetwork := s.exposureNetworkName()
 
 	rows := strings.Split(text, "\n")
 	containers := make([]Container, 0, len(rows))
@@ -283,7 +288,7 @@ func (s *DockerContainers) List() ([]Container, error) {
 
 		if len(fields) >= 9 {
 			networksStr := strings.TrimSpace(fields[8])
-			c.ConnectedToCloudflared = strings.Contains(networksStr, "docktun") || strings.Contains(networksStr, "cloudflared")
+			c.ConnectedToCloudflared = exactNetworkMembership(networksStr, exposureNetwork)
 		}
 
 		if len(fields) >= 10 {
@@ -404,30 +409,8 @@ func (s *DockerContainers) List() ([]Container, error) {
 			}
 		}
 
-		// Determine exposure:
-		// 1. Check if public in Cloudflare Tunnel ingress
-		if ing, ok := ingressMap[c.Name]; ok {
-			c.ExposureMode = "public"
-			c.Hostname = ing.Hostname
-			c.Target = ing.Service
-			c.Exposure = ExposureSettings{
-				Mode:     "public",
-				Hostname: ing.Hostname,
-				Target:   ing.Service,
-			}
-		} else if exp, ok := dbExposures[c.Name]; ok {
-			c.ExposureMode = exp.Mode
-			c.Hostname = exp.Hostname
-			c.Target = exp.Target
-			c.PrivateType = exp.PrivateType
-			c.PrivateHost = exp.PrivateHost
-			c.PrivatePort = exp.PrivatePort
-			c.Notes = exp.Notes
-			c.Exposure = exp
-		} else {
-			c.ExposureMode = "internal"
-			c.Exposure = ExposureSettings{Mode: "internal"}
-		}
+		ingress, found := ingressMap[c.Name]
+		setContainerExposure(&c, projectExposure(dbExposures[c.Name], ingress, found))
 
 		if c.Status == "" {
 			c.Status = c.State
@@ -678,42 +661,8 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		c.Ports = strings.Join(ports, ", ")
 	}
 
-	// Exposure check
-	ingressMap := s.loadCloudflareIngressMap()
-	if ing, ok := ingressMap[c.Name]; ok {
-		exp := s.getExposureFromDB(c.Name)
-		c.ExposureMode = "public"
-		c.Hostname = ing.Hostname
-		c.Target = ing.Service
-		c.ZeroTrustEnabled = exp.ZeroTrustEnabled
-		c.ZeroTrustEmails = exp.ZeroTrustEmails
-		c.ZeroTrustAuthType = exp.ZeroTrustAuthType
-		c.ZeroTrustSession = exp.ZeroTrustSession
-		c.Exposure = ExposureSettings{
-			Mode:              "public",
-			Hostname:          ing.Hostname,
-			Target:            ing.Service,
-			ZeroTrustEnabled:  exp.ZeroTrustEnabled,
-			ZeroTrustEmails:   exp.ZeroTrustEmails,
-			ZeroTrustAuthType: exp.ZeroTrustAuthType,
-			ZeroTrustSession:  exp.ZeroTrustSession,
-			ZeroTrustAppID:    exp.ZeroTrustAppID,
-		}
-	} else {
-		exp := s.getExposureFromDB(c.Name)
-		c.ExposureMode = exp.Mode
-		c.Hostname = exp.Hostname
-		c.Target = exp.Target
-		c.PrivateType = exp.PrivateType
-		c.PrivateHost = exp.PrivateHost
-		c.PrivatePort = exp.PrivatePort
-		c.Notes = exp.Notes
-		c.ZeroTrustEnabled = exp.ZeroTrustEnabled
-		c.ZeroTrustEmails = exp.ZeroTrustEmails
-		c.ZeroTrustAuthType = exp.ZeroTrustAuthType
-		c.ZeroTrustSession = exp.ZeroTrustSession
-		c.Exposure = exp
-	}
+	ingress, found := s.loadCloudflareIngressMap()[c.Name]
+	setContainerExposure(&c, projectExposure(s.getExposureFromDB(c.Name), ingress, found))
 
 	// Mounts
 	mounts := make([]ContainerMount, 0, len(inspect.Mounts))
@@ -783,10 +732,9 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		}
 	}
 
-	_, hasDocktun := inspect.NetworkSettings.Networks["docktun"]
-	_, hasCloudflared := inspect.NetworkSettings.Networks["cloudflared"]
-	detail.ConnectedToCloudflared = hasDocktun || hasCloudflared
-	detail.Container.ConnectedToCloudflared = hasDocktun || hasCloudflared
+	_, connected := inspect.NetworkSettings.Networks[s.exposureNetworkName()]
+	detail.ConnectedToCloudflared = connected
+	detail.Container.ConnectedToCloudflared = connected
 
 	compProj := inspect.Config.Labels["com.docker.compose.project"]
 	compDir := inspect.Config.Labels["com.docker.compose.project.working_dir"]
@@ -936,22 +884,13 @@ func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
 		logs = append(logs, msg)
 	}
 
-	defNet := s.DefaultNetwork()
+	defNet := s.exposureNetworkName()
 	if err := s.EnsureNetwork(defNet); err != nil {
 		return nil, fmt.Errorf("resolve primary network: %w", err)
 	}
 	addLog(fmt.Sprintf("Primary network: %s", defNet))
 
-	hasDocktunNet := exec.Command("docker", "network", "inspect", "docktun").Run() == nil
-	hasCloudflaredNet := exec.Command("docker", "network", "inspect", "cloudflared").Run() == nil
-
 	networksToBridge := []string{defNet}
-	if hasDocktunNet && defNet != "docktun" {
-		networksToBridge = append(networksToBridge, "docktun")
-	}
-	if hasCloudflaredNet && defNet != "cloudflared" {
-		networksToBridge = append(networksToBridge, "cloudflared")
-	}
 
 	// 1. Identify DockTun core container and connect to all bridge networks
 	docktunContainers := []string{"docktun"}
@@ -1043,7 +982,11 @@ func (s *DockerContainers) EnsureNetworkID(network string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return NewProviderContainers(s.cfg).resolveNetwork(ctx, network)
+	providers := NewProviderContainers(s.cfg)
+	if s.networkDocker != nil {
+		providers.run = s.networkDocker
+	}
+	return providers.resolveNetwork(ctx, network)
 }
 
 func (s *DockerContainers) ConnectNetwork(id string, network string) error {
@@ -1406,16 +1349,8 @@ func (s *DockerContainers) GetExposure(id string) (ExposureSettings, error) {
 		return ExposureSettings{Mode: "internal"}, err
 	}
 
-	ingressMap := s.loadCloudflareIngressMap()
-	if ing, ok := ingressMap[name]; ok {
-		return ExposureSettings{
-			Mode:     "public",
-			Hostname: ing.Hostname,
-			Target:   ing.Service,
-		}, nil
-	}
-
-	return s.getExposureFromDB(name), nil
+	ingress, found := s.loadCloudflareIngressMap()[name]
+	return projectExposure(s.getExposureFromDB(name), ingress, found), nil
 }
 
 func cleanHostname(h string) string {
@@ -1520,32 +1455,50 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 	if settings.Mode == "private" && settings.PrivateType != "tailscale" && (strings.TrimSpace(settings.PrivateHost) == "" || settings.PrivatePort < 1 || settings.PrivatePort > 65535) {
 		return fmt.Errorf("enter the existing VPN address and port; WireGuard/custom mesh routing must already be configured")
 	}
-	// Only automatic forwarding needs the tunnel network. Removing a rule must not break existing Docker connectivity.
-	defaultNet := s.DefaultNetwork()
 	if settings.Mode == "public" {
-		if err := s.ConnectNetwork(name, defaultNet); err != nil {
-			return fmt.Errorf("connect container to %s: %w", defaultNet, err)
+		if cleanHostname(settings.Hostname) == "" {
+			return fmt.Errorf("enter the public hostname to expose")
 		}
-		if settings.Mode == "public" && exec.Command("docker", "network", "inspect", "cloudflared").Run() == nil && defaultNet != "cloudflared" {
-			_ = s.ConnectNetwork(name, "cloudflared")
+		if err := s.validateCloudflarePublish(); err != nil {
+			return err
 		}
 	}
 
 	prevExp := s.getExposureFromDB(name)
+	ingress, err := s.exposureIngressForMutation(settings.Mode)
+	if err != nil { return err }
+	actual, actualFound := ingress[name]
+	if actualFound {
+		settings.previousCloudflareHost, settings.previousCloudflareTarget = actual.Hostname, actual.Service
+	}
 	undo, err := s.syncTailscaleExposure(name, prevExp, &settings)
 	if err != nil {
 		return err
 	}
 	committed := false
+	undoNetwork := func() {}
 	defer func() {
 		if !committed {
+			undoNetwork()
 			undo()
 		}
 	}()
+	if settings.Mode == "public" {
+		undoNetwork, err = s.connectExposureNetwork(name)
+		if err != nil {
+			return fmt.Errorf("connect Cloudflare app network: %w", err)
+		}
+	}
 
 	// 2. Update Cloudflare ingress ONLY if currently public or was previously public
-	if s.configMgr != nil && (settings.Mode == "public" || prevExp.Mode == "public") {
+	if s.configMgr != nil && (settings.Mode == "public" || prevExp.Mode == "public" || actualFound) {
 		if err := s.syncCloudflareIngress(name, settings); err != nil {
+			var partial *cloudflareDNSPartialError
+			if errors.As(err, &partial) {
+				// The accepted route already needs this endpoint. Keep it while
+				// reporting DNS failure and restoring the previous saved provider.
+				undoNetwork = func() {}
+			}
 			return fmt.Errorf("sync ingress config: %w", err)
 		}
 	}
@@ -1704,6 +1657,16 @@ func (s *DockerContainers) loadCloudflareIngressMap() map[string]cfIngressRule {
 	if s.configMgr == nil {
 		return result
 	}
+	identity, identityErr := s.configMgr.TunnelIdentity()
+	if identity.Remote {
+		if identityErr == nil && s.cfAPI != nil {
+			return s.cfAPI.cachedTunnelIngress(identity)
+		}
+		return result
+	}
+	if identityErr != nil {
+		return result
+	}
 
 	raw, err := s.configMgr.Read()
 	if err != nil {
@@ -1716,16 +1679,14 @@ func (s *DockerContainers) loadCloudflareIngressMap() map[string]cfIngressRule {
 	}
 
 	for _, rule := range doc.Ingress {
-		if rule.Hostname == "" || rule.Service == "http_status:404" {
+		if rule.Hostname == "" || rule.Path != "" {
 			continue
 		}
-		// Extract container name from service e.g. http://my-app:8080 -> my-app
-		svc := strings.TrimPrefix(rule.Service, "http://")
-		svc = strings.TrimPrefix(svc, "https://")
-		hostPart := strings.Split(svc, ":")[0]
-		hostPart = strings.Split(hostPart, "/")[0]
+		hostPart := ingressContainer(rule.Service)
 		if hostPart != "" {
-			result[hostPart] = rule
+			if _, found := result[hostPart]; !found {
+				result[hostPart] = rule
+			}
 		}
 	}
 
@@ -1849,8 +1810,13 @@ func (s *DockerContainers) containerName(id string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.Name}}", id)
-	out, err := cmd.Output()
+	var out []byte
+	var err error
+	if s.exposureDocker != nil {
+		out, err = s.exposureDocker(ctx, "inspect", "--format", "{{.Name}}", id)
+	} else {
+		out, err = exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.Name}}", id).Output()
+	}
 	if err != nil {
 		return "", fmt.Errorf("docker inspect name failed: %w", err)
 	}
@@ -1883,13 +1849,28 @@ func uptimeFromStartedAt(value string) string {
 }
 
 func dockerCommand(args ...string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	timeout := 10 * time.Second
+	if len(args) > 0 {
+		switch args[0] {
+		case "start", "stop", "restart":
+			// Docker stop/restart honor the container's graceful shutdown period.
+			// The client must outlive the default ten-second grace plus cleanup.
+			timeout = 2 * time.Minute
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("docker %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		if detail := strings.TrimSpace(string(out)); detail != "" {
+			return fmt.Errorf("docker %s failed: %s (%w)", strings.Join(args, " "), detail, err)
+		}
+		return fmt.Errorf("docker %s failed: %w", strings.Join(args, " "), err)
 	}
 	return nil
 }

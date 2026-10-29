@@ -20,7 +20,13 @@ services = json.loads(config)["services"]
 assert "docktun" in services
 assert services["docktun"]["image"] == "ghcr.io/ooflyeyesoo/docktun:latest"
 assert not any("build" in service for service in services.values())
-assert set(services) == {'docktun'}, 'Compose must not start optional providers'
+assert set(services) == {'docktun', 'zeroconf'}, 'Compose must not start optional tunnel providers'
+proxy = services['zeroconf']
+assert proxy['image'] == services['docktun']['image']
+assert proxy['entrypoint'] == ['/app/zeroconf']
+assert proxy['network_mode'] == 'host'
+assert proxy['environment']['DOCKTUN_PORT'] == '8080'
+assert any(m['target'] == '/var/run/docker.sock' and m.get('read_only') for m in proxy['volumes'])
 assert any(port.get('target') == 3001 for port in services['docktun']['ports'])
 mounts = {m['target']: m for m in services['docktun']['volumes']}
 assert mounts['/etc/cloudflared']['type'] == 'volume'
@@ -33,4 +39,4 @@ custom = json.loads(subprocess.check_output(['docker', 'compose', '-f', compose.
 assert custom['networks']['docktun']['name'] == 'synology-custom-network'
 assert custom['services']['docktun']['environment']['TAILSCALE_NETWORK'] == 'synology-custom-network'
 assert not (root / 'frontend/src/views/SetupView.vue').exists()
-print('Portable prebuilt Compose passed: app only, persistent provider mounts, independent network settings, no onboarding')
+print('Portable prebuilt Compose passed: app and local proxy only, persistent provider mounts, independent network settings, no onboarding')

@@ -125,8 +125,15 @@ func TestDNSFailuresNeverFallBackToIndividualDeletes(t *testing.T) {
 				if err == nil {
 					t.Fatal("failure reported as success")
 				}
-				if strings.Contains(failure, "auth") && !strings.Contains(err.Error(), "Zone:DNS:Edit") {
-					t.Fatalf("missing permission guidance: %v", err)
+				if strings.Contains(failure, "auth") {
+					for _, detail := range []string{"Authentication failed", "HTTP 403", "Zone:DNS:Edit", "Account DNS Settings Write does not grant DNS record access", "Zone:Zone:Read"} {
+						if !strings.Contains(err.Error(), detail) {
+							t.Fatalf("missing Cloudflare error or permission guidance %q: %v", detail, err)
+						}
+					}
+					if failure == "query-auth" && !strings.Contains(err.Error(), "Cloudflare code 10000") {
+						t.Fatalf("lost Cloudflare error code: %v", err)
+					}
 				}
 				if strings.HasPrefix(failure, "query") || failure == "unexpected-host" {
 					if writes != 0 {
@@ -175,9 +182,11 @@ func TestConnectorTokenDetectionUsesFieldsNotPrefix(t *testing.T) {
 }
 
 func TestDNSZoneReadFailureUsesExplicitZoneAndKeepsPermissionDetails(t *testing.T) {
+	discoveryRequests := 0
 	api := dnsFixture(t, func(r *http.Request) (int, string) {
 		if strings.HasSuffix(r.URL.Path, "/zones") {
-			return 403, `{"success":false,"errors":[{"message":"Authentication failed"}]}`
+			discoveryRequests++
+			return 403, `{"success":false,"errors":[{"code":10000,"message":"Authentication failed"}]}`
 		}
 		if !strings.Contains(r.URL.Path, "/zones/zone123/") {
 			t.Fatal("explicit Zone ID ignored")
@@ -190,8 +199,24 @@ func TestDNSZoneReadFailureUsesExplicitZoneAndKeepsPermissionDetails(t *testing.
 	if err := api.SyncDNSRecord("app.example.com", "tunnel123"); err != nil {
 		t.Fatal(err)
 	}
-	_, err := api.FindZoneID("test-user-api-token", "app.example.com")
-	if err == nil || !strings.Contains(err.Error(), "Zone:Zone:Read") {
-		t.Fatalf("zone permissions lost: %v", err)
+	if _, err := api.CheckDNSRecord("app.example.com", "tunnel123"); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.CreateWildcardRoute("example.com", "tunnel123"); err != nil {
+		t.Fatal(err)
+	}
+	if discoveryRequests != 0 {
+		t.Fatalf("saved Zone ID still requested zone discovery %d times", discoveryRequests)
+	}
+	// Model an installation that has never supplied its Zone ID. Empty fields
+	// in SaveCredentials preserve existing values for other settings callers.
+	if _, err := api.db.Exec(`UPDATE system_settings SET value = '' WHERE key = 'cf_zone_id'`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := api.resolveDNSZone(api.GetCredentials(), "app.example.com")
+	for _, detail := range []string{"enter the domain's Zone ID in API credentials, or optionally grant Zone Read", "Zone:Zone:Read", "Authentication failed", "Cloudflare code 10000", "HTTP 403"} {
+		if err == nil || !strings.Contains(err.Error(), detail) {
+			t.Fatalf("missing zone-ID-first guidance or API evidence %q: %v", detail, err)
+		}
 	}
 }
