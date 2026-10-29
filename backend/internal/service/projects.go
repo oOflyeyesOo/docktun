@@ -37,6 +37,7 @@ type FileInfo struct {
 }
 
 type Projects struct {
+	requireMountInspection func() bool
 	db        *db.DB
 	selfPath  string
 	mu        sync.Mutex

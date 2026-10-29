@@ -73,7 +73,9 @@ func managedProjectBase(directory string) (string, string, bool) {
 
 func (s *Projects) resolveProjectDirectory(stored string, create bool) (projectDirectory, error) {
 	_, socketErr := os.Stat("/var/run/docker.sock")
-	return s.resolveProjectDirectoryWithInspection(stored, create, socketErr == nil)
+	required := socketErr == nil
+	if s.requireMountInspection != nil { required = s.requireMountInspection() }
+	return s.resolveProjectDirectoryWithInspection(stored, create, required)
 }
 
 func (s *Projects) resolveProjectDirectoryWithInspection(stored string, create, requireInspection bool) (projectDirectory, error) {

@@ -239,7 +239,8 @@ func TestProjectResolutionSupportsAlreadyLocalMountAndNativePath(t *testing.T) {
 	if err != nil || got.Path != directory || got.Mount != mounted || got.ReadOnly {
 		t.Fatalf("already-local folder: %+v %v", got, err)
 	}
-	svc.runDocker = nil // Native development can work without Docker inspection.
+	svc.runDocker = nil // Simulate native development independently of the test runner socket.
+	svc.requireMountInspection = func() bool { return false }
 	got, err = svc.resolveProjectDirectory(directory, false)
 	if err != nil || got.Path != directory {
 		t.Fatalf("native folder: %+v %v", got, err)

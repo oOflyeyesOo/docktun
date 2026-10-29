@@ -22,7 +22,7 @@ func TestDeleteProject(t *testing.T) {
 	defer database.Close()
 
 	selfPath := filepath.Join(tmpDir, "self")
-	pSvc := NewProjects(database, selfPath)
+	pSvc := newNativeTestProjects(database, selfPath)
 
 	managedRoot, err := filepath.Abs("projects")
 	if err != nil {
@@ -69,7 +69,7 @@ func TestDeleteStackWithoutHostComposeDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	svc := NewProjects(database, "/opt/projects/docktun")
+	svc := newNativeTestProjects(database, "/opt/projects/docktun")
 	project, err := svc.Create("example", "/volume1/docker/example", "", "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +110,7 @@ func TestDeleteStackFailuresKeepRecordAndFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer database.Close()
-			svc := NewProjects(database, "")
+			svc := newNativeTestProjects(database, "")
 			project, err := svc.Create("example", t.TempDir(), "", "", "")
 			if err != nil {
 				t.Fatal(err)
@@ -150,7 +150,7 @@ func TestDeleteStackProtectsUnrelatedAndSelfContainers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		svc := NewProjects(database, "")
+		svc := newNativeTestProjects(database, "")
 		p, err := svc.Create("example", "/host-only/example", "", "", "")
 		if err != nil {
 			t.Fatal(err)
@@ -178,7 +178,7 @@ func TestProjectFileRemovalRejectsUnsafePathsBeforeDocker(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	svc := NewProjects(database, "/opt/projects/docktun")
+	svc := newNativeTestProjects(database, "/opt/projects/docktun")
 	svc.runDocker = func(ctx context.Context, args ...string) ([]byte, error) {
 		t.Fatal("Docker called before validating files")
 		return nil, nil
@@ -203,7 +203,7 @@ func TestNewProjectTemplateDoesNotRequireTunnelNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	svc := NewProjects(database, "")
+	svc := newNativeTestProjects(database, "")
 	p, err := svc.Create("example", t.TempDir(), "", "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -261,7 +261,7 @@ exit 1
 		t.Fatal(err)
 	}
 	defer database.Close()
-	svc := NewProjects(database, "")
+	svc := newNativeTestProjects(database, "")
 	project, err := svc.Create("example", "projects/example", "", "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -284,7 +284,7 @@ func TestListingProjectsNeverDeletesByName(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	svc := NewProjects(database, "")
+	svc := newNativeTestProjects(database, "")
 	names := []string{"public-cloudflare-tunnel-cloudflared", "personal-cloudflare-tunnel", "docktun-wireguard", "mediastorm", "mediastorm-postgres", "tun", "docktun"}
 	ids := make(map[int]bool)
 	for _, name := range names {
@@ -319,7 +319,7 @@ func TestProjectCleanupKeepsDistinctCredentialsAndOnlyRemovesExactDuplicates(t *
 		t.Fatal(err)
 	}
 	defer database.Close()
-	svc := NewProjects(database, "")
+	svc := newNativeTestProjects(database, "")
 	original, err := svc.Create("example", t.TempDir(), "https://example.invalid/project", "user", "token-one")
 	if err != nil {
 		t.Fatal(err)
@@ -355,7 +355,7 @@ func TestMissingProjectFilesDoNotCreateDirectoriesOrInventCompose(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer database.Close()
-	svc := NewProjects(database, "")
+	svc := newNativeTestProjects(database, "")
 	missing := filepath.Join(root, "host-only", "example")
 	project, err := svc.Create("example", missing, "", "", "")
 	if err != nil {
@@ -379,7 +379,7 @@ func TestUnreadableComposeIsNotReplacedBySample(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	svc := NewProjects(database, "")
+	svc := newNativeTestProjects(database, "")
 	directory := filepath.Join(root, "project")
 	if err := os.MkdirAll(filepath.Join(directory, "docker-compose.yml"), 0755); err != nil {
 		t.Fatal(err)
@@ -400,7 +400,7 @@ func TestEnvReadDistinguishesAbsentFileFromUnavailableProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	svc := NewProjects(database, "")
+	svc := newNativeTestProjects(database, "")
 	project, err := svc.Create("example", filepath.Join(root, "missing"), "", "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -429,7 +429,7 @@ func TestProjectFilesConfineSymlinksAndTraversal(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	svc := NewProjects(database, "")
+	svc := newNativeTestProjects(database, "")
 	directory := filepath.Join(root, "project")
 	outside := filepath.Join(root, "outside")
 	for _, path := range []string{directory, outside} {
@@ -507,7 +507,7 @@ func TestProjectSettingsPreserveMaskedGitCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	svc := NewProjects(database, "")
+	svc := newNativeTestProjects(database, "")
 	project, err := svc.Create("example", t.TempDir(), "https://example.invalid/private", "owner", "original-secret-1234")
 	if err != nil {
 		t.Fatal(err)
@@ -555,7 +555,7 @@ func TestDeleteOptionsChecksFolderWithoutChangingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	svc := NewProjects(database, "")
+	svc := newNativeTestProjects(database, "")
 	folder := filepath.Join(root, "projects", "available")
 	if err := os.MkdirAll(folder, 0755); err != nil {
 		t.Fatal(err)
@@ -612,4 +612,10 @@ func TestDeleteOptionsChecksFolderWithoutChangingIt(t *testing.T) {
 	if result, err := svc.DeleteOptions(project.ID); err != nil || result.CanRemoveFiles {
 		t.Fatalf("missing folder stayed selectable: %+v %v", result, err)
 	}
+}
+
+func newNativeTestProjects(database *db.DB, selfPath string) *Projects {
+ s := NewProjects(database, selfPath)
+ s.requireMountInspection = func() bool { return false }
+ return s
 }
