@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"docktun/internal/service"
+	"github.com/go-chi/chi/v5"
 )
 
 type Projects struct {
@@ -68,7 +68,11 @@ func (h *Projects) Create(w http.ResponseWriter, r *http.Request) {
 		body.Name = "app-stack"
 	}
 	if strings.TrimSpace(body.Path) == "" {
-		body.Path = filepath.Join("./projects", body.Name)
+		if body.Name == "." || body.Name == ".." || strings.ContainsAny(body.Name, `/\`) {
+			jsonError(w, "project name must not contain directory separators", http.StatusBadRequest)
+			return
+		}
+		body.Path = filepath.Join(service.ProjectsRoot(), body.Name)
 	}
 
 	p, err := h.svc.Create(body.Name, body.Path, body.RepoURL, body.GitUsername, body.GitToken)
@@ -77,18 +81,26 @@ func (h *Projects) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, _ := r.Context().Value("user_id").(int)
+	if h.audit != nil {
+		h.audit.Log(userID, "project_create", body.Name, r.RemoteAddr)
+	}
+
 	// If direct compose content provided, save docker-compose.yml
 	if strings.TrimSpace(body.ComposeContent) != "" {
-		_ = h.svc.SaveComposeFile(p.ID, "docker-compose.yml", body.ComposeContent)
+		if err := h.svc.SaveComposeFile(p.ID, "docker-compose.yml", body.ComposeContent); err != nil {
+			jsonError(w, "project saved but Compose file could not be written: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// If direct env content provided, save .env
 	if strings.TrimSpace(body.EnvContent) != "" {
-		_ = h.svc.SaveEnvFile(p.ID, body.EnvContent)
+		if err := h.svc.SaveEnvFile(p.ID, body.EnvContent); err != nil {
+			jsonError(w, "project saved but environment file could not be written: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
-
-	userID, _ := r.Context().Value("user_id").(int)
-	h.audit.Log(userID, "project_create", body.Name, r.RemoteAddr)
 
 	// If auto_start is true and compose file exists, start compose up -d asynchronously
 	if body.AutoStart && strings.TrimSpace(body.ComposeContent) != "" {
@@ -129,6 +141,22 @@ func (h *Projects) Update(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
+func (h *Projects) DeleteOptions(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		jsonError(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+	options, err := h.svc.DeleteOptions(id)
+	if err != nil {
+		jsonError(w, "project not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(options)
+}
+
 func (h *Projects) Delete(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
 	p, err := h.svc.GetByID(id)
@@ -153,14 +181,14 @@ func (h *Projects) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Projects) Prune(w http.ResponseWriter, r *http.Request) {
-	count, err := h.svc.PruneOrphans()
+	count, err := h.svc.PruneDuplicates()
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	userID, _ := r.Context().Value("user_id").(int)
-	h.audit.Log(userID, "projects_prune", fmt.Sprintf("Pruned %d orphan/duplicate projects", count), r.RemoteAddr)
+	h.audit.Log(userID, "projects_prune", fmt.Sprintf("Removed %d duplicate project records", count), r.RemoteAddr)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "pruned": count})

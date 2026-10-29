@@ -1,7 +1,11 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -33,11 +37,12 @@ type FileInfo struct {
 }
 
 type Projects struct {
-	db       *db.DB
-	selfPath string
-	mu       sync.Mutex
-	outMu    sync.RWMutex
-	outputs  map[int]*projectOutput
+	db        *db.DB
+	selfPath  string
+	mu        sync.Mutex
+	outMu     sync.RWMutex
+	outputs   map[int]*projectOutput
+	runDocker func(context.Context, ...string) ([]byte, error)
 }
 
 type projectOutput struct {
@@ -46,7 +51,7 @@ type projectOutput struct {
 }
 
 func NewProjects(database *db.DB, selfPath string) *Projects {
-	return &Projects{db: database, selfPath: selfPath, outputs: make(map[int]*projectOutput)}
+	return &Projects{db: database, selfPath: selfPath, outputs: make(map[int]*projectOutput), runDocker: providerDocker}
 }
 
 func (s *Projects) GetOutput(id int) ([]string, bool) {
@@ -84,11 +89,6 @@ func (s *Projects) markDone(id int) {
 }
 
 func (s *Projects) List() ([]Project, error) {
-	// Auto-prune ghost stacks and duplicate container-name entries
-	_, _ = s.db.Exec(`DELETE FROM projects WHERE name = 'public-cloudflare-tunnel-cloudflared' OR name LIKE '%cloudflare-tunnel%'`)
-	_, _ = s.db.Exec(`DELETE FROM projects WHERE name IN ('docktun-cloudflared', 'docktun-wireguard', 'docktun-tailscale', 'docktun-zeroconf')`)
-	_, _ = s.db.Exec(`DELETE FROM projects WHERE name = 'mediastorm-postgres' AND EXISTS (SELECT 1 FROM projects p2 WHERE p2.name = 'mediastorm')`)
-	_, _ = s.db.Exec(`DELETE FROM projects WHERE name = 'tun' AND EXISTS (SELECT 1 FROM projects p2 WHERE p2.name = 'docktun')`)
 
 	rows, err := s.db.Query("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects ORDER BY name")
 	if err != nil {
@@ -105,32 +105,45 @@ func (s *Projects) List() ([]Project, error) {
 		p.GitToken = maskToken(p.GitToken)
 		projects = append(projects, p)
 	}
-	return projects, nil
+	return projects, rows.Err()
 }
 
-func (s *Projects) PruneOrphans() (int, error) {
-	res, err := s.db.Exec(`
-		DELETE FROM projects 
-		WHERE name IN ('public-cloudflare-tunnel-cloudflared', 'docktun-cloudflared', 'docktun-wireguard', 'docktun-tailscale', 'docktun-zeroconf')
-		   OR name LIKE '%cloudflare-tunnel%'
-		   OR (name = 'mediastorm-postgres' AND EXISTS (SELECT 1 FROM projects p2 WHERE p2.name = 'mediastorm'))
-		   OR (name = 'tun' AND EXISTS (SELECT 1 FROM projects p2 WHERE p2.name = 'docktun'))
-	`)
+// Cleanup is explicit and only removes records with identical project metadata.
+// A provider-like name or an inaccessible host path does not make a stack orphaned.
+func (s *Projects) PruneDuplicates() (int, error) {
+	result, err := s.db.Exec(`DELETE FROM projects WHERE id NOT IN (
+  SELECT MIN(id) FROM projects GROUP BY name,path,repo_url,git_username,git_token
+ )`)
 	if err != nil {
 		return 0, err
 	}
-	affected, _ := res.RowsAffected()
-	return int(affected), nil
+	count, err := result.RowsAffected()
+	return int(count), err
+}
+
+// ProjectsRoot uses the persistent mount in the distributed image, and an
+// absolute local folder when running the backend directly during development.
+func ProjectsRoot() string {
+	if info, err := os.Stat("/opt/projects"); err == nil && info.IsDir() {
+		return "/opt/projects"
+	}
+	root, _ := filepath.Abs("./projects")
+	return root
 }
 
 func (s *Projects) Create(name, path, repoURL, gitUsername, gitToken string) (Project, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return Project{}, err
+	}
+	path = absolute
 	if s.isSelf(path) {
 		return Project{}, fmt.Errorf("cannot add DockTun itself as a project")
 	}
 
 	// Check if a project with the same path or name already exists to prevent UNIQUE constraint errors
 	var existing Project
-	err := s.db.QueryRow("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects WHERE path = ? OR name = ?", path, name).
+	err = s.db.QueryRow("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects WHERE path = ? OR name = ?", path, name).
 		Scan(&existing.ID, &existing.Name, &existing.Path, &existing.RepoURL, &existing.GitUsername, &existing.GitToken, &existing.CreatedAt)
 	if err == nil {
 		// Update existing record
@@ -198,12 +211,19 @@ func (s *Projects) Update(id int, name, path, repoURL, gitUsername, gitToken str
 	if s.isSelf(path) {
 		return fmt.Errorf("cannot set path to DockTun itself")
 	}
-	if gitToken == "" || gitToken == maskToken("x") {
+	current, err := s.GetByID(id)
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(gitToken, "****") && gitToken != "****" && gitToken != maskToken(current.GitToken) {
+		return fmt.Errorf("saved Git token has changed; reload the project settings before saving")
+	}
+	if gitToken == "" || gitToken == "****" || gitToken == maskToken(current.GitToken) {
 		_, err := s.db.Exec("UPDATE projects SET name=?, path=?, repo_url=?, git_username=? WHERE id=?",
 			name, path, repoURL, gitUsername, id)
 		return err
 	}
-	_, err := s.db.Exec("UPDATE projects SET name=?, path=?, repo_url=?, git_username=?, git_token=? WHERE id=?",
+	_, err = s.db.Exec("UPDATE projects SET name=?, path=?, repo_url=?, git_username=?, git_token=? WHERE id=?",
 		name, path, repoURL, gitUsername, gitToken, id)
 	return err
 }
@@ -215,7 +235,12 @@ func (s *Projects) isSelf(path string) bool {
 	return strings.TrimRight(path, "/") == strings.TrimRight(s.selfPath, "/")
 }
 
+// DeleteProject removes stack resources by their exact Compose project label.
+// Compose working_dir labels refer to the daemon host, not necessarily a path
+// accessible inside DockTun. Never depend on that path to remove resources.
 func (s *Projects) DeleteProject(id int, down bool, removeFiles bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	p, err := s.GetByID(id)
 	if err != nil {
 		return err
@@ -223,27 +248,156 @@ func (s *Projects) DeleteProject(id int, down bool, removeFiles bool) error {
 	if s.isSelf(p.Path) {
 		return fmt.Errorf("cannot delete DockTun itself as a project")
 	}
-
-	if down && p.Path != "" {
-		cmdArgs := []string{"compose"}
-		if p.Name != "" {
-			cmdArgs = append(cmdArgs, "-p", p.Name)
-		}
-		cmdArgs = append(cmdArgs, "--project-directory", p.Path, "down")
-		cmd := exec.Command("docker", cmdArgs...)
-		cmd.Dir = p.Path
-		_ = cmd.Run()
-	}
-
-	if removeFiles && p.Path != "" && !s.isSelf(p.Path) {
-		cleanPath := filepath.Clean(p.Path)
-		if cleanPath != "/" && cleanPath != "." && cleanPath != "./projects" && cleanPath != "/opt/projects" {
-			_ = os.RemoveAll(cleanPath)
+	if removeFiles {
+		if err := s.validateProjectRemoval(p.Path); err != nil {
+			return err
 		}
 	}
-
+	if down {
+		if err := s.removeStackResources(p.Name); err != nil {
+			return err
+		}
+	}
+	if removeFiles {
+		if err := os.RemoveAll(filepath.Clean(p.Path)); err != nil {
+			return fmt.Errorf("containers removed but project files could not be deleted: %w", err)
+		}
+	}
 	_, err = s.db.Exec("DELETE FROM projects WHERE id = ?", id)
 	return err
+}
+
+func (s *Projects) removeStackResources(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("stack has no Compose project name")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	filter := "label=com.docker.compose.project=" + name
+	out, err := s.runDocker(ctx, "ps", "-aq", "--no-trunc", "--filter", filter)
+	if err != nil {
+		return fmt.Errorf("could not find stack containers: %w", err)
+	}
+	ids := strings.Fields(string(out))
+	// Refuse to remove the app even when an imported stack has an incorrect path.
+	if len(ids) > 0 {
+		out, err = s.runDocker(ctx, append([]string{"inspect"}, ids...)...)
+		if err != nil {
+			return fmt.Errorf("could not verify stack containers: %w", err)
+		}
+		var containers []struct {
+			ID     string `json:"Id"`
+			Name   string `json:"Name"`
+			Config struct {
+				Labels map[string]string `json:"Labels"`
+			} `json:"Config"`
+		}
+		if json.Unmarshal(out, &containers) != nil || len(containers) != len(ids) {
+			return fmt.Errorf("invalid stack container inspection")
+		}
+		hostname, _ := os.Hostname()
+		selfName := os.Getenv("DOCKTUN_CONTAINER")
+		if selfName == "" {
+			selfName = "docktun"
+		}
+		for _, c := range containers {
+			if c.Config.Labels["com.docker.compose.project"] != name {
+				return fmt.Errorf("container does not belong to selected stack")
+			}
+			if c.ID == hostname || strings.HasPrefix(c.ID, hostname) && len(hostname) >= 12 || strings.TrimPrefix(c.Name, "/") == selfName {
+				return fmt.Errorf("cannot delete the stack running DockTun")
+			}
+		}
+		if _, err := s.runDocker(ctx, append([]string{"stop", "--time", "10"}, ids...)...); err != nil {
+			return fmt.Errorf("could not stop stack containers: %w", err)
+		}
+		if _, err := s.runDocker(ctx, append([]string{"rm"}, ids...)...); err != nil {
+			return fmt.Errorf("could not remove stack containers: %w", err)
+		}
+	}
+	out, err = s.runDocker(ctx, "network", "ls", "-q", "--filter", filter)
+	if err != nil {
+		return fmt.Errorf("could not find stack networks: %w", err)
+	}
+	for _, network := range strings.Fields(string(out)) {
+		if _, err := s.runDocker(ctx, "network", "rm", network); err != nil {
+			return fmt.Errorf("could not remove stack network: %w", err)
+		}
+	}
+	// No -v: named and anonymous volumes, images and external networks survive.
+	return nil
+}
+
+// DeleteOptions checks the same folder policy enforced again during deletion.
+// This is advisory: files can change after the dialog is opened.
+type ProjectDeleteOptions struct {
+	Path           string `json:"path"`
+	CanRemoveFiles bool   `json:"can_remove_files"`
+	Reason         string `json:"reason,omitempty"`
+}
+
+func (s *Projects) DeleteOptions(id int) (ProjectDeleteOptions, error) {
+	project, err := s.GetByID(id)
+	if err != nil {
+		return ProjectDeleteOptions{}, err
+	}
+	options := ProjectDeleteOptions{Path: project.Path}
+	if err := s.validateProjectRemoval(project.Path); err != nil {
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			options.Reason = "This folder is not available inside DockTun. You can still remove the stack containers."
+		case errors.Is(err, os.ErrPermission):
+			options.Reason = "DockTun cannot access this folder. You can still remove the stack containers."
+		default:
+			options.Reason = err.Error()
+		}
+		return options, nil
+	}
+	options.CanRemoveFiles = true
+	return options, nil
+}
+
+func (s *Projects) validateProjectRemoval(projectPath string) error {
+	if strings.TrimSpace(projectPath) == "" {
+		return fmt.Errorf("stack has no accessible project directory; leave file removal unchecked")
+	}
+	target, err := filepath.Abs(projectPath)
+	if err != nil {
+		return err
+	}
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return fmt.Errorf("project directory is not accessible inside DockTun; leave file removal unchecked: %w", err)
+	}
+	if resolved != target {
+		return fmt.Errorf("refusing to delete a project directory through a symbolic link")
+	}
+	// File cleanup is limited to mounted/managed projects, never a host path
+	// guessed from container labels. Ancestors of DockTun are protected too.
+	roots := []string{"/opt/projects", "./projects"}
+	allowed := false
+	for _, root := range roots {
+		base, _ := filepath.Abs(root)
+		rel, err := filepath.Rel(base, target)
+		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return fmt.Errorf("file removal is only available for directories inside DockTun's projects folder; leave it unchecked to remove containers only")
+	}
+	if s.selfPath != "" {
+		self, _ := filepath.Abs(s.selfPath)
+		rel, err := filepath.Rel(target, self)
+		if err == nil && (rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))) {
+			return fmt.Errorf("cannot delete DockTun's directory or its parent")
+		}
+	}
+	info, err := os.Stat(target)
+	if err != nil || !info.IsDir() {
+		return fmt.Errorf("project path is not a directory")
+	}
+	return nil
 }
 
 func (s *Projects) Delete(id int) error {
@@ -341,6 +495,16 @@ func (s *Projects) DeployStream(id int, p Project, ref string, onDone func(strin
 }
 
 func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
+	if strings.TrimSpace(path) == "" {
+		s.appendOutput(id, "[ERROR] project directory is missing")
+		return
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		s.appendOutput(id, "[ERROR] resolve project directory: "+err.Error())
+		return
+	}
+	path = absolute
 	for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
 		f := filepath.Join(path, name)
 		if fileExists(f) {
@@ -349,15 +513,14 @@ func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
 		}
 	}
 
-	cmdArgs := []string{"compose", "--profile", "all", "--profile", "*"}
-	if p, err := s.GetByID(id); err == nil && p.Name != "" {
-		cmdArgs = append(cmdArgs, "-p", p.Name)
+	projectName := ""
+	if p, err := s.GetByID(id); err == nil {
+		projectName = p.Name
 	}
-	cmdArgs = append(cmdArgs, "--project-directory", path)
-	cmdArgs = append(cmdArgs, args...)
-	cmd := exec.Command("docker", cmdArgs...)
-	if path != "" {
-		cmd.Dir = path
+	cmd, err := composeProjectCommand(projectName, path, args...)
+	if err != nil {
+		s.appendOutput(id, "[ERROR] "+err.Error())
+		return
 	}
 
 	stdout, _ := cmd.StdoutPipe()
@@ -413,53 +576,54 @@ func maskToken(t string) string {
 	return "****" + t[len(t)-4:]
 }
 
-func (s *Projects) resolvePath(p Project, relPath string) (string, error) {
-	cleanBase := filepath.Clean(p.Path)
-	cleanRel := filepath.Clean("/" + filepath.ToSlash(relPath))
-	fullPath := filepath.Clean(filepath.Join(cleanBase, cleanRel))
-	rel, err := filepath.Rel(cleanBase, fullPath)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return "", fmt.Errorf("invalid path: outside project root")
-	}
-	return fullPath, nil
-}
-
-func (s *Projects) ListFiles(id int, relPath string) ([]FileInfo, error) {
+// Open a filesystem root so symlink resolution cannot escape the selected stack.
+// Only an explicit create/save operation may create a missing project directory.
+func (s *Projects) projectRoot(id int, create bool) (*os.Root, error) {
 	p, err := s.GetByID(id)
 	if err != nil {
 		return nil, err
 	}
-	targetDir, err := s.resolvePath(p, relPath)
+	if create {
+		if err := os.MkdirAll(p.Path, 0755); err != nil {
+			return nil, err
+		}
+	}
+	root, err := os.OpenRoot(p.Path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("project folder is unavailable inside DockTun; mount the stack folder before accessing files: %w", err)
 	}
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(targetDir)
-	if err != nil {
-		return nil, err
-	}
+	return root, nil
+}
 
-	cleanBase := filepath.Clean(p.Path)
-	var files []FileInfo
+func (s *Projects) ListFiles(id int, relPath string) ([]FileInfo, error) {
+	rel, err := transferPath(relPath)
+	if err != nil {
+		return nil, err
+	}
+	root, err := s.projectRoot(id, false)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	directory, err := root.Open(rel)
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	entries, err := directory.ReadDir(-1)
+	if err != nil {
+		return nil, err
+	}
+	files := []FileInfo{}
 	for _, entry := range entries {
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
-		entryFullPath := filepath.Join(targetDir, entry.Name())
-		relEntry, _ := filepath.Rel(cleanBase, entryFullPath)
 		files = append(files, FileInfo{
-			Name:    entry.Name(),
-			Path:    filepath.ToSlash(relEntry),
-			IsDir:   entry.IsDir(),
-			Size:    info.Size(),
-			ModTime: info.ModTime().Format(time.RFC3339),
+			Name: entry.Name(), Path: filepath.ToSlash(filepath.Join(rel, entry.Name())),
+			IsDir: entry.IsDir(), Size: info.Size(), ModTime: info.ModTime().Format(time.RFC3339),
 		})
-	}
-	if files == nil {
-		files = []FileInfo{}
 	}
 	sort.Slice(files, func(i, j int) bool {
 		if files[i].IsDir != files[j].IsDir {
@@ -471,78 +635,93 @@ func (s *Projects) ListFiles(id int, relPath string) ([]FileInfo, error) {
 }
 
 func (s *Projects) GetFile(id int, relPath string) (string, error) {
-	p, err := s.GetByID(id)
+	rel, err := transferPath(relPath)
 	if err != nil {
 		return "", err
 	}
-	targetFile, err := s.resolvePath(p, relPath)
+	root, err := s.projectRoot(id, false)
 	if err != nil {
 		return "", err
 	}
-	stat, err := os.Stat(targetFile)
+	defer root.Close()
+	info, err := root.Stat(rel)
 	if err != nil {
 		return "", err
 	}
-	if stat.IsDir() {
-		return "", fmt.Errorf("path is a directory, not a file")
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("only regular project files can be edited")
 	}
-	if stat.Size() > 5*1024*1024 {
+	file, err := root.Open(rel)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	info, err = file.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("only regular project files can be edited")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 5*1024*1024+1))
+	if err != nil {
+		return "", err
+	}
+	if len(data) > 5*1024*1024 {
 		return "", fmt.Errorf("file is too large (> 5MB)")
-	}
-	data, err := os.ReadFile(targetFile)
-	if err != nil {
-		return "", err
 	}
 	return string(data), nil
 }
 
 func (s *Projects) SaveFile(id int, relPath string, content string) error {
-	p, err := s.GetByID(id)
+	rel, err := transferPath(relPath)
 	if err != nil {
 		return err
 	}
-	targetFile, err := s.resolvePath(p, relPath)
+	if rel == "." {
+		return fmt.Errorf("cannot replace project root directory")
+	}
+	root, err := s.projectRoot(id, true)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(targetFile), 0755); err != nil {
+	defer root.Close()
+	if err := root.MkdirAll(filepath.Dir(rel), 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(targetFile, []byte(content), 0644)
+	return root.WriteFile(rel, []byte(content), 0644)
 }
 
 func (s *Projects) DeleteFile(id int, relPath string) error {
-	p, err := s.GetByID(id)
+	rel, err := transferPath(relPath)
 	if err != nil {
 		return err
 	}
-	targetFile, err := s.resolvePath(p, relPath)
-	if err != nil {
-		return err
-	}
-	cleanBase := filepath.Clean(p.Path)
-	if targetFile == cleanBase {
+	if rel == "." {
 		return fmt.Errorf("cannot delete project root directory")
 	}
-	return os.RemoveAll(targetFile)
+	root, err := s.projectRoot(id, false)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.RemoveAll(rel)
 }
 
 func (s *Projects) CreateFile(id int, relPath string, isDir bool, content string) error {
-	p, err := s.GetByID(id)
+	if !isDir {
+		return s.SaveFile(id, relPath, content)
+	}
+	rel, err := transferPath(relPath)
 	if err != nil {
 		return err
 	}
-	targetPath, err := s.resolvePath(p, relPath)
+	root, err := s.projectRoot(id, true)
 	if err != nil {
 		return err
 	}
-	if isDir {
-		return os.MkdirAll(targetPath, 0755)
-	}
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(targetPath, []byte(content), 0644)
+	defer root.Close()
+	return root.MkdirAll(rel, 0755)
 }
 
 func (s *Projects) GetComposeFile(id int) (string, string, error) {
@@ -551,12 +730,21 @@ func (s *Projects) GetComposeFile(id int) (string, string, error) {
 		return "", "", err
 	}
 	candidates := []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
-	for _, c := range candidates {
-		fullPath := filepath.Join(p.Path, c)
-		if data, err := os.ReadFile(fullPath); err == nil {
-			return c, string(data), nil
+	for _, candidate := range candidates {
+		fullPath := filepath.Join(p.Path, candidate)
+		content, err := s.GetFile(id, candidate)
+		if err == nil {
+			return candidate, content, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", "", fmt.Errorf("cannot read Compose file %s: %w", fullPath, err)
 		}
 	}
+	info, err := os.Stat(p.Path)
+	if err != nil || !info.IsDir() {
+		return "", "", fmt.Errorf("stack folder %s is not available inside DockTun; mount the host's project folder before editing its Compose file", p.Path)
+	}
+
 	defaultTmpl := fmt.Sprintf(`services:
   %s:
     image: nginx:alpine
@@ -564,12 +752,6 @@ func (s *Projects) GetComposeFile(id int) (string, string, error) {
     restart: unless-stopped
     ports:
       - "8080:80"
-    networks:
-      - cloudflared
-
-networks:
-  cloudflared:
-    external: true
 `, p.Name, p.Name)
 	return "docker-compose.yml", defaultTmpl, nil
 }
@@ -588,13 +770,21 @@ func (s *Projects) SaveComposeFile(id int, filename string, content string) erro
 
 func (s *Projects) GetEnvFile(id int) (string, error) {
 	content, err := s.GetFile(id, ".env")
-	if err != nil {
-		return "", nil
+	if err == nil {
+		return content, nil
 	}
-	return content, nil
+	if os.IsNotExist(err) {
+		project, projectErr := s.GetByID(id)
+		if projectErr != nil {
+			return "", projectErr
+		}
+		if info, statErr := os.Stat(project.Path); statErr == nil && info.IsDir() {
+			return "", nil // An optional .env may be absent in an accessible stack.
+		}
+	}
+	return "", fmt.Errorf("cannot read stack .env; ensure the project folder is mounted inside DockTun: %w", err)
 }
 
 func (s *Projects) SaveEnvFile(id int, content string) error {
 	return s.SaveFile(id, ".env", content)
 }
-

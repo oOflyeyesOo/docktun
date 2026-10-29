@@ -46,6 +46,10 @@ func TestProvidersStageStoppedAndOperateIndependently(t *testing.T) {
 	p.run = func(_ context.Context, args ...string) ([]byte, error) {
 		calls = append(calls, strings.Join(args, " "))
 		switch args[0] {
+		case "network":
+			if args[1] == "ls" {
+				return []byte("network123\tdocktun"), nil
+			}
 		case "inspect":
 			if args[1] == hostname {
 				return json.Marshal([]any{own})
@@ -82,6 +86,9 @@ func TestProvidersStageStoppedAndOperateIndependently(t *testing.T) {
 		}
 	}
 	staged := strings.Join(calls, "\n")
+	if !strings.Contains(staged, "-e TS_STATE_DIR=/var/lib/tailscale -e TS_AUTH_ONCE=true") {
+		t.Fatal("Tailscale startup must preserve interactive login and settings", staged)
+	}
 	if strings.Contains(staged, "private-test-connector-token") || strings.Contains(staged, "run -d") {
 		t.Fatal("leaked token or started during preparation")
 	}
@@ -173,11 +180,54 @@ func TestConnectorTokenFilePermissions(t *testing.T) {
 		t.Fatalf("token file not created: %v", err)
 	}
 	mode := fi.Mode().Perm()
-	if mode&0444 != 0444 {
-		t.Errorf("token file mode %o does not allow reading", mode)
+	if mode != 0600 {
+		t.Errorf("token file mode %o exposes the connector credential", mode)
 	}
 	data, err := os.ReadFile(tokenPath)
 	if err != nil || string(data) != tok {
 		t.Errorf("token file content = %q, want %q", string(data), tok)
+	}
+}
+
+func TestInvalidConnectorCommandKeepsExistingToken(t *testing.T) {
+	cfg := &config.Config{CloudflaredConfig: filepath.Join(t.TempDir(), "config.yml")}
+	cfd := NewCloudflared(cfg, nil)
+	if err := cfd.SaveConnectorToken("existing-private-token"); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{"cloudflared tunnel run --token-file /tmp/token", "--token-file=/tmp/token", `cloudflared tunnel run --token=""`, "cloudflared tunnel run --token", "cloudflared service install", "cloudflared tunnel run --token valid\nsecondline", strings.Repeat("x", 65*1024) + " --token small"} {
+		if err := cfd.SaveConnectorToken(input); err == nil {
+			t.Fatalf("accepted invalid token input %q", input[:min(len(input), 80)])
+		}
+		data, err := os.ReadFile(cfd.providers.tokenFile())
+		if err != nil || string(data) != "existing-private-token" {
+			t.Fatal("invalid input changed existing token")
+		}
+	}
+	if err := cfd.SaveConnectorToken(""); err != nil {
+		t.Fatal(err)
+	}
+	if cfd.HasConnectorToken() {
+		t.Fatal("explicit token clear failed")
+	}
+}
+
+func TestStoppedManagedConnectorIsReused(t *testing.T) {
+	cfg := &config.Config{CloudflaredConfig: filepath.Join(t.TempDir(), "config.yml")}
+	cfd := NewCloudflared(cfg, nil)
+	if err := cfd.SaveConnectorToken("test-private-token"); err != nil {
+		t.Fatal(err)
+	}
+	cfd.providers.run = func(ctx context.Context, args ...string) ([]byte, error) {
+		if args[0] == "inspect" {
+			return []byte(`[{"Config":{"Labels":{"docktun.provider":"cloudflare","docktun.cloudflared.auth":"token"}},"State":{"Running":false}}]`), nil
+		}
+		if args[0] != "start" {
+			t.Fatalf("stopped connector unnecessarily recreated: %v", args)
+		}
+		return nil, nil
+	}
+	if err := cfd.providers.Control("cloudflare", "start"); err != nil {
+		t.Fatal(err)
 	}
 }

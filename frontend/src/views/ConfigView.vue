@@ -41,6 +41,13 @@ const { apiFetch } = useApi()
 const route = useRoute()
 const router = useRouter()
 
+function focusApiCredentials() {
+  setSubTab('api')
+  setTimeout(() => {
+    document.getElementById('cloudflare-api-token')?.focus()
+  }, 100)
+}
+
 interface IngressRule {
   hostname: string
   service: string
@@ -94,6 +101,20 @@ async function fetchStatus() {
 
 const connectorToken = ref('')
 const connectorPresent = ref(false)
+const connectorTunnelId = ref('')
+const remoteConfiguration = ref<any>(null)
+const remoteConfigurationError = ref('')
+const remoteRules = computed(() => (remoteConfiguration.value?.ingress || []).filter((rule: any) => rule.hostname))
+async function fetchRemoteConfiguration() {
+  remoteConfigurationError.value = ''
+  try {
+    const result = await apiFetch<any>('/api/cloudflare/configuration')
+    remoteConfiguration.value = result.config
+  } catch (e: any) {
+    remoteConfiguration.value = null
+    remoteConfigurationError.value = e.message
+  }
+}
 function cleanConnectorToken(raw: string): string {
   let tok = raw.trim()
   const match = tok.match(/--token(?:=|\s+)([^\s"']+)/)
@@ -105,7 +126,13 @@ function cleanConnectorToken(raw: string): string {
   return tok.replace(/["']/g, '').trim()
 }
 async function fetchConnector() {
-  try { connectorPresent.value = (await apiFetch<any>('/api/provider/cloudflare/credentials')).has_token } catch {}
+  try {
+    const result = await apiFetch<any>('/api/provider/cloudflare/credentials')
+    connectorPresent.value = result.has_token
+    connectorTunnelId.value = result.tunnel_id || ''
+    if (connectorPresent.value) tunnelId.value = connectorTunnelId.value
+    if (result.account_id && !cfAccountId.value) cfAccountId.value = result.account_id
+  } catch {}
 }
 async function saveConnector(clear = false) {
   saving.value = true
@@ -113,6 +140,8 @@ async function saveConnector(clear = false) {
     const tokenVal = clear ? '' : cleanConnectorToken(connectorToken.value)
     const result = await apiFetch<any>('/api/provider/cloudflare/credentials', { method: 'PUT', body: JSON.stringify({ token: tokenVal }) })
     connectorPresent.value = result.has_token
+    connectorTunnelId.value = result.tunnel_id || ''
+    if (connectorPresent.value) tunnelId.value = connectorTunnelId.value
     connectorToken.value = ''
     if (tunnelStatus.value?.running) {
       await apiFetch('/api/control/restart', { method: 'POST' })
@@ -121,6 +150,7 @@ async function saveConnector(clear = false) {
     } else {
       message.value = { type: 'success', text: clear ? 'Switched to local YAML credentials.' : 'Credentials saved. Click Enable Cloudflare to start the tunnel.' }
     }
+    await loadConfig()
   } catch (e: any) { message.value = { type: 'error', text: e.message } }
   finally { saving.value = false }
 }
@@ -229,6 +259,7 @@ function toggleRulePause(rule: IngressRule) {
 // Load YAML Config
 async function loadConfig() {
   try {
+    if (connectorPresent.value) { await fetchRemoteConfiguration(); return }
     const data = await apiFetch<{ content: string }>('/api/config')
     rawYaml.value = data.content
     parseYaml(data.content)
@@ -442,6 +473,7 @@ async function createManualBackup() {
 }
 
 async function restoreBackup(b: BackupItem) {
+  if (connectorPresent.value) { message.value = { type: 'error', text: 'These snapshots belong to local YAML. Switch to local YAML credentials before restoring one.' }; return }
   if (!confirm(`Restore backup from ${b.created_at}? This will overwrite the current ingress config.`)) return
   rawYaml.value = b.content
   parseYaml(b.content)
@@ -509,6 +541,7 @@ async function saveCfApiCredentials() {
     cfApiSuccess.value = true
     await loadBackendCfSettings()
     await fetchRemoteTunnelInfo()
+    if (connectorPresent.value) await fetchRemoteConfiguration()
     setTimeout(() => (cfApiSuccess.value = false), 3500)
   } catch (err: any) {
     cfApiError.value = 'Failed to save settings: ' + err.message
@@ -883,12 +916,12 @@ onUnmounted(() => {
       <div class="flex items-center gap-2 shrink-0">
         <button
           v-if="message.action === 'token_required'"
-          @click="setSubTab('api')"
+          @click="focusApiCredentials"
           class="cyber-btn-secondary text-[11px] px-2.5 py-1 text-cyan-700 border-cyan-300 bg-cyan-100/60 hover:bg-cyan-200/60 font-sans font-bold flex items-center gap-1"
-          title="Open Cloudflare API & Edge tab to enter your API Token"
+          title="Enter your API token in API credentials tab"
         >
           <KeyRound class="h-3 w-3 text-cyan-600" />
-          <span>Enter API Token (Tab 4)</span>
+          <span>Enter API token (Tab 4)</span>
         </button>
         <button
           v-else-if="message.action === 'force_overwrite'"
@@ -905,7 +938,6 @@ onUnmounted(() => {
         </button>
       </div>
     </div>
-
     <!-- ======================================================== -->
     <!-- TAB 1: OVERVIEW & DIAGNOSTICS                            -->
     <!-- ======================================================== -->
@@ -1151,14 +1183,50 @@ onUnmounted(() => {
     <!-- TAB 2: INGRESS ROUTING RULES                             -->
     <!-- ======================================================== -->
     <div v-if="activeTab === 'ingress'" class="space-y-4">
-      <div v-if="connectorPresent" class="rounded-xl border border-emerald-500/30 bg-emerald-50/40 p-3.5 flex items-start gap-2.5 text-xs text-emerald-800">
-        <CheckCircle2 class="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
-        <div>
-          <span class="font-bold">Connector token active:</span>
-          Your tunnel connector token is active. Cloudflare routes incoming traffic to your public hostnames using remote configurations defined in the Cloudflare Zero Trust dashboard. Local YAML rules below apply when running a locally managed credentials file tunnel.
+      <section v-if="connectorPresent" class="cyber-card p-5 space-y-3" aria-label="Cloudflare-managed routes">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <Layers class="h-4 w-4 text-cyan-600" />
+            <h2 class="font-semibold text-slate-900">Cloudflare-managed tunnel routes</h2>
+          </div>
+          <button class="cyber-btn-secondary text-xs flex items-center gap-1.5" @click="fetchRemoteConfiguration(); fetchRemoteTunnelInfo()">
+            <RefreshCw class="h-3 w-3" />
+            <span>Refresh Cloudflare routes</span>
+          </button>
         </div>
-      </div>
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+        <p class="text-sm text-slate-600">Tunnel: <span class="font-mono font-medium text-slate-800">{{ connectorTunnelId || 'Unable to read connector identity' }}</span>. These routes come from Cloudflare, not a local YAML file. Expose selected apps in <router-link to="/containers" class="text-cyan-700 underline font-medium">Containers → Access</router-link>, or manage routes in the Cloudflare dashboard.</p>
+        <p v-if="cfRemoteTunnel" class="text-sm text-slate-700">Cloudflare edge status: <strong class="text-emerald-700">{{ cfRemoteTunnel.status || 'Unknown' }}</strong> · {{ cfRemoteTunnel.connections?.length ?? '—' }} connectors reported</p>
+        <p v-if="remoteConfigurationError" role="alert" class="text-sm text-red-700 bg-red-50 p-2.5 rounded border border-red-200">{{ remoteConfigurationError }}</p>
+        <p v-else-if="!remoteConfiguration" class="text-sm text-slate-600">Routes have not been queried.</p>
+        <p v-else-if="remoteRules.length === 0" class="text-sm text-slate-600">Cloudflare reports no public hostname routes.</p>
+        <div v-else class="overflow-x-auto rounded-lg border border-slate-200">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 border-b border-slate-200 text-slate-600">
+              <tr>
+                <th class="p-2.5 font-semibold">Hostname / path</th>
+                <th class="p-2.5 font-semibold">Origin service</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <tr v-for="(rule, index) in remoteRules" :key="index" class="hover:bg-slate-50/60">
+                <td class="p-2.5 font-medium text-slate-800">{{ rule.hostname }}{{ rule.path || '' }}</td>
+                <td class="p-2.5 font-mono text-slate-600">{{ rule.service }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Local YAML Rules (collapsible if connectorPresent, visible if !connectorPresent) -->
+      <component
+        :is="connectorPresent ? 'details' : 'div'"
+        :class="connectorPresent ? 'cyber-card space-y-4' : 'space-y-4'"
+      >
+        <summary v-if="connectorPresent" class="cursor-pointer text-xs font-semibold text-slate-600 hover:text-slate-900 select-none">
+          Show local YAML configuration rules (for local credentials tunnels)
+        </summary>
+        <div :class="{ 'pt-3 space-y-4 border-t border-slate-200': connectorPresent }">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
         <div>
           <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
             <Layers class="h-4 w-4 text-cyan-600" />
@@ -1376,6 +1444,8 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
+        </div>
+      </component>
     </div>
 
     <!-- ======================================================== -->
@@ -1533,73 +1603,82 @@ onUnmounted(() => {
           </p>
         </div>
 
-        <div class="grid gap-4 md:grid-cols-2">
-          <div class="col-span-full">
-            <div class="flex items-center justify-between mb-1">
-              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                Cloudflare API Token
-              </label>
-              <span v-if="cfApiHasToken" class="text-[10px] text-emerald-600 font-mono flex items-center gap-1">
-                <CheckCircle2 class="h-3 w-3" />
-                Detected from file/environment ({{ cfApiMaskedToken }})
-              </span>
+        <!-- Cloudflare API Credentials -->
+        <div class="space-y-4">
+          <p class="text-xs text-slate-600">
+            The connector token runs the tunnel daemon. Publishing Cloudflare-managed routes from DockTun requires a separate API token with account <strong>Cloudflare Tunnel Edit/Write</strong> and zone <strong>DNS Edit</strong> permissions; a DNS-only zone token cannot publish routes. Tunnel Read allows status and route queries. Account ID is detected from a connector token when available.
+          </p>
+          <div class="grid gap-4 md:grid-cols-2">
+            <div class="col-span-full">
+              <div class="flex items-center justify-between mb-1">
+                <label for="cloudflare-api-token" class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                  Cloudflare API Token
+                </label>
+                <span v-if="cfApiHasToken" class="text-[10px] text-emerald-600 font-mono flex items-center gap-1">
+                  <CheckCircle2 class="h-3 w-3" />
+                  Saved API token ({{ cfApiMaskedToken }})
+                </span>
+              </div>
+              <input
+                id="cloudflare-api-token"
+                v-model="cfApiToken"
+                type="password"
+                :placeholder="cfApiHasToken ? 'Configured: ' + cfApiMaskedToken + ' (enter new value to override)' : 'Bearer Token with Cloudflare Tunnel & DNS permissions'"
+                class="cyber-input text-xs font-mono"
+              />
             </div>
-            <input
-              v-model="cfApiToken"
-              type="password"
-              :placeholder="cfApiHasToken ? 'Configured: ' + cfApiMaskedToken + ' (enter new value to override)' : 'Bearer Token with Cloudflare Tunnel & DNS permissions'"
-              class="cyber-input text-xs font-mono"
-            />
+
+            <div>
+              <label for="cloudflare-account-id" class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                Cloudflare Account ID
+              </label>
+              <input
+                id="cloudflare-account-id"
+                v-model="cfAccountId"
+                type="text"
+                placeholder="e.g. 7a8b9c..."
+                class="cyber-input text-xs font-mono"
+              />
+            </div>
+
+            <div>
+              <label for="cloudflare-zone-id" class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+                Cloudflare Zone ID (Optional)
+              </label>
+              <input
+                id="cloudflare-zone-id"
+                v-model="cfZoneId"
+                type="text"
+                placeholder="For DNS CNAME verification"
+                class="cyber-input text-xs font-mono"
+              />
+            </div>
           </div>
 
-          <div>
-            <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-              Cloudflare Account ID
-            </label>
-            <input
-              v-model="cfAccountId"
-              type="text"
-              placeholder="e.g. 7a8b9c..."
-              class="cyber-input text-xs font-mono"
-            />
+          <div class="flex items-center gap-3 pt-1">
+            <button
+              @click="saveCfApiCredentials"
+              :disabled="cfApiLoading"
+              class="cyber-btn text-xs text-cyan-700"
+            >
+              <RefreshCw v-if="cfApiLoading" class="h-3 w-3 animate-spin mr-1" />
+              <span>Save & Query Cloudflare API</span>
+            </button>
+            <button
+              v-if="cfApiHasToken || cfApiToken"
+              @click="fetchRemoteTunnelInfo"
+              :disabled="cfApiLoading"
+              class="cyber-btn-secondary text-xs text-slate-700 flex items-center gap-1.5"
+            >
+              <RefreshCw class="h-3 w-3" :class="cfApiLoading ? 'animate-spin' : ''" />
+              <span>Query Remote Status</span>
+            </button>
+            <span v-if="cfApiSuccess" class="text-xs text-emerald-600 font-medium">Credentials saved!</span>
           </div>
 
-          <div>
-            <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-              Cloudflare Zone ID (Optional)
-            </label>
-            <input
-              v-model="cfZoneId"
-              type="text"
-              placeholder="For DNS CNAME verification"
-              class="cyber-input text-xs font-mono"
-            />
+          <div v-if="cfApiError" class="rounded-lg border border-red-500/40 bg-red-50/20 p-3 text-xs text-red-700 font-mono">
+            {{ cfApiError }}
           </div>
-        </div>
-
-        <div class="flex items-center gap-3 pt-2">
-          <button
-            @click="saveCfApiCredentials"
-            :disabled="cfApiLoading"
-            class="cyber-btn text-xs text-cyan-700"
-          >
-            <RefreshCw v-if="cfApiLoading" class="h-3 w-3 animate-spin mr-1" />
-            <span>Save & Query Cloudflare API</span>
-          </button>
-          <button
-            v-if="cfApiHasToken || cfApiToken"
-            @click="fetchRemoteTunnelInfo"
-            :disabled="cfApiLoading"
-            class="cyber-btn-secondary text-xs text-slate-700 flex items-center gap-1.5"
-          >
-            <RefreshCw class="h-3 w-3" :class="cfApiLoading ? 'animate-spin' : ''" />
-            <span>Query Remote Status</span>
-          </button>
-          <span v-if="cfApiSuccess" class="text-xs text-emerald-600 font-medium">Credentials saved!</span>
-        </div>
-
-        <div v-if="cfApiError" class="rounded-lg border border-red-500/40 bg-red-50/20 p-3 text-xs text-red-700 font-mono">
-          {{ cfApiError }}
         </div>
 
         <!-- Automated DNS Management Actions Card -->
@@ -1922,6 +2001,7 @@ onUnmounted(() => {
     <!-- TAB 5: CONFIG BACKUPS                                    -->
     <!-- ======================================================== -->
     <div v-if="activeTab === 'backups'" class="space-y-4">
+      <p v-if="connectorPresent" class="text-sm text-amber-700">These are local YAML snapshots. They do not represent this Cloudflare-managed tunnel’s configuration.</p>
       <div class="flex items-center justify-between border-b border-slate-200 pb-3">
         <div>
           <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">

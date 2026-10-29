@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { createProjectFileEditor } from '../lib/project-file-editor.mjs'
+import { defaultComposeExample, composeTemplates } from '../lib/compose-templates.mjs'
 import { getPrimaryPort, cleanContainerName, getMdnsPortSuffix } from '../lib/containerPorts.mjs'
 import ContainerExposure from "../components/ContainerExposure.vue"
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, toRefs, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Server,
@@ -233,24 +235,33 @@ const execLoading = ref(false)
 const execExitCode = ref<number | null>(null)
 const execHistory = ref<string[]>([])
 
-// Compose state
-const composeFilename = ref('docker-compose.yml')
-const composeContent = ref('')
-const composeLoading = ref(false)
-const composeSaving = ref(false)
-const composeMsg = ref('')
 
-// .env state
-const envContent = ref('')
-const envLoading = ref(false)
-const envSaving = ref(false)
-const envMsg = ref('')
+// Compose state
+const composeEditor = reactive(createProjectFileEditor('Compose', 'docker-compose.yml'))
+const { filename: composeFilename, content: composeContent, loading: composeLoading, saving: composeSaving, message: composeMsg } = toRefs(composeEditor)
+const envEditor = reactive(createProjectFileEditor('.env'))
+const { content: envContent, loading: envLoading, saving: envSaving, message: envMsg } = toRefs(envEditor)
+let selectionRevision = 0
+let filesRevision = 0
+function resetProjectEditors() {
+  composeEditor.invalidate()
+  envEditor.invalidate()
+  filesRevision++
+  fileList.value = []
+  editingFile.value = null
+  editingFileSaving.value = false
+  editingFileMsg.value = ''
+  filesLoading.value = false
+  showNewItemModal.value = false
+  showGitSettings.value = false
+  currentProject.value = null
+}
 
 // Files state
 const currentDir = ref('')
 const fileList = ref<FileItem[]>([])
 const filesLoading = ref(false)
-const editingFile = ref<{ path: string; content: string } | null>(null)
+const editingFile = ref<{ projectId: number; path: string; content: string } | null>(null)
 const editingFileSaving = ref(false)
 const editingFileMsg = ref('')
 const showNewItemModal = ref(false)
@@ -303,19 +314,7 @@ const showLaunchModal = ref(false)
 const launchTab = ref<'compose' | 'templates' | 'dockerrun' | 'gitstack'>('compose')
 
 // Direct Compose Stack State
-const defaultComposeExample = `services:
-  my-app:
-    image: nginx:alpine
-    container_name: my-app
-    restart: unless-stopped
-    ports:
-      - "8080:80"
-    networks:
-      - cloudflared
 
-networks:
-  cloudflared:
-    external: true`
 
 const composeDeployForm = ref({
   name: '',
@@ -351,338 +350,11 @@ interface ComposeTemplate {
   env?: string
 }
 
-const COMPOSE_TEMPLATES: ComposeTemplate[] = [
-  {
-    id: 'nginx-server',
-    name: 'Nginx Web Server',
-    category: 'web',
-    iconComponent: Globe,
-    description: 'High-performance HTTP server & reverse proxy with volume persistence and cloudflared network integration.',
-    ports: ['8080:80'],
-    compose: `services:
-  nginx:
-    image: nginx:alpine
-    container_name: nginx-server
-    restart: unless-stopped
-    ports:
-      - "8080:80"
-    volumes:
-      - ./html:/usr/share/nginx/html:ro
-    networks:
-      - cloudflared
-
-networks:
-  cloudflared:
-    external: true
-`,
-  },
-  {
-    id: 'postgres-db',
-    name: 'PostgreSQL 16 & pgAdmin 4',
-    category: 'database',
-    iconComponent: Database,
-    description: 'Robust SQL database engine bundled with pgAdmin 4 web GUI administration dashboard.',
-    ports: ['5432:5432', '5050:80'],
-    compose: `services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: postgres-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: \${POSTGRES_USER:-docktun}
-      POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:-ChangeMeSecurePassword123!}
-      POSTGRES_DB: \${POSTGRES_DB:-appdb}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - cloudflared
-
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: pgadmin
-    restart: unless-stopped
-    environment:
-      PGADMIN_DEFAULT_EMAIL: \${PGADMIN_EMAIL:-admin@docktun.local}
-      PGADMIN_DEFAULT_PASSWORD: \${PGADMIN_PASSWORD:-AdminPassword123!}
-    ports:
-      - "5050:80"
-    depends_on:
-      - postgres
-    networks:
-      - cloudflared
-
-volumes:
-  postgres_data:
-
-networks:
-  cloudflared:
-    external: true
-`,
-    env: `POSTGRES_USER=docktun
-POSTGRES_PASSWORD=ChangeMeSecurePassword123!
-POSTGRES_DB=appdb
-PGADMIN_EMAIL=admin@docktun.local
-PGADMIN_PASSWORD=AdminPassword123!
-`,
-  },
-  {
-    id: 'redis-cache',
-    name: 'Redis 7 & Commander GUI',
-    category: 'database',
-    iconComponent: Cpu,
-    description: 'In-memory key-value data structure store & cache with Redis Commander browser explorer.',
-    ports: ['6379:6379', '8081:8081'],
-    compose: `services:
-  redis:
-    image: redis:7-alpine
-    container_name: redis-cache
-    restart: unless-stopped
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-    networks:
-      - cloudflared
-
-  redis-commander:
-    image: rediscommander/redis-commander:latest
-    container_name: redis-commander
-    restart: unless-stopped
-    environment:
-      - REDIS_HOSTS=local:redis:6379
-    ports:
-      - "8081:8081"
-    depends_on:
-      - redis
-    networks:
-      - cloudflared
-
-volumes:
-  redis_data:
-
-networks:
-  cloudflared:
-    external: true
-`,
-  },
-  {
-    id: 'uptime-kuma',
-    name: 'Uptime Kuma',
-    category: 'monitoring',
-    iconComponent: Activity,
-    description: 'Self-hosted monitoring tool with real-time incident reports, latency graphs, and alerts.',
-    ports: ['3001:3001'],
-    compose: `services:
-  uptime-kuma:
-    image: louislam/uptime-kuma:1
-    container_name: uptime-kuma
-    restart: unless-stopped
-    volumes:
-      - kuma_data:/app/data
-    ports:
-      - "3001:3001"
-    networks:
-      - cloudflared
-
-volumes:
-  kuma_data:
-
-networks:
-  cloudflared:
-    external: true
-`,
-  },
-  {
-    id: 'portainer',
-    name: 'Portainer CE',
-    category: 'utility',
-    iconComponent: Box,
-    description: 'Centralized container management GUI for Docker containers, images, volumes, and networks.',
-    ports: ['9443:9443', '9000:9000'],
-    compose: `services:
-  portainer:
-    image: portainer/portainer-ce:latest
-    container_name: portainer
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    volumes:
-      - /etc/localtime:/etc/localtime:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - portainer_data:/data
-    ports:
-      - "9443:9443"
-      - "9000:9000"
-    networks:
-      - cloudflared
-
-volumes:
-  portainer_data:
-
-networks:
-  cloudflared:
-    external: true
-`,
-  },
-  {
-    id: 'jellyfin',
-    name: 'Jellyfin Media Server',
-    category: 'media',
-    iconComponent: Film,
-    description: 'Free Software Media System that lets you collect, manage, and stream your media anywhere.',
-    ports: ['8096:8096'],
-    compose: `services:
-  jellyfin:
-    image: jellyfin/jellyfin:latest
-    container_name: jellyfin
-    restart: unless-stopped
-    environment:
-      - TZ=America/Chicago
-    volumes:
-      - jellyfin_config:/config
-      - jellyfin_cache:/cache
-      - ./media:/media:ro
-    ports:
-      - "8096:8096"
-    networks:
-      - cloudflared
-
-volumes:
-  jellyfin_config:
-  jellyfin_cache:
-
-networks:
-  cloudflared:
-    external: true
-`,
-  },
-  {
-    id: 'nextcloud',
-    name: 'Nextcloud Hub',
-    category: 'utility',
-    iconComponent: HardDrive,
-    description: 'Self-hosted productivity suite with file storage, sharing, office documents, and calendar syncing.',
-    ports: ['8088:80'],
-    compose: `services:
-  nextcloud:
-    image: nextcloud:latest
-    container_name: nextcloud
-    restart: unless-stopped
-    ports:
-      - "8088:80"
-    volumes:
-      - nextcloud_data:/var/www/html
-    environment:
-      - NEXTCLOUD_ADMIN_USER=admin
-      - NEXTCLOUD_ADMIN_PASSWORD=AdminPasswordChangeMe!
-    networks:
-      - cloudflared
-
-volumes:
-  nextcloud_data:
-
-networks:
-  cloudflared:
-    external: true
-`,
-  },
-  {
-    id: 'vaultwarden',
-    name: 'Vaultwarden (Bitwarden)',
-    category: 'utility',
-    iconComponent: Key,
-    description: 'Lightweight Bitwarden-compatible password manager backend written in Rust.',
-    ports: ['8080:80'],
-    compose: `services:
-  vaultwarden:
-    image: vaultwarden/server:latest
-    container_name: vaultwarden
-    restart: unless-stopped
-    environment:
-      - WEBSOCKET_ENABLED=true
-      - SIGNUPS_ALLOWED=true
-    volumes:
-      - vaultwarden_data:/data
-    ports:
-      - "8080:80"
-    networks:
-      - cloudflared
-
-volumes:
-  vaultwarden_data:
-
-networks:
-  cloudflared:
-    external: true
-`,
-  },
-  {
-    id: 'mediastack',
-    name: 'Media Automation Stack',
-    category: 'media',
-    iconComponent: Tv,
-    description: 'Automated TV, Movie, and Indexer stack combining Sonarr, Radarr, and Prowlarr.',
-    ports: ['8989:8989', '7878:7878', '9696:9696'],
-    compose: `services:
-  sonarr:
-    image: lscr.io/linuxserver/sonarr:latest
-    container_name: sonarr
-    restart: unless-stopped
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=America/Chicago
-    volumes:
-      - sonarr_config:/config
-      - ./tv:/tv
-      - ./downloads:/downloads
-    ports:
-      - "8989:8989"
-    networks:
-      - cloudflared
-
-  radarr:
-    image: lscr.io/linuxserver/radarr:latest
-    container_name: radarr
-    restart: unless-stopped
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=America/Chicago
-    volumes:
-      - radarr_config:/config
-      - ./movies:/movies
-      - ./downloads:/downloads
-    ports:
-      - "7878:7878"
-    networks:
-      - cloudflared
-
-  prowlarr:
-    image: lscr.io/linuxserver/prowlarr:latest
-    container_name: prowlarr
-    restart: unless-stopped
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=America/Chicago
-    volumes:
-      - prowlarr_config:/config
-    ports:
-      - "9696:9696"
-    networks:
-      - cloudflared
-
-volumes:
-  sonarr_config:
-  radarr_config:
-  prowlarr_config:
-
-networks:
-  cloudflared:
-    external: true
-`,
-  },
-]
+const templateIcons: Record<string, any> = { Globe, Database, Cpu, Activity, Box, Film, HardDrive, Key, Tv }
+const COMPOSE_TEMPLATES: ComposeTemplate[] = composeTemplates.map(template => ({
+  ...template,
+  iconComponent: templateIcons[template.icon],
+}))
 
 const filteredTemplates = computed(() => {
   return COMPOSE_TEMPLATES.filter((t) => {
@@ -977,6 +649,9 @@ const showDeleteStackModal = ref<{ projectId: number; projectName: string; path?
 const deleteStackDown = ref(true)
 const deleteStackRemoveFiles = ref(false)
 const deleteStackLoading = ref(false)
+const deleteStackFolderChecking = ref(false)
+const deleteStackFolderAvailable = ref(false)
+const deleteStackFolderReason = ref('')
 
 const filteredContainers = computed(() => {
   return containers.value.filter((c) => {
@@ -1453,6 +1128,8 @@ async function saveExposure(container: ContainerItem) {
 // Control Center Modal Logic
 // ==========================================
 async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs' | 'exec' = 'overview') {
+  const selection = ++selectionRevision
+  resetProjectEditors()
   selectedContainer.value = { ...c } as ContainerDetail
   selectedTab.value = tab
   detailLoading.value = true
@@ -1472,6 +1149,7 @@ async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' |
 
   try {
     const detail = await apiFetch<ContainerDetail>(`/api/docker/containers/${c.id}`)
+    if (selection !== selectionRevision) return
     selectedContainer.value = detail
     if (detail.connected_to_cloudflared !== undefined) {
       c.connected_to_cloudflared = detail.connected_to_cloudflared
@@ -1498,14 +1176,16 @@ async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' |
   } catch (err: any) {
     console.error('Failed to load container details:', err)
   } finally {
-    detailLoading.value = false
+    if (selection === selectionRevision) detailLoading.value = false
   }
 
   // Load content for active tab
-  handleTabChange(tab)
+  if (selection === selectionRevision) handleTabChange(selectedTab.value)
 }
 
 function closeContainerModal() {
+  selectionRevision++
+  resetProjectEditors()
   selectedContainer.value = null
   editingFile.value = null
   composeMsg.value = ''
@@ -1585,51 +1265,26 @@ async function scaffoldProject() {
 
 // --- Compose Functions ---
 async function loadContainerCompose(projectId: number) {
-  composeLoading.value = true
-  composeMsg.value = ''
-  try {
-    const res: any = await apiFetch(`/api/projects/${projectId}/compose`)
-    composeFilename.value = res.filename || 'docker-compose.yml'
-    composeContent.value = res.content || ''
-  } catch (e: any) {
-    composeMsg.value = 'Failed to load compose: ' + e.message
-  } finally {
-    composeLoading.value = false
-  }
+  await composeEditor.load(projectId, (id) => apiFetch(`/api/projects/${id}/compose`))
 }
 
 async function saveContainerCompose(restart = false) {
-  if (!selectedContainer.value?.project_id) return
-  composeSaving.value = true
-  composeMsg.value = ''
-  try {
-    await apiFetch(`/api/projects/${selectedContainer.value.project_id}/compose`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        filename: composeFilename.value,
-        content: composeContent.value,
-      }),
-    })
-    composeMsg.value = 'Compose saved successfully!'
-    if (restart) {
-      await apiFetch(`/api/projects/${selectedContainer.value.project_id}/action/restart`, { method: 'POST' })
-      composeMsg.value = 'Compose saved and stack restarting...'
-      await fetchContainers()
-    }
-    setTimeout(() => (composeMsg.value = ''), 3500)
-  } catch (e: any) {
-    composeMsg.value = 'Save failed: ' + e.message
-  } finally {
-    composeSaving.value = false
-  }
+  if (selectedContainer.value?.project_id !== composeEditor.projectId) return
+  const saved = await composeEditor.save(
+    (id, body) => apiFetch(`/api/projects/${id}/compose`, { method: 'PUT', body: JSON.stringify(body) }),
+    restart ? (id) => apiFetch(`/api/projects/${id}/action/restart`, { method: 'POST' }) : undefined,
+  )
+  if (saved && restart) await fetchContainers()
 }
 
 // ==========================================
 // Stack & Launcher Helper Functions
 // ==========================================
 async function loadProjectInfo(projectId: number) {
+  const selection = selectionRevision
   try {
     const list: any[] = await apiFetch('/api/projects')
+    if (selection !== selectionRevision || selectedContainer.value?.project_id !== projectId) return
     if (Array.isArray(list)) {
       const found = list.find((p) => p.id === projectId)
       if (found) {
@@ -1740,10 +1395,26 @@ async function openStackHistory(projectId: number, projectName: string) {
   }
 }
 
-function openDeleteStackPrompt(projectId: number, projectName: string, path?: string) {
+async function openDeleteStackPrompt(projectId: number, projectName: string, path?: string) {
   showDeleteStackModal.value = { projectId, projectName, path }
+  const dialog = showDeleteStackModal.value
   deleteStackDown.value = true
   deleteStackRemoveFiles.value = false
+  deleteStackFolderAvailable.value = false
+  deleteStackFolderReason.value = ''
+  deleteStackFolderChecking.value = true
+  try {
+    const options = await apiFetch<{ path: string; can_remove_files: boolean; reason?: string }>(`/api/projects/${projectId}/delete-options`)
+    if (showDeleteStackModal.value?.projectId !== projectId || showDeleteStackModal.value !== dialog) return
+    deleteStackFolderAvailable.value = options.can_remove_files === true
+    deleteStackFolderReason.value = options.reason || 'Folder removal is unavailable. You can still remove the stack containers.'
+    showDeleteStackModal.value.path = options.path
+  } catch {
+    if (showDeleteStackModal.value?.projectId !== projectId || showDeleteStackModal.value !== dialog) return
+    deleteStackFolderReason.value = 'Could not check this folder. You can still remove the stack containers.'
+  } finally {
+    if (showDeleteStackModal.value === dialog) deleteStackFolderChecking.value = false
+  }
 }
 
 async function confirmDeleteStack() {
@@ -1752,7 +1423,7 @@ async function confirmDeleteStack() {
   deleteStackLoading.value = true
   try {
     const downParam = deleteStackDown.value ? 'true' : 'false'
-    const removeFilesParam = deleteStackRemoveFiles.value ? 'true' : 'false'
+    const removeFilesParam = deleteStackRemoveFiles.value && deleteStackFolderAvailable.value && !deleteStackFolderChecking.value ? 'true' : 'false'
     await apiFetch(`/api/projects/${projectId}?down=${downParam}&remove_files=${removeFilesParam}`, {
       method: 'DELETE',
     })
@@ -1845,99 +1516,89 @@ async function submitNewProject() {
 
 // --- .env Functions ---
 async function loadContainerEnv(projectId: number) {
-  envLoading.value = true
-  envMsg.value = ''
-  try {
-    const res: any = await apiFetch(`/api/projects/${projectId}/env`)
-    envContent.value = res.content || ''
-  } catch (e: any) {
-    envMsg.value = 'Failed to load .env: ' + e.message
-  } finally {
-    envLoading.value = false
-  }
+  await envEditor.load(projectId, (id) => apiFetch(`/api/projects/${id}/env`))
 }
 
 async function saveContainerEnv(restart = false) {
-  if (!selectedContainer.value?.project_id) return
-  envSaving.value = true
-  envMsg.value = ''
-  try {
-    await apiFetch(`/api/projects/${selectedContainer.value.project_id}/env`, {
-      method: 'PUT',
-      body: JSON.stringify({ content: envContent.value }),
-    })
-    envMsg.value = '.env saved successfully!'
-    if (restart) {
-      await apiFetch(`/api/projects/${selectedContainer.value.project_id}/action/restart`, { method: 'POST' })
-      envMsg.value = '.env saved and stack restarting...'
-      await fetchContainers()
-    }
-    setTimeout(() => (envMsg.value = ''), 3500)
-  } catch (e: any) {
-    envMsg.value = 'Save failed: ' + e.message
-  } finally {
-    envSaving.value = false
-  }
+  if (selectedContainer.value?.project_id !== envEditor.projectId) return
+  const saved = await envEditor.save(
+    (id, body) => apiFetch(`/api/projects/${id}/env`, { method: 'PUT', body: JSON.stringify({ content: body.content }) }),
+    restart ? (id) => apiFetch(`/api/projects/${id}/action/restart`, { method: 'POST' }) : undefined,
+  )
+  if (saved && restart) await fetchContainers()
 }
 
 // --- Files Functions ---
 async function loadContainerFiles(projectId: number, path = '') {
+  const revision = ++filesRevision
+  const selection = selectionRevision
   filesLoading.value = true
   currentDir.value = path
+  fileList.value = []
+  editingFileMsg.value = ''
   editingFile.value = null
   try {
     const res: any = await apiFetch(`/api/projects/${projectId}/files?path=${encodeURIComponent(path)}`)
-    fileList.value = res || []
-  } catch {
-    fileList.value = []
+    if (revision === filesRevision && selection === selectionRevision) fileList.value = res || []
+  } catch (e: any) {
+    if (revision === filesRevision && selection === selectionRevision) {
+      fileList.value = []
+      editingFileMsg.value = 'Failed to list files: ' + e.message
+    }
   } finally {
-    filesLoading.value = false
+    if (revision === filesRevision && selection === selectionRevision) filesLoading.value = false
   }
 }
 
 async function openContainerFile(f: FileItem) {
-  if (!selectedContainer.value?.project_id) return
+  const projectId = selectedContainer.value?.project_id
+  if (!projectId) return
   if (f.is_dir) {
-    loadContainerFiles(selectedContainer.value.project_id, f.path)
+    loadContainerFiles(projectId, f.path)
     return
   }
+  const revision = ++filesRevision
+  const selection = selectionRevision
+  editingFile.value = null
+  editingFileMsg.value = ''
   filesLoading.value = true
   try {
-    const res: any = await apiFetch(`/api/projects/${selectedContainer.value.project_id}/file?path=${encodeURIComponent(f.path)}`)
-    editingFile.value = { path: f.path, content: res.content || '' }
+    const res: any = await apiFetch(`/api/projects/${projectId}/file?path=${encodeURIComponent(f.path)}`)
+    if (revision === filesRevision && selection === selectionRevision) editingFile.value = { projectId, path: f.path, content: res.content || '' }
   } catch (e: any) {
-    alert('Failed to read file: ' + e.message)
+    if (revision === filesRevision && selection === selectionRevision) editingFileMsg.value = 'Failed to read file: ' + e.message
   } finally {
-    filesLoading.value = false
+    if (revision === filesRevision && selection === selectionRevision) filesLoading.value = false
   }
 }
 
 async function saveCurrentContainerFile() {
-  if (!selectedContainer.value?.project_id || !editingFile.value) return
+  const file = editingFile.value
+  if (!file || selectedContainer.value?.project_id !== file.projectId || editingFileSaving.value) return
+  const selection = selectionRevision
+  const revision = filesRevision
   editingFileSaving.value = true
   editingFileMsg.value = ''
   try {
-    await apiFetch(`/api/projects/${selectedContainer.value.project_id}/file`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        path: editingFile.value.path,
-        content: editingFile.value.content,
-      }),
+    await apiFetch(`/api/projects/${file.projectId}/file`, {
+      method: 'PUT', body: JSON.stringify({ path: file.path, content: file.content }),
     })
-    editingFileMsg.value = 'File saved successfully!'
-    setTimeout(() => (editingFileMsg.value = ''), 3000)
+    if (selection === selectionRevision && revision === filesRevision) editingFileMsg.value = 'File saved successfully!'
   } catch (e: any) {
-    editingFileMsg.value = 'Save failed: ' + e.message
+    if (selection === selectionRevision && revision === filesRevision) editingFileMsg.value = 'Save failed: ' + e.message
   } finally {
-    editingFileSaving.value = false
+    if (selection === selectionRevision) editingFileSaving.value = false
   }
 }
 
 async function createContainerFileItem() {
   if (!selectedContainer.value?.project_id || !newItemName.value) return
   const targetPath = currentDir.value ? `${currentDir.value}/${newItemName.value}` : newItemName.value
+  const projectId = selectedContainer.value.project_id
+  const directory = currentDir.value
+  const selection = selectionRevision
   try {
-    await apiFetch(`/api/projects/${selectedContainer.value.project_id}/file`, {
+    await apiFetch(`/api/projects/${projectId}/file`, {
       method: 'POST',
       body: JSON.stringify({
         path: targetPath,
@@ -1945,9 +1606,10 @@ async function createContainerFileItem() {
         content: '',
       }),
     })
+    if (selection !== selectionRevision) return
     showNewItemModal.value = false
     newItemName.value = ''
-    loadContainerFiles(selectedContainer.value.project_id, currentDir.value)
+    if (selection === selectionRevision) loadContainerFiles(projectId, directory)
   } catch (e: any) {
     alert('Create failed: ' + e.message)
   }
@@ -1956,11 +1618,14 @@ async function createContainerFileItem() {
 async function deleteContainerFile(path: string) {
   if (!selectedContainer.value?.project_id) return
   if (!confirm(`Delete ${path}?`)) return
+  const projectId = selectedContainer.value.project_id
+  const directory = currentDir.value
+  const selection = selectionRevision
   try {
-    await apiFetch(`/api/projects/${selectedContainer.value.project_id}/file?path=${encodeURIComponent(path)}`, {
+    await apiFetch(`/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`, {
       method: 'DELETE',
     })
-    loadContainerFiles(selectedContainer.value.project_id, currentDir.value)
+    if (selection === selectionRevision) loadContainerFiles(projectId, directory)
   } catch (e: any) {
     alert('Delete failed: ' + e.message)
   }
@@ -3375,7 +3040,7 @@ onUnmounted(() => {
 
                   <!-- Stack Action Buttons -->
                   <div class="flex flex-wrap items-center gap-1.5">
-                    <span v-if="composeMsg" class="text-xs text-emerald-600 font-medium mr-1">
+                    <span v-if="composeMsg" class="text-xs font-medium mr-1" :class="composeEditor.error ? 'text-red-600' : 'text-emerald-600'">
                       {{ composeMsg }}
                     </span>
 
@@ -3441,7 +3106,7 @@ onUnmounted(() => {
 
                     <button
                       @click="saveContainerCompose(false)"
-                      :disabled="composeSaving"
+                      :disabled="composeSaving || composeLoading || !composeEditor.loaded"
                       class="cyber-btn text-xs flex items-center gap-1 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
                       title="Save edits to docker-compose.yml"
                     >
@@ -3497,9 +3162,10 @@ onUnmounted(() => {
               <div class="relative">
                 <textarea
                   v-model="composeContent"
+                  :disabled="!composeEditor.loaded || composeSaving"
                   rows="18"
                   spellcheck="false"
-                  placeholder="Loading compose file…"
+                  :placeholder="composeLoading ? 'Loading Compose file…' : composeEditor.loaded ? 'Enter Compose YAML' : 'Compose file unavailable. See the error above.'"
                   class="w-full rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-xs text-slate-800 focus:border-cyan-500 focus:outline-none leading-relaxed"
                 ></textarea>
               </div>
@@ -3551,7 +3217,7 @@ onUnmounted(() => {
                 </div>
 
                 <div class="flex items-center gap-2">
-                  <span v-if="envMsg" class="text-xs text-emerald-600 font-medium">
+                  <span v-if="envMsg" class="text-xs font-medium" :class="envEditor.error ? 'text-red-600' : 'text-emerald-600'">
                     {{ envMsg }}
                   </span>
                   <button
@@ -3564,7 +3230,7 @@ onUnmounted(() => {
                   </button>
                   <button
                     @click="saveContainerEnv(false)"
-                    :disabled="envSaving"
+                    :disabled="envSaving || envLoading || !envEditor.loaded"
                     class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
                   >
                     <Save class="h-3.5 w-3.5" />
@@ -3572,7 +3238,7 @@ onUnmounted(() => {
                   </button>
                   <button
                     @click="saveContainerEnv(true)"
-                    :disabled="envSaving"
+                    :disabled="envSaving || envLoading || !envEditor.loaded"
                     class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-700 border-emerald-600 bg-emerald-50/40 hover:bg-emerald-100/50"
                   >
                     <RotateCcw class="h-3.5 w-3.5" />
@@ -3584,6 +3250,7 @@ onUnmounted(() => {
               <!-- .env Editor -->
               <textarea
                 v-model="envContent"
+                :disabled="!envEditor.loaded || envSaving"
                 rows="18"
                 spellcheck="false"
                 placeholder="# Enter KEY=VALUE environment variables&#10;PORT=8080&#10;DEBUG=false"
@@ -3650,6 +3317,7 @@ onUnmounted(() => {
                 </div>
               </div>
 
+              <p v-if="editingFileMsg" role="status" class="text-xs font-medium" :class="editingFileMsg.startsWith('Failed') || editingFileMsg.startsWith('Save failed') ? 'text-red-600' : 'text-emerald-600'">{{ editingFileMsg }}</p>
               <!-- Active File Editor if editing a file -->
               <div v-if="editingFile" class="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
                 <div class="flex items-center justify-between border-b border-slate-200 pb-2">
@@ -3658,7 +3326,6 @@ onUnmounted(() => {
                     <span>{{ editingFile.path }}</span>
                   </div>
                   <div class="flex items-center gap-2">
-                    <span v-if="editingFileMsg" class="text-xs text-emerald-600 font-medium">{{ editingFileMsg }}</span>
                     <button
                       @click="saveCurrentContainerFile"
                       :disabled="editingFileSaving"
@@ -4693,15 +4360,19 @@ onUnmounted(() => {
             <input type="checkbox" v-model="deleteStackDown" class="mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer" />
             <div>
               <span class="font-semibold text-slate-800">Stop and remove stack containers</span>
-              <p class="text-slate-500 text-[11px]">Executes <code class="font-mono">docker compose down</code> to cleanly stop all running containers and networks in this stack.</p>
+              <p class="text-slate-500 text-[11px]">Stops and removes this stack’s containers and Compose networks. Volumes, images, and external networks are kept. Uncheck to forget the saved project only; existing containers will still appear in the container list.</p>
             </div>
           </label>
 
-          <label class="flex items-start gap-2 cursor-pointer pt-2 border-t border-slate-200">
-            <input type="checkbox" v-model="deleteStackRemoveFiles" class="mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer" />
+          <label class="flex items-start gap-2 pt-2 border-t border-slate-200" :class="deleteStackFolderAvailable && !deleteStackLoading ? 'cursor-pointer' : 'cursor-not-allowed'">
+            <input type="checkbox" v-model="deleteStackRemoveFiles" :disabled="deleteStackFolderChecking || !deleteStackFolderAvailable || deleteStackLoading" aria-describedby="delete-stack-folder-help" class="mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500 disabled:opacity-40 disabled:cursor-not-allowed" />
             <div>
-              <span class="font-semibold text-rose-700">Delete project folder from disk</span>
-              <p class="text-slate-500 text-[11px]">Permanently removes <code class="font-mono">{{ showDeleteStackModal.path || 'the project directory' }}</code>.</p>
+              <span class="font-semibold" :class="deleteStackFolderAvailable ? 'text-rose-700' : 'text-slate-400'">Delete project folder from disk</span>
+              <p id="delete-stack-folder-help" role="status" aria-live="polite" class="text-slate-500 text-[11px]">
+                <template v-if="deleteStackFolderChecking">Checking whether the project folder can be removed…</template>
+                <template v-else-if="!deleteStackFolderAvailable">{{ deleteStackFolderReason }}</template>
+                <template v-else>Permanently removes <code class="font-mono">{{ showDeleteStackModal.path }}</code>, including files stored inside it. Only folders inside DockTun’s projects folder can be removed.</template>
+              </p>
             </div>
           </label>
         </div>

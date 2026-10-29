@@ -91,13 +91,15 @@ DockTun compiles the Vue 3 frontend directly into a single, high-performance Go 
 
 ## Quick Start
 
-### Option 1: Automated 1-Liner (Recommended for new servers)
+### Option 1: Automated installer
 
-If your machine doesn't have Docker installed yet, or if you prefer a one-command setup, the automated installer installs Docker Engine (if missing) and launches DockTun with zero prompts:
+If your machine doesn't have Docker installed yet, or if you prefer a one-command setup, save the supplied `install.sh` locally and run it. The installer installs Docker Engine on supported Linux hosts if needed and launches DockTun:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo bash
+sudo bash install.sh
 ```
+
+The repository is private; share the installer file directly with testers. No source checkout or GitHub token is needed to pull the published image. On Synology, install Container Manager from Package Center first. Rerunning the installer keeps the existing Compose file, pulls the current image, and starts only DockTun; optional providers retain their current state.
 
 ### Option 2: Docker Compose (If Docker is already installed)
 
@@ -196,7 +198,7 @@ docker compose up -d --build
 
 DockTun does not enforce a single global networking mode. Every container starts internal and isolated; choose remote access per app in **Containers → Access**:
 
-- **Cloudflare Tunnel**: Enter your Cloudflare Tunnel connector token (or mount your existing `config.yml` and credentials) under **Remote Access → Cloudflare**, then click **Enable**. Map individual apps to public subdomains directly from the dashboard.
+- **Cloudflare Tunnel**: Enter your Cloudflare Tunnel connector token (or mount your existing `config.yml` and credentials) under **Remote Access → Cloudflare**, then click **Enable**. The connector token runs the tunnel. To publish Cloudflare-managed app routes from DockTun, also save an API token with account **Cloudflare Tunnel Edit/Write** and zone **DNS Edit** permissions; a DNS-only zone token cannot edit tunnel routes. Add **Zone Read** for automatic zone discovery, or supply the Zone ID. The Cloudflare page includes token creation steps and current permission names. Routes managed directly in Cloudflare do not require an API token in DockTun.
 - **Tailscale**: Connect any container with 1-click in the container's **Access** tab. DockTun spawns a dedicated userspace Tailscale helper for that app, creating a separate device identity and MagicDNS hostname on your tailnet without touching the host's networking stack.
 - **WireGuard**: Configure an existing WireGuard VPN address or use the companion container.
 - **Internal / mDNS**: Keeps containers internal, accessible via LAN or local `.local` addresses.

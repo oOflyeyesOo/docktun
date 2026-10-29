@@ -16,6 +16,7 @@ import uuid
 
 engine = 'docktun-provider-engine-' + uuid.uuid4().hex[:10]
 image = os.environ.get('DOCKTUN_TEST_IMAGE', 'docktun:providers')
+network = os.environ.get('DOCKTUN_TEST_NETWORK', 'docktun')
 token = ''
 base = ''
 
@@ -46,7 +47,7 @@ def state(name):
     return inner('inspect', '--format', '{{.State.Status}}', name)
 
 try:
-    docker('run', '-d', '--privileged', '--name', engine, '-e', 'DOCKER_TLS_CERTDIR=', '-p', '127.0.0.1::3001', 'docker:29-dind')
+    docker('run', '-d', '--privileged', '--name', engine, '-e', 'DOCKER_TLS_CERTDIR=', '-p', '127.0.0.1::3001', os.environ.get('DOCKTUN_TEST_ENGINE_IMAGE', 'docker:29-dind'))
     for _ in range(90):
         try:
             inner('info'); break
@@ -63,10 +64,12 @@ try:
     fixture = 'FROM alpine:3.23\nENTRYPOINT ["/bin/sh", "-c", "exec sleep 3600", "provider-fixture"]\n'
     for provider_image in ['cloudflare/cloudflared:latest', 'tailscale/tailscale:latest', 'lscr.io/linuxserver/wireguard:latest']:
         inner('build', '-q', '-t', provider_image, '-', input=fixture)
-    inner('network', 'create', 'docktun')
-    inner('run', '-d', '--name', 'docktun', '--network', 'docktun', '-p', '3001:3001',
+    inner('network', 'create', network)
+    if '.' in network:
+        inner('network', 'create', network.replace('.', 'X'))
+    inner('run', '-d', '--name', 'docktun', '--network', network, '-p', '3001:3001',
           '-v', 'test-app:/app/data', '-v', 'scoped-cloudflare:/etc/cloudflared',
-          '-v', '/var/run/docker.sock:/var/run/docker.sock', '-e', 'DOCKER_NETWORK=docktun', image)
+          '-v', '/var/run/docker.sock:/var/run/docker.sock', '-e', 'DOCKER_NETWORK=' + network, image)
     base = 'http://' + docker('port', engine, '3001/tcp')
     for _ in range(90):
         try:
@@ -80,6 +83,21 @@ try:
         raise AssertionError('providers were not staged stopped')
     secret = inner('exec', 'docktun', 'cat', '/app/data/setup.token')
     token = request('/api/setup/complete', {'setup_token': secret, 'admin_username': 'owner', 'admin_password': 'integration-password-123', 'tunnel': {'type': 'tailscale'}})['access_token']
+    existing_id = inner('run', '-d', '--name', 'already-running', 'alpine:3.23', 'sleep', '3600')
+    for mode in ['compose', 'direct']:
+        request('/api/docker/run', {'command': 'docker run --name already-running alpine:3.23 sleep 3600', 'mode': mode}, expected=400)
+        assert inner('inspect', '--format', '{{.Id}}', 'already-running') == existing_id
+        assert state('already-running') == 'running'
+    launch = request('/api/docker/run', {'command': 'docker run -d --name new-launch alpine:3.23 sleep 3600', 'mode': 'direct'}, expected=202)
+    for _ in range(30):
+        output = request(f"/api/docker/run/output/{launch['job_id']}")
+        if output['done']:
+            assert output['status'] == 'completed', output
+            break
+        time.sleep(1)
+    else:
+        raise AssertionError('new launch did not finish')
+    assert state('new-launch') == 'running'
     request('/api/provider/cloudflare/credentials', expected=401, authenticated=False)
     request('/api/control/start', {}, expected=500)  # Missing credentials must leave it stopped.
     assert state('docktun-cloudflared') == 'created'
@@ -93,6 +111,12 @@ try:
     request('/api/remote-access/wireguard/control', {'action': 'start'})
     for name in ['docktun-cloudflared', 'docktun-tailscale', 'docktun-wireguard']:
         assert state(name) == 'running', name
+        attached = json.loads(inner('inspect', name))[0]['NetworkSettings']['Networks']
+        assert network in attached, attached
+        assert attached[network]['NetworkID'] == json.loads(inner('network', 'inspect', network))[0]['Id']
+    started_at = inner('inspect', '--format', '{{.State.StartedAt}}', 'docktun-cloudflared')
+    request('/api/docker/network/reconcile', {})
+    assert inner('inspect', '--format', '{{.State.StartedAt}}', 'docktun-cloudflared') == started_at
     assert inner('exec', 'docktun-cloudflared', 'cat', '/etc/cloudflared/tunnel.token') == connector
     inner('exec', 'docktun-wireguard', 'sh', '-c', 'echo persisted > /config/test-marker')
     assert inner('exec', 'docktun', 'cat', '/app/data/wireguard/test-marker') == 'persisted'
@@ -101,6 +125,11 @@ try:
     assert connector not in json.dumps(cloudflare['Config']['Cmd'])
     mount = next(m for m in cloudflare['Mounts'] if m['Destination'] == '/etc/cloudflared')
     assert mount['Type'] == 'volume' and mount['Name'] == 'scoped-cloudflare' and not mount['RW']
+    connector_id = inner('inspect', '--format', '{{.Id}}', 'docktun-cloudflared')
+    assert inner('exec', 'docktun', 'stat', '-c', '%a', '/etc/cloudflared/tunnel.token') == '600'
+    request('/api/control/stop', {})
+    request('/api/control/start', {})
+    assert inner('inspect', '--format', '{{.Id}}', 'docktun-cloudflared') == connector_id
     request('/api/control/stop', {})
     assert state('docktun-tailscale') == 'running' and state('docktun-wireguard') == 'running'
     inner('restart', 'docktun')

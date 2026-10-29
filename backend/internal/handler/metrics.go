@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -33,6 +34,7 @@ type HostMetrics struct {
 	CPUs              int        `json:"cpus"`
 	LoadAvg           [3]float64 `json:"load_avg"`
 	TotalCPUPercent   float64    `json:"total_cpu_percent"`
+	CPUAvailable      bool       `json:"cpu_available"`
 	MemTotal          int64      `json:"mem_total"`
 	MemUsed           int64      `json:"mem_used"`
 	MemFree           int64      `json:"mem_free"`
@@ -102,15 +104,19 @@ func (h *Metrics) Get(w http.ResponseWriter, r *http.Request) {
 	// Read host disk space
 	resp.Host.DiskTotal, resp.Host.DiskUsed, resp.Host.DiskFree, resp.Host.DiskPercent = readDiskSpace()
 
+	cloudflareRunning := false
+
 	// Gather container metrics
 	if h.containers != nil {
 		if containers, err := h.containers.List(); err == nil {
 			resp.Host.ContainersTotal = len(containers)
-			var totalHostCpu float64
 			var totalContainerMem int64
 			var maxContainerLimit int64
 
 			for _, c := range containers {
+				if h.cfg != nil && c.Name == h.cfg.CloudflaredContainer && c.Running {
+					cloudflareRunning = true
+				}
 				if c.Running {
 					resp.Host.ContainersRunning++
 				} else {
@@ -132,11 +138,8 @@ func (h *Metrics) Get(w http.ResponseWriter, r *http.Request) {
 
 				if cm.CPUPercent != "" {
 					cleaned := strings.TrimSpace(strings.ReplaceAll(cm.CPUPercent, "%", ""))
-					if val, err := strconv.ParseFloat(cleaned, 64); err == nil {
+					if val, err := strconv.ParseFloat(cleaned, 64); err == nil && val >= 0 && !math.IsNaN(val) && !math.IsInf(val, 0) {
 						cm.CPUNum = val
-						if c.Running {
-							totalHostCpu += val
-						}
 					}
 				}
 
@@ -168,7 +171,7 @@ func (h *Metrics) Get(w http.ResponseWriter, r *http.Request) {
 				resp.Containers = append(resp.Containers, cm)
 			}
 
-			resp.Host.TotalCPUPercent = totalHostCpu
+			resp.Host.TotalCPUPercent, resp.Host.CPUAvailable = containerCPUSummary(containers)
 
 			// Fallback memory calculation if /proc/meminfo was unavailable
 			if resp.Host.MemTotal == 0 && totalContainerMem > 0 {
@@ -186,13 +189,26 @@ func (h *Metrics) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Query Cloudflare tunnel metrics if configured
-	if h.cfg != nil && h.cfg.MetricsAddr != "" {
+	h.readTunnelMetrics(r.Context(), cloudflareRunning, &resp)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *Metrics) readTunnelMetrics(ctx context.Context, running bool, resp *metricsResponse) {
+	// A configured metrics URL does not mean the optional provider is enabled.
+	if running && h.cfg != nil && h.cfg.MetricsAddr != "" {
 		client := &http.Client{Timeout: 1200 * time.Millisecond}
-		cfResp, err := client.Get(h.cfg.MetricsAddr)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.cfg.MetricsAddr, nil)
+		if err != nil {
+			return
+		}
+		cfResp, err := client.Do(req)
 		if err == nil {
 			defer cfResp.Body.Close()
-			body, _ := io.ReadAll(cfResp.Body)
+			if cfResp.StatusCode != http.StatusOK {
+				return
+			}
+			body, _ := io.ReadAll(io.LimitReader(cfResp.Body, 2<<20))
 			raw := string(body)
 			resp.Raw = raw
 
@@ -232,8 +248,6 @@ func (h *Metrics) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
 }
 
 func readLoadAvg() [3]float64 {
@@ -389,4 +403,22 @@ func parseBytes(s string) int64 {
 	default:
 		return int64(val)
 	}
+}
+
+// A partially sampled fleet must not be presented as a complete CPU total.
+func containerCPUSummary(containers []service.Container) (float64, bool) {
+	total := 0.0
+	complete := true
+	for _, container := range containers {
+		if !container.Running {
+			continue
+		}
+		value, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(container.CPU), "%")), 64)
+		if err != nil || value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			complete = false
+			continue
+		}
+		total += value
+	}
+	return total, complete
 }

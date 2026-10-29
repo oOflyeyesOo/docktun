@@ -14,11 +14,11 @@ base = "http://127.0.0.1:18080"
 def docker(*args):
     return subprocess.check_output(["docker", *args], text=True).strip()
 
-def request(path, body=None, token=None, expected=200):
+def request(path, body=None, token=None, expected=200, method=None):
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = "Bearer " + token
-    req = urllib.request.Request(base + path, data=None if body is None else json.dumps(body).encode(), headers=headers)
+    req = urllib.request.Request(base + path, data=None if body is None else json.dumps(body).encode(), headers=headers, method=method)
     try:
         response = urllib.request.urlopen(req, timeout=10)
     except urllib.error.HTTPError as error:
@@ -56,6 +56,22 @@ try:
     diagnostics = request("/api/diagnostics", token=access)
     assert diagnostics["checks"][0]["ok"] is False
     assert diagnostics["checks"][1]["ok"] is True
+    # Host-only stack paths must produce useful errors, not invented editable files.
+    missing_path = "/app/data/host-only/stack"
+    missing = request("/api/projects", {"name": "missing-folder", "path": missing_path}, access, expected=201)
+    for suffix in ("compose", "env", "files"):
+        error = request(f"/api/projects/{missing['id']}/{suffix}", token=access, expected=500)
+        assert "mount" in str(error).lower(), error
+    assert docker("exec", name, "sh", "-c", "test ! -e /app/data/host-only/stack && echo absent") == "absent"
+    # A real existing stack may legitimately omit its optional .env.
+    accessible = request("/api/projects", {"name": "editable", "path": "/app/data/editable", "compose_content": "services: {}"}, access, expected=201)
+    assert request(f"/api/projects/{accessible['id']}/env", token=access)["content"] == ""
+    assert request(f"/api/projects/{accessible['id']}/compose", token=access)["content"] == "services: {}"
+    docker("exec", name, "sh", "-c", "mkdir -p /app/data/outside-editor && printf untouched > /app/data/outside-editor/marker && ln -s ../outside-editor /app/data/editable/escape")
+    for suffix in ("file?path=escape/marker", "files?path=escape"):
+        request(f"/api/projects/{accessible['id']}/{suffix}", token=access, expected=500)
+    request(f"/api/projects/{accessible['id']}/file", {"path": "escape/marker", "content": "overwritten"}, access, expected=500, method="PUT")
+    assert docker("exec", name, "cat", "/app/data/outside-editor/marker") == "untouched"
     login = {"username": "owner", "password": credentials["admin_password"]}
     request("/auth/login", login)
     docker("restart", name)

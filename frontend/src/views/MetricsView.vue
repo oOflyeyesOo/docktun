@@ -30,6 +30,7 @@ interface HostMetrics {
   cpus: number
   load_avg: [number, number, number]
   total_cpu_percent: number
+  cpu_available: boolean
   mem_total: number
   mem_used: number
   mem_free: number
@@ -88,8 +89,9 @@ const cpuHistory = ref<number[]>([])
 const memHistory = ref<number[]>([])
 
 // Controls
-const updateInterval = ref<number>(3000) // 3s default
+const updateInterval = ref<number>(5000) // Match the visible default refresh choice
 let timer: ReturnType<typeof setInterval> | null = null
+let mounted = false
 
 // Filters & Sorting
 const searchQuery = ref('')
@@ -104,6 +106,7 @@ const targetedContainer = computed(() => {
 })
 
 async function fetchMetrics(silent = false) {
+  if (refreshing.value || (silent && document.hidden)) return
   if (!silent && !metrics.value) {
     loading.value = true
   }
@@ -116,7 +119,7 @@ async function fetchMetrics(silent = false) {
 
     // Push into sparkline history
     const cpuVal = data.host?.total_cpu_percent || 0
-    cpuHistory.value.push(cpuVal)
+    if (data.host?.cpu_available) cpuHistory.value.push(cpuVal)
     if (cpuHistory.value.length > 30) cpuHistory.value.shift()
 
     const memVal = data.host?.mem_percent || 0
@@ -135,7 +138,7 @@ function resetTimer() {
     clearInterval(timer)
     timer = null
   }
-  if (updateInterval.value > 0) {
+  if (updateInterval.value > 0 && !document.hidden) {
     timer = setInterval(() => fetchMetrics(true), updateInterval.value)
   }
 }
@@ -224,8 +227,16 @@ watch(targetedContainer, () => {
   scrollToTarget()
 })
 
+function onVisibilityChange() {
+  resetTimer()
+  if (!document.hidden && updateInterval.value > 0) void fetchMetrics(true)
+}
+
 onMounted(async () => {
+  mounted = true
+  document.addEventListener('visibilitychange', onVisibilityChange)
   await fetchMetrics()
+  if (!mounted) return
   resetTimer()
   if (targetedContainer.value) {
     setTimeout(scrollToTarget, 400)
@@ -233,6 +244,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  mounted = false
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   if (timer) clearInterval(timer)
 })
 
@@ -403,7 +416,7 @@ function getCpuBarClass(pct: number): string {
       <div class="cyber-card flex flex-col justify-between">
         <div>
           <div class="flex items-center justify-between text-slate-600">
-            <span class="text-[11px] font-semibold uppercase tracking-wider">Host CPU Workload</span>
+            <span class="text-[11px] font-semibold uppercase tracking-wider">Container CPU Total</span>
             <div class="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-600">
               <Cpu class="h-4 w-4" />
             </div>
@@ -412,9 +425,9 @@ function getCpuBarClass(pct: number): string {
           <div class="mt-3 flex items-baseline justify-between">
             <div class="flex items-baseline gap-1.5">
               <span class="text-2xl font-bold font-mono text-slate-900">
-                {{ metrics?.host?.total_cpu_percent ? metrics.host.total_cpu_percent.toFixed(1) + '%' : '0.0%' }}
+                {{ metrics?.host?.cpu_available ? metrics.host.total_cpu_percent.toFixed(1) + '%' : '—' }}
               </span>
-              <span class="text-xs text-slate-500 font-mono">active</span>
+              <span class="text-xs text-slate-500 font-mono">100% = 1 core</span>
             </div>
             <span class="text-xs font-mono font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
               {{ metrics?.host?.cpus || 1 }} vCPUs
@@ -722,7 +735,7 @@ function getCpuBarClass(pct: number): string {
               <td class="py-3 px-3 font-mono">
                 <div class="flex items-center justify-between text-xs mb-1">
                   <span class="font-bold" :class="c.cpu_num > 50 ? 'text-amber-600' : 'text-indigo-600'">
-                    {{ c.cpu_percent || '0.0%' }}
+                    {{ c.cpu_percent || '—' }}
                   </span>
                 </div>
                 <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
@@ -751,7 +764,7 @@ function getCpuBarClass(pct: number): string {
                   ></div>
                 </div>
                 <div class="text-[10px] text-slate-400 truncate">
-                  Limit: {{ c.mem_limit || 'Unlimited' }}
+                  Limit: {{ c.mem_limit || '—' }}
                 </div>
               </td>
 

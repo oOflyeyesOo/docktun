@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -28,12 +29,15 @@ type RemoteAccessOverview struct {
 }
 
 type CloudflareSummary struct {
-	Status       string `json:"status"`
-	Running      bool   `json:"running"`
-	TunnelID     string `json:"tunnel_id"`
-	TunnelName   string `json:"tunnel_name"`
-	IngressCount int    `json:"ingress_count"`
-	Protocol     string `json:"protocol"`
+	ConfigurationSource string `json:"configuration_source"`
+	RoutesKnown         bool   `json:"routes_known"`
+	LastError           string `json:"last_error,omitempty"`
+	Status              string `json:"status"`
+	Running             bool   `json:"running"`
+	TunnelID            string `json:"tunnel_id"`
+	TunnelName          string `json:"tunnel_name"`
+	IngressCount        int    `json:"ingress_count"`
+	Protocol            string `json:"protocol"`
 }
 
 type TailscaleSummary struct {
@@ -270,6 +274,35 @@ func (s *RemoteAccessService) GetOverview() (*RemoteAccessOverview, error) {
 		}
 	}
 
+	if s.configMgr != nil {
+		identity, identityErr := s.configMgr.TunnelIdentity()
+		overview.Cloudflare.ConfigurationSource = "local"
+		overview.Cloudflare.RoutesKnown = identityErr == nil
+		if identity.Remote {
+			overview.Cloudflare.ConfigurationSource = "cloudflare"
+			overview.Cloudflare.TunnelID = identity.ID
+			overview.Cloudflare.RoutesKnown = false
+			overview.Cloudflare.IngressCount = 0
+			if identityErr != nil {
+				overview.Cloudflare.LastError = identityErr.Error()
+			} else if s.cfAPISvc != nil {
+				configuration, err := s.cfAPISvc.TunnelConfiguration(identity)
+				if err != nil {
+					overview.Cloudflare.LastError = err.Error()
+				} else {
+					overview.Cloudflare.RoutesKnown = true
+					if rules, ok := configuration["ingress"].([]any); ok {
+						for _, item := range rules {
+							if rule, ok := item.(map[string]any); ok && rule["hostname"] != nil && rule["hostname"] != "" {
+								overview.Cloudflare.IngressCount++
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Tailscale summary
 	if overview.Tailscale.Running {
 		tsStatus, _ := s.GetTailscaleStatus()
@@ -415,6 +448,11 @@ func (s *RemoteAccessService) TailscaleUp(authKey, hostname string) error {
 	if err != nil {
 		return fmt.Errorf("tailscale up failed: %s (%w)", strings.TrimSpace(string(out)), err)
 	}
+	if s.dockerContainersSvc != nil {
+		s.dockerContainersSvc.exposureMu.Lock()
+		defer s.dockerContainersSvc.exposureMu.Unlock()
+		return s.dockerContainersSvc.waitPendingTailscaleRules("docktun-tailscale")
+	}
 	return nil
 }
 
@@ -474,11 +512,28 @@ func (s *RemoteAccessService) defaultNetwork() string {
 }
 
 func (s *RemoteAccessService) TailscaleControl(action string) error {
+	action = strings.ToLower(action)
+	if s.dockerContainersSvc != nil {
+		s.dockerContainersSvc.exposureMu.Lock()
+		defer s.dockerContainersSvc.exposureMu.Unlock()
+	}
 	p := NewProviderContainers(s.cfg)
 	if s.runDocker != nil {
 		p.run = s.runDocker
 	}
-	return p.Control("tailscale", strings.ToLower(action))
+	if err := p.Control("tailscale", action); err != nil {
+		return err
+	}
+	if action != "stop" && s.dockerContainersSvc != nil {
+		if err := s.dockerContainersSvc.waitPendingTailscaleRules("docktun-tailscale"); err != nil {
+			if errors.Is(err, errTailscaleNeedsConnection) {
+				return nil // Preserve cleanup until interactive login completes.
+			}
+			_ = p.Control("tailscale", "stop")
+			return err
+		}
+	}
+	return nil
 }
 
 // ==============================================================================

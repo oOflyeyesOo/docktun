@@ -13,13 +13,15 @@ DockTun is deployed as a Docker container with access to the Docker daemon socke
 
 ## Quick Installation Options
 
-### Method 1: Automated 1-Liner (Docker installation included)
+### Method 1: Automated installer (Docker installation included)
 
-If you are setting up a fresh Linux host (Ubuntu, Debian, CentOS, Rocky, Fedora) or don't have Docker installed yet, run:
+Save the supplied `install.sh` locally, then run it on your Linux host:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo bash
+sudo bash install.sh
 ```
+
+The repository is private; share the installer file directly with testers. No source checkout or GitHub token is needed to pull the published image. On Synology, install Container Manager from Package Center first. Rerunning the installer keeps the existing Compose file, pulls the current image, and starts only DockTun; optional providers retain their current state.
 
 The script automatically:
 1. Detects your OS and installs the official Docker Engine and Compose plugin if missing.

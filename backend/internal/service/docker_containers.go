@@ -27,6 +27,7 @@ import (
 )
 
 type ExposureSettings struct {
+	cleanup           *tailscaleRuleCleanup
 	TailscaleNode     string `json:"tailscale_node,omitempty"`
 	Mode              string `json:"mode"`
 	Hostname          string `json:"hostname,omitempty"`
@@ -149,6 +150,7 @@ type DockerContainers struct {
 	statsCache     map[string]liveStats
 	statsTime      time.Time
 	statsRunning   int32
+	statsCollector func() map[string]liveStats
 	selfUpdater    *SelfUpdater
 	exposureMu     sync.Mutex
 	exposureDocker func(context.Context, ...string) ([]byte, error)
@@ -166,7 +168,7 @@ func CleanupZombieUpdaters() {
 
 func NewDockerContainers(cfg *config.Config, db *db.DB, configMgr *ConfigManager, cloudflared *Cloudflared, cfAPI *CloudflareAPI, audit *AuditLogger) *DockerContainers {
 	go CleanupZombieUpdaters()
-	return &DockerContainers{
+	service := &DockerContainers{
 		selfUpdater: NewSelfUpdater(filepath.Dir(cfg.DBPath)),
 		cfg:         cfg,
 		db:          db,
@@ -175,6 +177,8 @@ func NewDockerContainers(cfg *config.Config, db *db.DB, configMgr *ConfigManager
 		cfAPI:       cfAPI,
 		audit:       audit,
 	}
+	go service.getCachedStats()
+	return service
 }
 
 type liveStats struct {
@@ -458,46 +462,33 @@ func (s *DockerContainers) List() ([]Container, error) {
 
 func (s *DockerContainers) getCachedStats() map[string]liveStats {
 	s.statsMu.RLock()
-	cacheAge := time.Since(s.statsTime)
-	hasCache := len(s.statsCache) > 0
+	sampledAt := s.statsTime
 	cached := make(map[string]liveStats, len(s.statsCache))
-	for k, v := range s.statsCache {
-		cached[k] = v
+	for name, value := range s.statsCache {
+		cached[name] = value
 	}
 	s.statsMu.RUnlock()
-
-	// If cache is fresh (< 6s), return it immediately
-	if hasCache && cacheAge < 6*time.Second {
+	// An empty sample is valid too (or a failed daemon probe); do not retry on
+	// every HTTP request when there are no samples to return yet.
+	if !sampledAt.IsZero() && time.Since(sampledAt) < 6*time.Second {
 		return cached
 	}
-
-	// If cache exists but is older than 6s, return existing cache immediately
-	// and refresh in the background so API callers are never blocked!
-	if hasCache {
-		if atomic.CompareAndSwapInt32(&s.statsRunning, 0, 1) {
-			go func() {
-				defer atomic.StoreInt32(&s.statsRunning, 0)
-				fresh := s.collectAllStats()
-				s.statsMu.Lock()
-				s.statsCache = fresh
-				s.statsTime = time.Now()
-				s.statsMu.Unlock()
-			}()
-		}
-		return cached
-	}
-
-	// First time ever: collect synchronously
 	if atomic.CompareAndSwapInt32(&s.statsRunning, 0, 1) {
-		defer atomic.StoreInt32(&s.statsRunning, 0)
-		fresh := s.collectAllStats()
-		s.statsMu.Lock()
-		s.statsCache = fresh
-		s.statsTime = time.Now()
-		s.statsMu.Unlock()
-		return fresh
+		go func() {
+			defer atomic.StoreInt32(&s.statsRunning, 0)
+			collect := s.statsCollector
+			if collect == nil {
+				collect = s.collectAllStats
+			}
+			fresh := collect()
+			s.statsMu.Lock()
+			s.statsCache = fresh
+			s.statsTime = time.Now()
+			s.statsMu.Unlock()
+		}()
 	}
-
+	// Never block inventory or inspection on Docker's multi-second CPU sample.
+	// Missing readings stay unavailable until the next sample arrives.
 	return cached
 }
 
@@ -633,50 +624,31 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		c.Uptime = uptimeFromStartedAt(inspect.State.StartedAt)
 	}
 
-	// Fetch live stats from cache or single container fallback
+	// Use the shared background sample; stopped containers have no live usage.
 	statsMap := s.getCachedStats()
-	foundStats := false
-	if st, ok := statsMap[c.Name]; ok {
-		c.CPU = st.cpu
-		c.Memory = st.mem
-		c.Network = st.net
-		c.BlockIO = st.block
-		c.PIDs = st.pids
-		foundStats = true
-	} else if st, ok := statsMap[c.ID]; ok {
-		c.CPU = st.cpu
-		c.Memory = st.mem
-		c.Network = st.net
-		c.BlockIO = st.block
-		c.PIDs = st.pids
-		foundStats = true
-	} else if len(c.ID) >= 12 {
-		if st, ok := statsMap[c.ID[:12]]; ok {
+	if c.Running {
+		if st, ok := statsMap[c.Name]; ok {
 			c.CPU = st.cpu
 			c.Memory = st.mem
 			c.Network = st.net
 			c.BlockIO = st.block
 			c.PIDs = st.pids
-			foundStats = true
-		}
-	}
-
-	if !foundStats && c.Running {
-		sCtx, sCancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer sCancel()
-		statsCmd := exec.CommandContext(sCtx, "docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}\t{{.BlockIO}}\t{{.PIDs}}", id)
-		if statsOut, statsErr := statsCmd.Output(); statsErr == nil {
-			parts := strings.Split(strings.TrimSpace(string(statsOut)), "\t")
-			if len(parts) >= 5 {
-				c.CPU = strings.TrimSpace(parts[0])
-				c.Memory = strings.TrimSpace(parts[1])
-				c.Network = strings.TrimSpace(parts[2])
-				c.BlockIO = strings.TrimSpace(parts[3])
-				if p, err := strconv.Atoi(strings.TrimSpace(parts[4])); err == nil {
-					c.PIDs = p
-				}
+		} else if st, ok := statsMap[c.ID]; ok {
+			c.CPU = st.cpu
+			c.Memory = st.mem
+			c.Network = st.net
+			c.BlockIO = st.block
+			c.PIDs = st.pids
+		} else if len(c.ID) >= 12 {
+			if st, ok := statsMap[c.ID[:12]]; ok {
+				c.CPU = st.cpu
+				c.Memory = st.mem
+				c.Network = st.net
+				c.BlockIO = st.block
+				c.PIDs = st.pids
 			}
 		}
+
 	}
 
 	// Formatted ports (standard Docker format: [HostIP:]HostPort->ContainerPort)
@@ -965,7 +937,9 @@ func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
 	}
 
 	defNet := s.DefaultNetwork()
-	_ = s.EnsureNetwork(defNet)
+	if err := s.EnsureNetwork(defNet); err != nil {
+		return nil, fmt.Errorf("resolve primary network: %w", err)
+	}
 	addLog(fmt.Sprintf("Primary network: %s", defNet))
 
 	hasDocktunNet := exec.Command("docker", "network", "inspect", "docktun").Run() == nil
@@ -1041,15 +1015,8 @@ func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
 		}
 	}
 
-	// 5. Refresh DNS by restarting cloudflared to flush DNS cache and re-establish connection pools
-	if s.cloudflared != nil && s.cloudflared.Status().Status != "disabled" && s.cloudflared.IsRunning() {
-		addLog("Restarting cloudflared to flush DNS cache and re-establish connection pools...")
-		if err := s.cloudflared.Restart(); err != nil {
-			addLog(fmt.Sprintf("Cloudflared restart notice: %v", err))
-		} else {
-			addLog("✔ Cloudflared successfully restarted with refreshed DNS!")
-		}
-	}
+	// Network attachment does not require restarting the tunnel. Periodic
+	// reconciliation must not interrupt existing connections every ten minutes.
 
 	// 6. Automatically sync/reconcile Cloudflare DNS records for all public ingress routes
 	if s.cfAPI != nil && s.configMgr != nil && s.cloudflared != nil && s.cloudflared.Status().Status != "disabled" {
@@ -1074,35 +1041,19 @@ func (s *DockerContainers) EnsureNetworkID(network string) (string, error) {
 	if network == "" {
 		network = s.DefaultNetwork()
 	}
-	if network == "host" || network == "bridge" || network == "none" {
-		return network, nil
-	}
-	// Check by exact name match via docker network ls to avoid ambiguity when duplicate networks exist
-	cmd := exec.Command("docker", "network", "ls", "--filter", "name=^"+network+"$", "--format", "{{.ID}}")
-	if out, err := cmd.CombinedOutput(); err == nil {
-		ids := strings.Fields(strings.TrimSpace(string(out)))
-		if len(ids) > 0 {
-			return ids[0], nil
-		}
-	}
-	createCmd := exec.Command("docker", "network", "create", network)
-	_ = createCmd.Run()
-
-	cmdCheck := exec.Command("docker", "network", "ls", "--filter", "name=^"+network+"$", "--format", "{{.ID}}")
-	if out, err := cmdCheck.CombinedOutput(); err == nil {
-		ids := strings.Fields(strings.TrimSpace(string(out)))
-		if len(ids) > 0 {
-			return ids[0], nil
-		}
-	}
-	return network, nil
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return NewProviderContainers(s.cfg).resolveNetwork(ctx, network)
 }
 
 func (s *DockerContainers) ConnectNetwork(id string, network string) error {
 	if network == "" {
 		network = s.DefaultNetwork()
 	}
-	netTarget, _ := s.EnsureNetworkID(network)
+	netTarget, err := s.EnsureNetworkID(network)
+	if err != nil {
+		return err
+	}
 	cmd := exec.Command("docker", "network", "connect", netTarget, id)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1366,12 +1317,22 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 
 func (s *DockerContainers) Start(id string) error {
 	_ = s.EnsureDatabaseLinks(id)
-	return dockerCommand("start", id)
+	s.exposureMu.Lock()
+	defer s.exposureMu.Unlock()
+	if err := dockerCommand("start", id); err != nil {
+		return err
+	}
+	return s.finishTailscaleStart(id)
 }
 func (s *DockerContainers) Stop(id string) error { return dockerCommand("stop", id) }
 func (s *DockerContainers) Restart(id string) error {
 	_ = s.EnsureDatabaseLinks(id)
-	return dockerCommand("restart", id)
+	s.exposureMu.Lock()
+	defer s.exposureMu.Unlock()
+	if err := dockerCommand("restart", id); err != nil {
+		return err
+	}
+	return s.finishTailscaleStart(id)
 }
 
 type BatchActionResult struct {
@@ -1632,6 +1593,13 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 		return nil
 	}
 
+	identity, identityErr := s.configMgr.TunnelIdentity()
+	if identity.Remote {
+		if identityErr != nil {
+			return identityErr
+		}
+		return s.syncRemoteCloudflareIngress(containerName, settings, identity)
+	}
 	raw, err := s.configMgr.Read()
 	if err != nil {
 		if os.IsNotExist(err) || strings.Contains(err.Error(), "no such file") {
@@ -1831,7 +1799,12 @@ func (s *DockerContainers) saveExposureToDB(name string, exp ExposureSettings) e
 		exp.ZeroTrustSession = "24h"
 	}
 
-	_, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`
 		INSERT INTO container_exposures (container_name, mode, hostname, target, private_type, private_host, private_port, notes, zero_trust_enabled, zero_trust_emails, zero_trust_app_id, zero_trust_auth_type, zero_trust_session, tailscale_node, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(container_name) DO UPDATE SET
@@ -1850,7 +1823,18 @@ func (s *DockerContainers) saveExposureToDB(name string, exp ExposureSettings) e
 			tailscale_node = excluded.tailscale_node,
 			updated_at = CURRENT_TIMESTAMP
 	`, name, exp.Mode, exp.Hostname, exp.Target, exp.PrivateType, exp.PrivateHost, exp.PrivatePort, exp.Notes, ztInt, exp.ZeroTrustEmails, exp.ZeroTrustAppID, exp.ZeroTrustAuthType, exp.ZeroTrustSession, exp.TailscaleNode)
-	return err
+	if err != nil {
+		return err
+	}
+	// A stopped helper cannot run the CLI. Record its exact old rule in the
+	// same transaction as the new exposure, for cleanup on explicit re-enable.
+	if pending := exp.cleanup; pending != nil {
+		if _, err = tx.Exec(`INSERT INTO tailscale_rule_cleanup (app, node, port, target) VALUES (?, ?, ?, ?)
+			ON CONFLICT(app, node, port) DO UPDATE SET target = excluded.target`, name, pending.Node, pending.Port, pending.Target); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *DockerContainers) updateZeroTrustAppID(name, appID string) error {
@@ -2393,17 +2377,13 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 
 		if isLocalBuild {
 			appendLog(fmt.Sprintf("[BUILD] Building local service %s via Docker Compose in %s...", compService, validComposeDir))
-			var buildArgs []string
-			buildArgs = append(buildArgs, "--profile", "all", "--profile", "*")
-			if composeCandidate != "" && fileExists(composeCandidate) {
-				buildArgs = append(buildArgs, "-f", composeCandidate)
-			} else {
-				buildArgs = append(buildArgs, "--project-directory", validComposeDir)
+			buildCmd, buildPlanErr := composeProjectCommandWithFile(compProj, validComposeDir, composeCandidate, "build", compService)
+			var bOut []byte
+			bErr := buildPlanErr
+			if bErr == nil {
+				bOut, bErr = buildCmd.CombinedOutput()
 			}
-			buildArgs = append(buildArgs, "build", compService)
-			buildCmd := exec.Command("docker", append([]string{"compose"}, buildArgs...)...)
-			buildCmd.Dir = validComposeDir
-			bOut, bErr := buildCmd.CombinedOutput()
+
 			appendLog(strings.TrimSpace(string(bOut)))
 			if bErr != nil {
 				appendLog(fmt.Sprintf("[WARN] Compose build notice: %v", bErr))
@@ -2411,18 +2391,12 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		}
 
 		appendLog(fmt.Sprintf("[STEP 2/4] Updating via Docker Compose in %s (service: %s)...", validComposeDir, compService))
-		var composeArgs []string
-		composeArgs = append(composeArgs, "--profile", "all", "--profile", "*")
-		if composeCandidate != "" && fileExists(composeCandidate) {
-			composeArgs = append(composeArgs, "-f", composeCandidate)
-		} else {
-			composeArgs = append(composeArgs, "--project-directory", validComposeDir)
+		upCmd, planErr := composeProjectCommandWithFile(compProj, validComposeDir, composeCandidate, "up", "-d", "--no-deps", "--force-recreate", compService)
+		if planErr != nil {
+			return logOutput.String(), fmt.Errorf("validate project before update: %w", planErr)
 		}
-		composeArgs = append(composeArgs, "up", "-d", "--no-deps", "--force-recreate", compService)
-
-		upCmd := exec.Command("docker", append([]string{"compose"}, composeArgs...)...)
-		upCmd.Dir = validComposeDir
 		upOut, upErr := upCmd.CombinedOutput()
+
 		if upErr == nil {
 			appendLog(strings.TrimSpace(string(upOut)))
 			recreated = true
@@ -2433,9 +2407,13 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 				backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
 				_ = exec.Command("docker", "stop", detail.ID).Run()
 				if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
-					retryCmd := exec.Command("docker", append([]string{"compose"}, composeArgs...)...)
-					retryCmd.Dir = validComposeDir
-					retryOut, retryErr := retryCmd.CombinedOutput()
+					retryCmd, retryPlanErr := composeProjectCommandWithFile(compProj, validComposeDir, composeCandidate, "up", "-d", "--no-deps", "--force-recreate", compService)
+					var retryOut []byte
+					retryErr := retryPlanErr
+					if retryErr == nil {
+						retryOut, retryErr = retryCmd.CombinedOutput()
+					}
+
 					if retryErr == nil {
 						recreated = true
 						_ = exec.Command("docker", "rm", "-f", backupName).Run()
@@ -2477,9 +2455,13 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 			backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
 			_ = exec.Command("docker", "stop", detail.ID).Run()
 			if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
-				upCmd := exec.Command("docker", "compose", "--profile", "all", "--profile", "*", "-f", composeFilePath, "up", "-d", "--force-recreate")
-				upCmd.Dir = destDir
-				upOut, upErr := upCmd.CombinedOutput()
+				upCmd, upPlanErr := composeProjectCommandWithFile(cname, destDir, composeFilePath, "up", "-d", "--no-deps", "--force-recreate")
+				var upOut []byte
+				upErr := upPlanErr
+				if upErr == nil {
+					upOut, upErr = upCmd.CombinedOutput()
+				}
+
 				if upErr == nil {
 					recreated = true
 					_ = exec.Command("docker", "rm", "-f", backupName).Run()
