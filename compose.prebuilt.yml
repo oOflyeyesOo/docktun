@@ -41,6 +41,20 @@ services:
           - docktun-backend
           - docktun-frontend
 
+  # Local ZeroConf mDNS router and portless reverse proxy for *.local
+  zeroconf:
+    image: ghcr.io/ooflyeyesoo/docktun:latest
+    container_name: docktun-zeroconf
+    restart: unless-stopped
+    network_mode: host
+    entrypoint: ["/app/zeroconf"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - DOMAIN=local
+      - HTTP_PORT=80
+      - DOCKTUN_PORT=${PORT:-8080}
+
 
 volumes:
   docktun-data:

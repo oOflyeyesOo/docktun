@@ -19,6 +19,8 @@ COPY backend/ ./
 ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /server ./cmd/server
+COPY zeroconf/ /zeroconf-src/
+RUN cd /zeroconf-src && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /zeroconf .
 
 # ==============================================================================
 # Stage 3: Unified DockTun Minimal Runtime (No Nginx, Pure Go + Alpine)
@@ -31,6 +33,7 @@ WORKDIR /app
 
 # Copy compiled backend binary and built frontend SPA assets
 COPY --from=backend-builder /server /app/server
+COPY --from=backend-builder /zeroconf /app/zeroconf
 COPY --from=frontend-builder /app/dist /app/dist
 
 # Prepare directories

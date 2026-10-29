@@ -16,10 +16,10 @@ test('cleanContainerName strips leading slash and lowercases', () => {
   assert.equal(cleanContainerName(''), '')
 })
 
-test('getMdnsPortSuffix returns empty for port 80 or unmapped, and :port for others', () => {
+test('getMdnsPortSuffix always returns empty for portless mDNS gateway routing', () => {
   assert.equal(getMdnsPortSuffix('0.0.0.0:80->80/tcp'), '')
-  assert.equal(getMdnsPortSuffix('8080->80/tcp'), ':8080')
-  assert.equal(getMdnsPortSuffix('127.0.0.1:3000->3000/tcp'), ':3000')
+  assert.equal(getMdnsPortSuffix('8080->80/tcp'), '')
+  assert.equal(getMdnsPortSuffix('127.0.0.1:3000->3000/tcp'), '')
   assert.equal(getMdnsPortSuffix('80/tcp'), '')
   assert.equal(getMdnsPortSuffix(''), '')
 })
