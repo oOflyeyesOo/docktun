@@ -293,18 +293,25 @@ func (s *DockerContainers) List() ([]Container, error) {
 
 		if len(fields) >= 10 {
 			labelsStr := strings.TrimSpace(fields[9])
+			updateHelper := false
 			var compProj, compDir string
 			for _, part := range strings.Split(labelsStr, ",") {
 				kv := strings.SplitN(part, "=", 2)
 				if len(kv) == 2 {
 					k := strings.TrimSpace(kv[0])
 					v := strings.TrimSpace(kv[1])
+					if k == "docktun.update.target" && v != "" {
+						updateHelper = true
+					}
 					if k == "com.docker.compose.project" {
 						compProj = v
 					} else if k == "com.docker.compose.project.working_dir" {
 						compDir = v
 					}
 				}
+			}
+			if updateHelper {
+				continue
 			}
 			if p, ok := projectsByPath[compDir]; ok {
 				c.ProjectID = p.ID
@@ -361,27 +368,6 @@ func (s *DockerContainers) List() ([]Container, error) {
 						break
 					}
 				}
-			}
-		}
-
-		cLower := strings.ToLower(c.Name)
-		isDocktunCore := strings.HasPrefix(cLower, "docktun") ||
-			cLower == "cloudflared" ||
-			cLower == "wireguard" ||
-			cLower == "wg-easy" ||
-			cLower == "tailscale" ||
-			cLower == "zeroconf" ||
-			strings.EqualFold(c.ProjectName, "docktun") ||
-			strings.EqualFold(c.ProjectName, "tun")
-
-		if isDocktunCore {
-			c.ProjectName = "docktun"
-			if p, ok := projectsByName["docktun"]; ok {
-				c.ProjectID = p.ID
-				c.ProjectPath = p.Path
-			} else if p, ok := projectsByName["tun"]; ok {
-				c.ProjectID = p.ID
-				c.ProjectPath = p.Path
 			}
 		}
 
@@ -797,32 +783,6 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 		}
 	}
 
-	cLower := strings.ToLower(c.Name)
-	isDocktunCore := strings.HasPrefix(cLower, "docktun") ||
-		cLower == "cloudflared" ||
-		cLower == "wireguard" ||
-		cLower == "wg-easy" ||
-		cLower == "tailscale" ||
-		cLower == "zeroconf" ||
-		strings.EqualFold(detail.ProjectName, "docktun") ||
-		strings.EqualFold(detail.ProjectName, "tun")
-
-	if isDocktunCore {
-		detail.ProjectName = "docktun"
-		detail.Container.ProjectName = "docktun"
-		if p, ok := projectsByName["docktun"]; ok {
-			detail.ProjectID = p.ID
-			detail.ProjectPath = p.Path
-			detail.Container.ProjectID = p.ID
-			detail.Container.ProjectPath = p.Path
-		} else if p, ok := projectsByName["tun"]; ok {
-			detail.ProjectID = p.ID
-			detail.ProjectPath = p.Path
-			detail.Container.ProjectID = p.ID
-			detail.Container.ProjectPath = p.Path
-		}
-	}
-
 	if u, ok := s.getUpdateFromDB(detail.ID); ok {
 		detail.UpdateAvailable = u.UpdateAvailable
 		detail.LatestDigest = u.LatestDigest
@@ -863,17 +823,14 @@ func (s *DockerContainers) DefaultNetwork() string {
 	return "docktun"
 }
 
-func (s *DockerContainers) isSelfContainer(id string, name string) bool {
-	cname := strings.ToLower(strings.TrimPrefix(name, "/"))
-	if cname == "docktun" {
+func (s *DockerContainers) isSelfContainer(id string, _ string) bool {
+	if host, err := os.Hostname(); err == nil && len(host) >= 12 && buildRevisionPattern.MatchString(host) && len(id) >= 12 && (strings.HasPrefix(id, host) || strings.HasPrefix(host, id)) {
 		return true
 	}
-	if host, err := os.Hostname(); err == nil && host != "" {
-		if strings.HasPrefix(id, host) || strings.HasPrefix(host, id) {
-			return true
-		}
-	}
-	return false
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	own, err := selfContainer(ctx)
+	return err == nil && len(id) >= 12 && (own.ID == id || strings.HasPrefix(own.ID, id))
 }
 
 func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
@@ -1037,21 +994,8 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 	targetProjectName := strings.TrimSpace(detail.ProjectName)
 	targetProjectPath := strings.TrimSpace(detail.ProjectPath)
 
-	isDocktunCore := strings.HasPrefix(cLower, "docktun") ||
-		cLower == "cloudflared" ||
-		cLower == "wireguard" ||
-		cLower == "tailscale" ||
-		cLower == "zeroconf" ||
-		strings.EqualFold(detail.ProjectName, "docktun") ||
-		strings.EqualFold(detail.ProjectName, "tun")
-
-	if isDocktunCore {
-		targetProjectName = "docktun"
-		if s.cfg.SelfPath != "" {
-			targetProjectPath = filepath.Dir(s.cfg.SelfPath)
-		} else {
-			targetProjectPath = "./"
-		}
+	if s.isSelfContainer(detail.ID, cname) {
+		return 0, fmt.Errorf("manage DockTun through Settings > DockTun services")
 	}
 
 	if targetProjectName == "" {
@@ -1108,7 +1052,7 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 		if img == "" {
 			img = "alpine"
 		}
-		isHostNet := detail.NetworkMode == "host" || (isAuxiliaryDocktunService(cname, detail.Image) && strings.Contains(strings.ToLower(cname), "zeroconf"))
+		isHostNet := detail.NetworkMode == "host"
 		if !isHostNet {
 			for _, net := range detail.Networks {
 				if net == "host" {
@@ -1466,7 +1410,9 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 
 	prevExp := s.getExposureFromDB(name)
 	ingress, err := s.exposureIngressForMutation(settings.Mode)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	actual, actualFound := ingress[name]
 	if actualFound {
 		settings.previousCloudflareHost, settings.previousCloudflareTarget = actual.Hostname, actual.Service
@@ -2472,7 +2418,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 	}
 
 	// Step 4: Network and Exposure
-	isHostNet := detail.NetworkMode == "host" || (isAuxiliaryDocktunService(cname, detail.Image) && strings.Contains(strings.ToLower(cname), "zeroconf"))
+	isHostNet := detail.NetworkMode == "host"
 	if !isHostNet {
 		for _, net := range detail.Networks {
 			if net == "host" {
@@ -2539,7 +2485,7 @@ func (s *DockerContainers) recreateContainerDirect(detail ContainerDetail, newIm
 		restartPol = "unless-stopped"
 	}
 
-	isHostNet := detail.NetworkMode == "host" || (isAuxiliaryDocktunService(cname, detail.Image) && strings.Contains(strings.ToLower(cname), "zeroconf"))
+	isHostNet := detail.NetworkMode == "host"
 	if !isHostNet {
 		for _, net := range detail.Networks {
 			if net == "host" {

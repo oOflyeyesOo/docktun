@@ -2,9 +2,11 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { Cpu, HardDrive, MemoryStick, Clock, RefreshCw, Plus, ArrowRight, AlertCircle } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
+import { applicationContainers } from '../lib/managed-services.mjs'
 import { summarizeInventory, summarizeUsage, formatBytes, formatUptime } from '../lib/overview-stats.mjs'
 const { apiFetch } = useApi()
 const containers = ref<any[] | null>(null)
+const managedServices = ref<any[]>([])
 const metrics = ref<any>(null)
 const status = ref<any>(null)
 const events = ref<any[]>([])
@@ -15,7 +17,7 @@ const statusError = ref('')
 const auditError = ref('')
 const lastUpdated = ref<Date | null>(null)
 const attentionPanel = ref<HTMLElement | null>(null)
-const stats = computed(() => summarizeInventory(containers.value || []))
+const stats = computed(() => ({ ...summarizeInventory(applicationContainers(containers.value || [], managedServices.value)), tailscaleProxiesRunning: summarizeInventory(containers.value || []).tailscaleProxiesRunning }))
 const engine = computed(() => !statusError.value && !error.value ? status.value?.docker_system : null)
 const usage = computed(() => summarizeUsage(metrics.value, engine.value?.cpus))
 const percent = (value: number | null) => value === null ? '—' : `${value.toFixed(1)}%`
@@ -46,6 +48,7 @@ const wireguardState = computed(() => error.value ? 'Unavailable' : !containers.
 let pending = false
 let timer: ReturnType<typeof setInterval>
 async function refresh() {
+  try { managedServices.value = (await apiFetch<any>('/api/services')).services || [] } catch { /* Keep the last verified ownership snapshot. */ }
   if (pending) return
   pending = true
   loading.value = true

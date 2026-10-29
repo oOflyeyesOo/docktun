@@ -116,7 +116,12 @@ type updateContainer struct {
 		RW                                                 bool
 	}
 	NetworkSettings struct{ Networks map[string]map[string]any }
-	State           struct{ Running bool }
+	State           struct {
+		Running    bool
+		Paused     bool
+		Restarting bool
+		Health     struct{ Status string }
+	}
 }
 
 func inspectUpdateContainer(ctx context.Context, id string) (updateContainer, error) {
@@ -209,6 +214,12 @@ func (s *SelfUpdater) Check(ctx context.Context) (SelfUpdateState, error) {
 		return s.Status(), fmt.Errorf("an update is already running")
 	}
 	defer selfUpdateMu.Unlock()
+	maintenance := NewManagedServices(filepath.Dir(s.statePath)).read()
+	if maintenance.Helper != "" {
+		if helper, e := inspectUpdateContainer(ctx, maintenance.Helper); e == nil && helper.State.Running {
+			return s.Status(), fmt.Errorf("DockTun service maintenance is already running")
+		}
+	}
 	previous := s.Status()
 	if updateInProgress(previous.Phase) {
 		return previous, fmt.Errorf("an update is already running")
@@ -251,6 +262,12 @@ func (s *SelfUpdater) Start(ctx context.Context) (SelfUpdateState, error) {
 		return s.Status(), fmt.Errorf("an update is already running")
 	}
 	defer selfUpdateMu.Unlock()
+	maintenance := NewManagedServices(filepath.Dir(s.statePath)).read()
+	if maintenance.Helper != "" {
+		if helper, e := inspectUpdateContainer(ctx, maintenance.Helper); e == nil && helper.State.Running {
+			return s.Status(), fmt.Errorf("DockTun service maintenance is already running")
+		}
+	}
 	state := s.Status()
 	if updateInProgress(state.Phase) {
 		return state, fmt.Errorf("an update is already running")
@@ -277,7 +294,10 @@ func (s *SelfUpdater) Start(ctx context.Context) (SelfUpdateState, error) {
 	if err = s.save(state); err != nil {
 		return state, err
 	}
-	_, err = updateDocker(ctx, "run", "-d", "--rm", "--name", helper, "--label", "docktun.update.target="+c.ID, "--network", "none", "--volumes-from", c.ID, "--entrypoint", "/app/server", c.Image, "update-worker", c.ID, state.Image, s.statePath)
+	args := []string{"run", "-d", "--rm", "--name", helper, "--label", "docktun.update.target=" + c.ID, "--network", "none", "--volumes-from", c.ID, "--entrypoint", "/app/server"}
+	args = append(args, updateWorkerIdentity(c)...)
+	args = append(args, c.Image, "update-worker", c.ID, state.Image, s.statePath)
+	_, err = updateDocker(ctx, args...)
 	if err != nil {
 		state.Phase = "failed"
 		state.Message = err.Error()

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
 import { RotateCcw, ShieldCheck, KeyRound, Globe, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
-import SelfUpdate from '../components/SelfUpdate.vue'
+import ManagedServices from '../components/ManagedServices.vue'
 import SystemDiagnostics from '../components/SystemDiagnostics.vue'
 import { useApi } from '../composables/useApi'
 
@@ -41,7 +41,7 @@ async function changePassword() {
       <p class="text-xs text-muted font-mono mt-1">Manage DockTun updates, account security, and diagnostics.</p>
     </div>
 
-    <SelfUpdate />
+    <ManagedServices />
     <SystemDiagnostics />
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
