@@ -808,7 +808,7 @@ function getCpuBarClass(pct: number): string {
           <Globe class="h-4 w-4 text-orange-500" />
           <h3 class="text-xs font-semibold text-slate-900">Cloudflare Tunnel Edge Telemetry</h3>
         </div>
-        <router-link to="/access?tab=cloudflare" class="text-xs text-indigo-600 hover:underline">
+        <router-link to="/access?tab=cloudflare&sub=ingress" class="text-xs text-indigo-600 hover:underline">
           Manage Ingress &rarr;
         </router-link>
       </div>

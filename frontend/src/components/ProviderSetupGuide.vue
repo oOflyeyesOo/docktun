@@ -1,11 +1,45 @@
 <script setup lang="ts">
-import { BookOpen } from 'lucide-vue-next'
-defineProps<{ provider: 'cloudflare' | 'tailscale' | 'wireguard' }>()
+import { BookOpen, ChevronDown } from 'lucide-vue-next'
+
+withDefaults(
+  defineProps<{
+    provider: 'cloudflare' | 'tailscale' | 'wireguard'
+    collapsible?: boolean
+    defaultOpen?: boolean
+  }>(),
+  {
+    collapsible: false,
+    defaultOpen: true,
+  }
+)
 </script>
 
 <template>
-  <section class="cyber-card space-y-4 text-sm text-slate-700" :aria-label="`${provider} setup guide`">
-    <div class="flex items-center gap-2"><BookOpen class="h-4 w-4 text-indigo-600" /><h2 class="font-semibold text-slate-900">Setup &amp; credentials</h2></div>
+  <component
+    :is="collapsible ? 'details' : 'section'"
+    class="cyber-card space-y-4 text-sm text-slate-700"
+    :class="{ 'group': collapsible }"
+    :aria-label="`${provider} setup guide`"
+    :open="collapsible ? defaultOpen : undefined"
+  >
+    <summary
+      v-if="collapsible"
+      class="flex cursor-pointer items-center justify-between font-semibold text-slate-900 select-none list-none [&::-webkit-details-marker]:hidden"
+    >
+      <div class="flex items-center gap-2">
+        <BookOpen class="h-4 w-4 text-indigo-600" />
+        <span>Setup &amp; credentials instructions</span>
+      </div>
+      <div class="flex items-center gap-1.5 text-xs font-normal text-indigo-600">
+        <span class="group-open:hidden">Show instructions &darr;</span>
+        <span class="hidden group-open:inline">Hide instructions &uarr;</span>
+        <ChevronDown class="h-3.5 w-3.5 transition-transform duration-200 group-open:rotate-180" />
+      </div>
+    </summary>
+    <div v-else class="flex items-center gap-2">
+      <BookOpen class="h-4 w-4 text-indigo-600" />
+      <h2 class="font-semibold text-slate-900">Setup &amp; credentials</h2>
+    </div>
 
     <template v-if="provider === 'cloudflare'">
       <p>A public hostname needs a Cloudflare account, a domain on Cloudflare, and a tunnel. Pick the setup that matches your tunnel.</p>
@@ -101,7 +135,7 @@ defineProps<{ provider: 'cloudflare' | 'tailscale' | 'wireguard' }>()
       </details>
       <details class="guide-details"><summary class="guide-summary">Connection checks</summary><div class="guide-body"><p>A running container does not guarantee a working tunnel. Check for a recent peer handshake, the correct keys and endpoint, UDP reachability, AllowedIPs and firewall rules. Then check the app’s published port and VPN return route. Imported configurations and QR codes contain private keys; keep them private.</p></div></details>
     </template>
-  </section>
+  </component>
 </template>
 
 <style scoped>
