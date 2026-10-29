@@ -163,6 +163,46 @@ func TestTargetURL(t *testing.T) {
 	}
 }
 
+func TestPublishedBindingAndIPv6Targets(t *testing.T) {
+	for _, item := range []struct{ ip, want string }{
+		{"192.168.1.20", "http://192.168.1.20:8080"},
+		{"127.0.0.2", "http://127.0.0.2:8080"},
+		{"0.0.0.0", "http://127.0.0.1:8080"},
+		{"::", "http://[::1]:8080"},
+		{"2001:db8::2", "http://[2001:db8::2]:8080"},
+	} {
+		got := (&containerRoute{PublicIP: item.ip, PublicPort: 8080}).TargetURL()
+		if got != item.want {
+			t.Errorf("binding %s: %s, want %s", item.ip, got, item.want)
+		}
+	}
+	if got := (&containerRoute{IP: "fd00::2", Port: 80}).TargetURL(); got != "http://[fd00::2]:80" {
+		t.Fatal(got)
+	}
+}
+
+func TestProxyReachesSpecificallyBoundPublishedPort(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.2:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(r.Host))
+	}))
+	origin.Listener.Close()
+	origin.Listener = listener
+	origin.Start()
+	defer origin.Close()
+	port := listener.Addr().(*net.TCPAddr).Port
+	mgr := newMDNSManager("local", "8080")
+	mgr.routes["web"] = &containerRoute{Name: "web", PublicIP: "127.0.0.2", PublicPort: port}
+	response := httptest.NewRecorder()
+	mgr.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://web.local/", nil))
+	if response.Code != 200 || response.Body.String() != "web.local" {
+		t.Fatalf("bound origin unavailable: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestGetHostIP(t *testing.T) {
 	ip := getHostIP()
 	if ip == nil {

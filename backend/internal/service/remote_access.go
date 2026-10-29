@@ -782,7 +782,8 @@ func (s *RemoteAccessService) ZeroconfControl(action string) error {
 			"-e", "DOMAIN=local",
 			"-e", "HTTP_PORT=80",
 			"-e", "DOCKTUN_PORT="+port,
-			"ghcr.io/ooflyeyesoo/docktun:latest", "/app/zeroconf",
+			"--entrypoint", "/app/zeroconf",
+			"ghcr.io/ooflyeyesoo/docktun:latest",
 		)
 		if err := cmdPrebuilt.Run(); err == nil {
 			return nil
