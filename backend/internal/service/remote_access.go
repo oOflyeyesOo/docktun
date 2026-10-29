@@ -765,6 +765,24 @@ func (s *RemoteAccessService) WireguardDeletePeer(name string) error {
 func (s *RemoteAccessService) ZeroconfControl(action string) error {
 	switch strings.ToLower(action) {
 	case "start":
+		// Repair only the exact container shape created by the old command:
+		// the unified server entrypoint with the proxy path as its sole argument.
+		// Other existing local-proxy containers retain their configuration.
+		if out, err := exec.Command("docker", "inspect", "docktun-zeroconf").Output(); err == nil {
+			var existing []struct {
+				Path string
+				Args []string
+				Config struct{ Image string }
+			}
+			if json.Unmarshal(out, &existing) == nil && len(existing) == 1 {
+				old := existing[0]
+				if old.Config.Image == "ghcr.io/ooflyeyesoo/docktun:latest" && old.Path == "/app/server" && len(old.Args) == 1 && old.Args[0] == "/app/zeroconf" {
+					if output, err := exec.Command("docker", "rm", "-f", "docktun-zeroconf").CombinedOutput(); err != nil {
+						return fmt.Errorf("replace incorrectly launched local proxy: %s: %w", strings.TrimSpace(string(output)), err)
+					}
+				}
+			}
+		}
 		if s.isContainerInstalled("docktun-zeroconf") {
 			if err := exec.Command("docker", "start", "docktun-zeroconf").Run(); err == nil {
 				return nil

@@ -55,9 +55,13 @@ try:
     eventually(lambda: request('/api/setup/status'))
     setup = inner('exec', 'docktun', 'cat', '/app/data/setup.token')
     token = request('/api/setup/complete', {'setup_token': setup, 'admin_username': 'owner', 'admin_password': 'fixture-password-123'})['access_token']
+    # Reproduce the old control's already-created wrong entrypoint, not just
+    # a clean install. Starting must repair this exact legacy shape.
+    inner('run', '-d', '--name', 'docktun-zeroconf', '--network', 'host', '-e', 'DOCKTUN_PREPARE_PROVIDERS=false', 'ghcr.io/ooflyeyesoo/docktun:latest', '/app/zeroconf')
     request('/api/remote-access/zeroconf/control', {'action': 'start'})
     assert inner('inspect', '--format', '{{.Path}}', 'docktun-zeroconf') == '/app/zeroconf', 'web control started the core server instead of the proxy'
     eventually(lambda: proxy_health('docktun.local'))
+    proxy_id = inner('inspect', '--format', '{{.Id}}', 'docktun-zeroconf')
     assert request('/api/remote-access/overview')['zeroconf']['running']
     request('/api/remote-access/zeroconf/control', {'action': 'stop'})
     assert inner('inspect', '--format', '{{.State.Running}}', 'docktun-zeroconf') == 'false'
@@ -65,11 +69,12 @@ try:
     eventually(lambda: proxy_health('docktun.local'))
     request('/api/remote-access/zeroconf/control', {'action': 'restart'})
     eventually(lambda: proxy_health('docktun.local'))
+    assert inner('inspect', '--format', '{{.Id}}', 'docktun-zeroconf') == proxy_id, 'healthy proxy was unnecessarily replaced'
     # This server is deliberately reachable on 127.0.0.2, not 127.0.0.1.
     inner('run', '-d', '--name', 'bound-app', '-p', '127.0.0.2:18081:3001', '-e', 'DOCKTUN_PREPARE_PROVIDERS=false', image)
     eventually(lambda: proxy_health('bound-app.local'))
     assert set(inner('ps', '--format', '{{.Names}}').splitlines()) == {'docktun', 'docktun-zeroconf', 'bound-app'}, 'optional tunnel provider started unexpectedly'
-    print('PASS: web start/stop/restart launch actual zeroconf; dashboard and specifically bound app respond through portless proxy; optional tunnel providers stay absent')
+    print('PASS: web start repairs legacy wrong entrypoint; start/stop/restart launch actual zeroconf; dashboard and specifically bound app respond through portless proxy; optional tunnel providers stay absent')
 except Exception:
     for name in ['docktun', 'docktun-zeroconf']:
         subprocess.run(['docker', 'exec', engine, 'docker', 'logs', '--tail', '12', name], check=False)
