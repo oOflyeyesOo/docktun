@@ -179,11 +179,18 @@ function exposureFromContainer(c: ContainerItem): ExposureSettings {
   }
 }
 
+function sameContainerID(a = "", b = "") {
+  return !!a && !!b && (a === b || a.startsWith(b) || b.startsWith(a))
+}
+
 function refreshExposureDraft(c: ContainerItem) {
-  const key = Object.keys(exposeForm.value).find((id) => id === c.id || id.startsWith(c.id) || c.id.startsWith(id)) || c.id
+  const keys = [...new Set([c.id, ...Object.keys(exposeForm.value).filter(id => sameContainerID(id, c.id))])]
+  const key = keys.find(id => exposeForm.value[id]) || c.id
   const result = syncExposureDraft(exposeForm.value[key], exposureBaselines.value[key], exposureFromContainer(c))
-  exposeForm.value[key] = exposeForm.value[c.id] = result.draft
-  exposureBaselines.value[key] = exposureBaselines.value[c.id] = result.baseline
+  for (const id of keys) {
+    exposeForm.value[id] = result.draft
+    exposureBaselines.value[id] = result.baseline
+  }
 }
 
 function getExpose(id?: string): ExposureSettings {
@@ -960,7 +967,7 @@ async function fetchContainers() {
 
     // If modal is open, sync basic stats into selectedContainer
     if (selectedContainer.value) {
-      const updated = containers.value.find((c) => c.id === selectedContainer.value?.id)
+      const updated = containers.value.find((c) => sameContainerID(c.id, selectedContainer.value?.id))
       if (updated) {
         selectedContainer.value.cpu = updated.cpu
         selectedContainer.value.memory = updated.memory
@@ -1115,11 +1122,14 @@ async function saveExposure(container: ContainerItem) {
       body: JSON.stringify(payload),
     })
     await fetchContainers()
-    const saved = containers.value.find((item) => item.id === container.id)
+    const saved = containers.value.find((item) => sameContainerID(item.id, container.id))
     if (saved) {
       const fresh = exposureFromContainer(saved)
-      if (settingsEqual(getExpose(container.id), payload)) exposeForm.value[container.id] = { ...fresh }
-      exposureBaselines.value[container.id] = { ...fresh }
+      const pristine = settingsEqual(getExpose(container.id), payload)
+      for (const id of new Set([container.id, saved.id, ...Object.keys(exposeForm.value).filter(id => sameContainerID(id, container.id))])) {
+        if (pristine) exposeForm.value[id] = { ...fresh }
+        exposureBaselines.value[id] = { ...fresh }
+      }
     }
     exposeMsg.value[container.id] = {
       type: 'success',
@@ -1146,18 +1156,7 @@ async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' |
   selectedTab.value = tab
   detailLoading.value = true
 
-  const pPort = getPrimaryPort(c.ports)
-  if (!exposeForm.value[c.id]) {
-    exposeForm.value[c.id] = {
-      mode: c.exposure_mode || 'internal',
-      hostname: c.hostname || '',
-      target: c.target || `http://${c.name}:${pPort}`,
-      private_type: c.private_type || '',
-      private_host: c.private_host || '',
-      private_port: c.private_port || parseInt(pPort, 10) || 80,
-      notes: c.notes || '',
-    }
-  }
+  refreshExposureDraft(c)
 
   try {
     const detail = await apiFetch<ContainerDetail>(`/api/docker/containers/${c.id}`)
@@ -1166,16 +1165,7 @@ async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' |
     if (detail.connected_to_cloudflared !== undefined) {
       c.connected_to_cloudflared = detail.connected_to_cloudflared
     }
-    const currentMode = detail.exposure_mode || detail.exposure?.mode || c.exposure_mode || c.exposure?.mode
-    if (currentMode) {
-      const formVal = exposureFromContainer({ ...c, ...detail })
-      exposeForm.value[c.id] = formVal
-      exposureBaselines.value[c.id] = { ...formVal }
-      if (detail.id) {
-        exposeForm.value[detail.id] = formVal
-        exposureBaselines.value[detail.id] = { ...formVal }
-      }
-    }
+    refreshExposureDraft({ ...c, ...detail })
   } catch (err: any) {
     console.error('Failed to load container details:', err)
   } finally {
