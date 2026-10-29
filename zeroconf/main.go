@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -43,14 +44,22 @@ type containerRoute struct {
 	IP         string
 	Port       int
 	PublicPort int
+	PublicIP   string
 }
 
 func (cr *containerRoute) TargetURL() string {
 	if cr.PublicPort > 0 {
-		return fmt.Sprintf("http://127.0.0.1:%d", cr.PublicPort)
+		host := cr.PublicIP
+		if host == "" || host == "0.0.0.0" {
+			host = "127.0.0.1"
+		}
+		if host == "::" {
+			host = "::1"
+		}
+		return "http://" + net.JoinHostPort(host, strconv.Itoa(cr.PublicPort))
 	}
 	if cr.IP != "" && cr.Port > 0 {
-		return fmt.Sprintf("http://%s:%d", cr.IP, cr.Port)
+		return "http://" + net.JoinHostPort(cr.IP, strconv.Itoa(cr.Port))
 	}
 	if cr.Port > 0 {
 		return fmt.Sprintf("http://127.0.0.1:%d", cr.Port)
@@ -285,6 +294,13 @@ func (m *mDNSManager) refreshContainers(client *http.Client) {
 		}
 
 		privPort, pubPort := pickBestPort(c.Ports)
+		publicIP := ""
+		for _, binding := range c.Ports {
+			if binding.PrivatePort == privPort && binding.PublicPort == pubPort && (binding.Type == "tcp" || binding.Type == "") {
+				publicIP = binding.IP
+				break
+			}
+		}
 
 		for _, rawName := range c.Names {
 			clean := strings.ToLower(strings.TrimPrefix(rawName, "/"))
@@ -295,6 +311,7 @@ func (m *mDNSManager) refreshContainers(client *http.Client) {
 					IP:         internalIP,
 					Port:       privPort,
 					PublicPort: pubPort,
+					PublicIP:   publicIP,
 				}
 				dashName := strings.ReplaceAll(clean, "_", "-")
 				if dashName != clean {
