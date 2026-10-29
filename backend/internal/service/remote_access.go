@@ -770,16 +770,47 @@ func (s *RemoteAccessService) ZeroconfControl(action string) error {
 				return nil
 			}
 		}
-		return exec.Command("docker", "compose", "--profile", "zeroconf", "up", "-d", "--build").Run()
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		cmdPrebuilt := exec.Command("docker", "run", "-d",
+			"--name", "docktun-zeroconf",
+			"--restart", "unless-stopped",
+			"--network", "host",
+			"-v", "/var/run/docker.sock:/var/run/docker.sock:ro",
+			"-e", "DOMAIN=local",
+			"-e", "HTTP_PORT=80",
+			"-e", "DOCKTUN_PORT="+port,
+			"ghcr.io/ooflyeyesoo/docktun:latest", "/app/zeroconf",
+		)
+		if err := cmdPrebuilt.Run(); err == nil {
+			return nil
+		}
+		cmdLocal := exec.Command("docker", "run", "-d",
+			"--name", "docktun-zeroconf",
+			"--restart", "unless-stopped",
+			"--network", "host",
+			"-v", "/var/run/docker.sock:/var/run/docker.sock:ro",
+			"-e", "DOMAIN=local",
+			"-e", "HTTP_PORT=80",
+			"-e", "DOCKTUN_PORT="+port,
+			"docktun-zeroconf:latest",
+		)
+		if err := cmdLocal.Run(); err == nil {
+			return nil
+		}
+		return exec.Command("docker", "compose", "up", "-d", "zeroconf").Run()
 	case "stop":
 		return exec.Command("docker", "stop", "docktun-zeroconf").Run()
 	case "restart":
 		if err := exec.Command("docker", "restart", "docktun-zeroconf").Run(); err == nil {
 			return nil
 		}
-		return exec.Command("docker", "compose", "--profile", "zeroconf", "up", "-d", "--build", "--force-recreate").Run()
+		return s.ZeroconfControl("start")
 	case "recreate", "build":
-		return exec.Command("docker", "compose", "--profile", "zeroconf", "up", "-d", "--build", "--force-recreate").Run()
+		_ = exec.Command("docker", "rm", "-f", "docktun-zeroconf").Run()
+		return s.ZeroconfControl("start")
 	default:
 		return fmt.Errorf("unknown action: %s", action)
 	}

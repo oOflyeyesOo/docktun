@@ -1932,7 +1932,7 @@ onMounted(async () => {
 
           <div class="pt-2 border-t border-slate-200">
             <router-link
-              to="/access?tab=cloudflare"
+              to="/access?tab=cloudflare&sub=backups"
               class="cyber-btn-secondary w-full text-center text-xs flex items-center justify-center gap-1.5 py-2"
             >
               <span>Manage Backups in Remote Access &rarr;</span>

@@ -62,9 +62,8 @@ services:
           - docktun-backend
           - docktun-frontend
 
-  # Optional local ZeroConf mDNS router (run with: docker compose --profile zeroconf up -d)
+  # Local ZeroConf mDNS router and portless reverse proxy for *.local
   zeroconf:
-    profiles: ["zeroconf", "all"]
     build: ./zeroconf
     container_name: docktun-zeroconf
     restart: unless-stopped

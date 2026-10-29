@@ -84,18 +84,123 @@ func newMDNSManager(domain, docktunPort string) *mDNSManager {
 	}
 }
 
+func isVirtualInterface(name string) bool {
+	prefixes := []string{"docker", "br-", "veth", "tailscale", "tun", "wg", "dummy", "virbr", "lo"}
+	for _, p := range prefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func isDockerBridgeIP(ip net.IP) bool {
+	v4 := ip.To4()
+	if v4 == nil {
+		return false
+	}
+	return v4[0] == 172 && (v4[1] >= 17 && v4[1] <= 31) && v4[3] == 1
+}
+
+func isPrivateRFC1918(ip net.IP) bool {
+	v4 := ip.To4()
+	if v4 == nil {
+		return false
+	}
+	if v4[0] == 10 {
+		return true
+	}
+	if v4[0] == 172 && v4[1] >= 16 && v4[1] <= 31 {
+		return true
+	}
+	if v4[0] == 192 && v4[1] == 168 {
+		return true
+	}
+	return false
+}
+
 func getHostIP() net.IP {
-	addrs, err := net.InterfaceAddrs()
+	if envIP := strings.TrimSpace(os.Getenv("HOST_IP")); envIP != "" {
+		if ip := net.ParseIP(envIP); ip != nil {
+			if v4 := ip.To4(); v4 != nil {
+				return v4
+			}
+		}
+	}
+
+	conn, err := net.Dial("udp", "1.1.1.1:80")
 	if err == nil {
-		for _, addr := range addrs {
-			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-				if v4 := ipnet.IP.To4(); v4 != nil {
+		defer conn.Close()
+		localAddr, ok := conn.LocalAddr().(*net.UDPAddr)
+		if ok {
+			if v4 := localAddr.IP.To4(); v4 != nil && !v4.IsLoopback() && !isDockerBridgeIP(v4) {
+				return v4
+			}
+		}
+	}
+
+	interfaces, err := net.Interfaces()
+	if err == nil {
+		var candidate net.IP
+		for _, ifi := range interfaces {
+			if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			if isVirtualInterface(strings.ToLower(ifi.Name)) {
+				continue
+			}
+
+			addrs, err := ifi.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, addr := range addrs {
+				ipnet, ok := addr.(*net.IPNet)
+				if !ok || ipnet.IP.IsLoopback() {
+					continue
+				}
+				v4 := ipnet.IP.To4()
+				if v4 == nil || isDockerBridgeIP(v4) {
+					continue
+				}
+				if isPrivateRFC1918(v4) {
 					return v4
+				}
+				if candidate == nil {
+					candidate = v4
+				}
+			}
+		}
+		if candidate != nil {
+			return candidate
+		}
+	}
+
+	return net.ParseIP("127.0.0.1").To4()
+}
+
+func getLANInterface(hostIP net.IP) *net.Interface {
+	if hostIP == nil || hostIP.IsLoopback() {
+		return nil
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	for _, ifi := range interfaces {
+		addrs, err := ifi.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok {
+				if ipnet.IP.Equal(hostIP) {
+					return &ifi
 				}
 			}
 		}
 	}
-	return net.ParseIP("127.0.0.1").To4()
+	return nil
 }
 
 func dockerClient() *http.Client {
@@ -191,6 +296,11 @@ func (m *mDNSManager) refreshContainers(client *http.Client) {
 					Port:       privPort,
 					PublicPort: pubPort,
 				}
+				dashName := strings.ReplaceAll(clean, "_", "-")
+				if dashName != clean {
+					newContainers[dashName] = true
+					newRoutes[dashName] = newRoutes[clean]
+				}
 			}
 		}
 	}
@@ -205,14 +315,32 @@ func (m *mDNSManager) refreshContainers(client *http.Client) {
 func (m *mDNSManager) isKnown(name string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.containers[strings.ToLower(name)] || strings.EqualFold(name, "docktun")
+	clean := strings.ToLower(strings.TrimSpace(name))
+	if clean == "docktun" {
+		return true
+	}
+	if m.containers[clean] {
+		return true
+	}
+	dash := strings.ReplaceAll(clean, "_", "-")
+	under := strings.ReplaceAll(clean, "-", "_")
+	return m.containers[dash] || m.containers[under]
 }
 
 func (m *mDNSManager) getRoute(name string) (*containerRoute, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	r, ok := m.routes[strings.ToLower(name)]
-	return r, ok
+	clean := strings.ToLower(strings.TrimSpace(name))
+	if r, ok := m.routes[clean]; ok {
+		return r, true
+	}
+	if r, ok := m.routes[strings.ReplaceAll(clean, "_", "-")]; ok {
+		return r, true
+	}
+	if r, ok := m.routes[strings.ReplaceAll(clean, "-", "_")]; ok {
+		return r, true
+	}
+	return nil, false
 }
 
 func (m *mDNSManager) listAllRoutes() []*containerRoute {
@@ -249,11 +377,16 @@ func (m *mDNSManager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if targetName == "docktun" || targetName == "" {
 		docktunURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%s", m.docktunPort))
 		proxy := httputil.NewSingleHostReverseProxy(docktunURL)
+		origDirector := proxy.Director
 		proxy.Director = func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = docktunURL.Host
+			origDirector(req)
+			req.Host = docktunURL.Host
 			req.Header.Set("X-Forwarded-Host", r.Host)
 			req.Header.Set("X-Forwarded-Proto", "http")
+			if clientIP, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+				req.Header.Set("X-Forwarded-For", clientIP)
+				req.Header.Set("X-Real-IP", clientIP)
+			}
 		}
 		proxy.ServeHTTP(w, r)
 		return
@@ -267,9 +400,10 @@ func (m *mDNSManager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			targetURL, err := url.Parse(target)
 			if err == nil {
 				proxy := httputil.NewSingleHostReverseProxy(targetURL)
+				origDirector := proxy.Director
 				proxy.Director = func(req *http.Request) {
-					req.URL.Scheme = targetURL.Scheme
-					req.URL.Host = targetURL.Host
+					origDirector(req)
+					req.Host = targetURL.Host
 					req.Header.Set("X-Forwarded-Host", r.Host)
 					req.Header.Set("X-Forwarded-Proto", "http")
 					if clientIP, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
@@ -370,15 +504,19 @@ func parseQName(buf []byte, offset int) (string, int, error) {
 	return strings.Join(parts, "."), idx, nil
 }
 
-func buildResponse(queryID uint16, qname string, targetIP net.IP) []byte {
+func buildResponse(queryID uint16, qname string, targetIP net.IP, isUnicast bool) []byte {
 	resp := make([]byte, 12)
-	binary.BigEndian.PutUint16(resp[0:2], queryID)
-	binary.BigEndian.PutUint16(resp[2:4], 0x8400)
-	binary.BigEndian.PutUint16(resp[4:6], 1)
-	binary.BigEndian.PutUint16(resp[6:8], 1)
+	if isUnicast {
+		binary.BigEndian.PutUint16(resp[0:2], queryID)
+	} else {
+		binary.BigEndian.PutUint16(resp[0:2], 0)
+	}
+	binary.BigEndian.PutUint16(resp[2:4], 0x8400) // Standard query response, Authoritative
+	binary.BigEndian.PutUint16(resp[4:6], 0)      // QDCOUNT MUST be 0 in mDNS responses (RFC 6762 Section 6)
+	binary.BigEndian.PutUint16(resp[6:8], 1)      // ANCOUNT = 1
 
-	qnameOffset := len(resp)
-	for _, label := range strings.Split(qname, ".") {
+	// Answer Section
+	for _, label := range strings.Split(strings.Trim(qname, "."), ".") {
 		if len(label) == 0 {
 			continue
 		}
@@ -386,13 +524,6 @@ func buildResponse(queryID uint16, qname string, targetIP net.IP) []byte {
 		resp = append(resp, []byte(label)...)
 	}
 	resp = append(resp, 0x00)
-
-	// QTYPE = 1 (A), QCLASS = 1 (IN)
-	resp = append(resp, 0x00, 0x01, 0x00, 0x01)
-
-	// Answer Section
-	ptr := uint16(0xC000 | qnameOffset)
-	resp = append(resp, byte(ptr>>8), byte(ptr&0xFF))
 
 	// TYPE = 1 (A), CLASS = 0x8001 (IN, Flush Cache)
 	resp = append(resp, 0x00, 0x01, 0x80, 0x01)
@@ -459,9 +590,14 @@ func main() {
 		Port: 5353,
 	}
 
-	conn, err := net.ListenMulticastUDP("udp4", nil, mcastAddr)
+	lanIf := getLANInterface(mgr.hostIP)
+	conn, err := net.ListenMulticastUDP("udp4", lanIf, mcastAddr)
 	if err != nil {
-		log.Fatalf("[docktun-zeroconf] Failed to bind mDNS multicast socket: %v", err)
+		log.Printf("[docktun-zeroconf] Notice: could not bind multicast on LAN interface %v: %v. Falling back to default...", lanIf, err)
+		conn, err = net.ListenMulticastUDP("udp4", nil, mcastAddr)
+		if err != nil {
+			log.Fatalf("[docktun-zeroconf] Failed to bind mDNS multicast socket: %v", err)
+		}
 	}
 	defer conn.Close()
 
@@ -499,28 +635,37 @@ func main() {
 		}
 
 		queryID := binary.BigEndian.Uint16(buf[0:2])
-		qname, qEnd, err := parseQName(buf, 12)
-		if err != nil || qEnd+4 > n {
-			continue
-		}
+		offset := 12
+		for q := 0; q < int(qdCount); q++ {
+			if offset >= n {
+				break
+			}
+			qname, qEnd, err := parseQName(buf, offset)
+			if err != nil || qEnd+4 > n {
+				break
+			}
+			qType := binary.BigEndian.Uint16(buf[qEnd : qEnd+2])
+			offset = qEnd + 4
 
-		qType := binary.BigEndian.Uint16(buf[qEnd : qEnd+2])
-		if qType != 1 && qType != 255 {
-			continue
-		}
+			if qType != 1 && qType != 255 {
+				continue
+			}
 
-		qnameLower := strings.ToLower(qname)
-		expectedSuffix := "." + mgr.domain
-		if !strings.HasSuffix(qnameLower, expectedSuffix) {
-			continue
-		}
+			qnameClean := strings.Trim(strings.ToLower(qname), ".")
+			expectedSuffix := "." + mgr.domain
+			if !strings.HasSuffix(qnameClean, expectedSuffix) {
+				continue
+			}
 
-		cName := strings.TrimSuffix(qnameLower, expectedSuffix)
-		if mgr.isKnown(cName) {
-			resp := buildResponse(queryID, qname, mgr.hostIP)
-			_, _ = conn.WriteToUDP(resp, mcastAddr)
-			if src != nil {
-				_, _ = conn.WriteToUDP(resp, src)
+			cName := strings.TrimSuffix(qnameClean, expectedSuffix)
+			if mgr.isKnown(cName) {
+				mcastResp := buildResponse(queryID, qnameClean, mgr.hostIP, false)
+				_, _ = conn.WriteToUDP(mcastResp, mcastAddr)
+				if src != nil {
+					unicastResp := buildResponse(queryID, qnameClean, mgr.hostIP, true)
+					_, _ = conn.WriteToUDP(unicastResp, src)
+				}
+				break
 			}
 		}
 	}
