@@ -26,6 +26,9 @@ func main() {
   if len(os.Args) == 5 && os.Args[1] == "update-worker" {
     if err := service.RunSelfUpdateWorker(os.Args[2], os.Args[3], os.Args[4]); err != nil { log.Fatal(err) }; return
   }
+  if len(os.Args) == 4 && os.Args[1] == "services-worker" {
+    if err := service.RunManagedServiceWorker(os.Args[2], os.Args[3]); err != nil { log.Fatal(err) }; return
+  }
   cfg, err := config.Load()
   if err != nil {
     log.Fatalf("failed to load config: %v", err)
@@ -132,6 +135,10 @@ func main() {
   r.Group(func(r chi.Router) {
     r.Use(authMw.Verify)
     updater := handler.NewSelfUpdate(service.NewSelfUpdater(dataDir), auditSvc)
+    servicesUpdater := handler.NewManagedServices(service.NewManagedServices(dataDir), auditSvc)
+    r.Get("/api/services", servicesUpdater.Status)
+    r.Post("/api/services/check", servicesUpdater.Check)
+    r.Post("/api/services/update", servicesUpdater.Update)
     r.Get("/api/self-update", updater.Status)
     r.Post("/api/self-update/check", updater.Check)
     r.Post("/api/self-update/install", updater.Install)

@@ -207,7 +207,7 @@ DockTun does not enforce a single global networking mode. Every container starts
 
 ## Updating DockTun
 
-- **From the Web UI**: Go to **Settings → Update DockTun → Check for updates → Install update**. DockTun pulls the latest image, spins up the new container while preserving all mounts and networks, verifies health, and automatically rolls back if health checks fail.
+- **From the Web UI**: Open **Settings → DockTun services**, check for updates, select the installed services, and choose **Update selected**. This covers the core, local proxy, managed Cloudflare/Tailscale/WireGuard companions and per-app Tailscale helpers. Companions update one at a time and the core updates last using an independent worker. Stopped services stay stopped; missing providers are configured separately under Exposure providers. Existing mounts, settings, network aliases and device state volumes are retained. A failed replacement restores that service’s previous container and stops the batch; earlier successful updates remain installed. Container rollback does not reverse application-data migrations.
 - **Via Docker Compose**:
   ```bash
   docker compose pull

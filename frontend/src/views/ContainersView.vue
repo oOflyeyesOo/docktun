@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { applicationContainers, matchesServiceID } from '../lib/managed-services.mjs'
 import { createProjectFileEditor } from '../lib/project-file-editor.mjs'
 import { settingsEqual, syncExposureDraft } from '../lib/exposure-draft.mjs'
 import { defaultComposeExample, composeTemplates } from '../lib/compose-templates.mjs'
@@ -142,6 +143,9 @@ interface FileItem {
 }
 
 const containers = ref<ContainerItem[]>([])
+const managedServices = ref<Array<{id: string; name: string}>>([])
+const serviceInventoryError = ref('')
+let inventoryReady = false
 const loading = ref(false)
 const searchQuery = ref('')
 const filter = ref<'all' | 'running' | 'stopped' | 'local' | 'public' | 'private' | 'exposed' | 'updates'>('all')
@@ -889,19 +893,6 @@ const containerGroups = computed<ContainerGroup[]>(() => {
   const map = new Map<string, ContainerItem[]>()
   list.forEach((c) => {
     let key = c.project_name ? c.project_name.trim() : ''
-    const lower = c.name.toLowerCase()
-    if (
-      lower.startsWith('docktun') ||
-      lower === 'wireguard' ||
-      lower === 'cloudflared' ||
-      lower === 'tailscale' ||
-      lower === 'wg-easy' ||
-      lower === 'zeroconf' ||
-      key === 'docktun' ||
-      key === 'tun'
-    ) {
-      key = 'docktun'
-    }
     if (!key) {
       key = '__standalone__'
     }
@@ -927,9 +918,6 @@ const containerGroups = computed<ContainerGroup[]>(() => {
     const projectPath = firstWithProj?.project_path
 
     let groupName = isStack ? key : 'Standalone Containers'
-    if (key === 'docktun') {
-      groupName = 'DockTun Core'
-    }
 
     groups.push({
       key,
@@ -947,10 +935,8 @@ const containerGroups = computed<ContainerGroup[]>(() => {
     })
   })
 
-  // Sort: DockTun Core first, other Stacks alphabetically, Standalone at the bottom
+  // Sort stacks alphabetically, with standalone apps at the bottom.
   groups.sort((a, b) => {
-    if (a.key === 'docktun') return -1
-    if (b.key === 'docktun') return 1
     if (a.isStack && !b.isStack) return -1
     if (!a.isStack && b.isStack) return 1
     return a.name.localeCompare(b.name)
@@ -961,8 +947,13 @@ const containerGroups = computed<ContainerGroup[]>(() => {
 
 async function fetchContainers() {
   try {
-    const data = await apiFetch<ContainerItem[]>('/api/docker/containers')
-    containers.value = data || []
+    const [data, maintenance] = await Promise.all([
+      apiFetch<ContainerItem[]>('/api/docker/containers'),
+      apiFetch<any>('/api/services').catch((error: any) => { serviceInventoryError.value = error.message; return null }),
+    ])
+    if (maintenance) { managedServices.value = maintenance.services || []; serviceInventoryError.value = '' }
+    containers.value = applicationContainers(data || [], managedServices.value)
+    inventoryReady = true
     containers.value.forEach(refreshExposureDraft)
 
     // If modal is open, sync basic stats into selectedContainer
@@ -1083,7 +1074,7 @@ async function performUpdate(container: ContainerItem) {
   updatingContainer.value[container.id] = true
   try {
     const res = await apiFetch(`/api/docker/containers/${container.id}/update`, { method: 'POST' })
-    const isDocktunSelf = container.name.toLowerCase().includes('docktun') || (res.output && res.output.includes('self-update'))
+    const isDocktunSelf = res.output && res.output.includes('self-update')
     updateResultModal.value = {
       name: container.name,
       output: res.output || 'Container updated successfully.',
@@ -1733,9 +1724,11 @@ const route = useRoute()
 const router = useRouter()
 
 function checkRouteParams() {
+  if (!inventoryReady) return
   const targetId = (route.query.id as string) || ''
   const targetName = (route.query.name as string) || ''
   const initialTab = (route.query.tab as any) || 'overview'
+  if (managedServices.value.some(service => matchesServiceID(targetId, service.id) || service.name === targetName.replace(/^\//, ''))) { router.replace('/settings#docktun-services'); return }
 
   if (targetId || targetName) {
     const cleanTargetName = targetName.replace(/^\//, '').toLowerCase()
@@ -1941,6 +1934,8 @@ onUnmounted(() => {
       </router-link>
     </div>
 
+      <div class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-sm"><p class="text-slate-600">Your apps and stacks. DockTun and its managed services live in Settings.</p><router-link to="/settings#docktun-services" class="font-medium text-indigo-700">DockTun services →</router-link></div>
+      <p v-if="serviceInventoryError" role="status" class="text-xs text-amber-800">Could not refresh service ownership. {{ serviceInventoryError }}</p>
     <!-- Filter & Search Bar -->
     <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       <!-- Filter tabs -->
@@ -2145,19 +2140,14 @@ onUnmounted(() => {
               />
               <div class="flex items-center gap-2">
                 <component
-                  :is="group.key === 'docktun' ? ShieldCheck : group.isStack ? Layers : Server"
+                  :is="group.isStack ? Layers : Server"
                   class="h-4 w-4"
-                  :class="group.key === 'docktun' ? 'text-cyan-600' : group.isStack ? 'text-indigo-600' : 'text-slate-600'"
+                  :class="group.isStack ? 'text-indigo-600' : 'text-slate-600'"
                 />
                 <span class="text-sm font-bold text-slate-900 font-mono group-hover:text-cyan-700 transition-colors">
                   {{ group.name }}
                 </span>
-                <span
-                  v-if="group.key === 'docktun'"
-                  class="rounded-full bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 text-[10px] font-semibold text-cyan-700 font-mono"
-                >
-                  System Core
-                </span>
+
               </div>
             </button>
 
