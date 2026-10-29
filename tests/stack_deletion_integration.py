@@ -43,6 +43,17 @@ def request(path, body=None, expected=200, authenticated=True, method=None):
 def state(name):
     return inner('inspect', '--format', '{{.State.Status}}', name)
 
+
+def wait_project_action(project_id):
+    for _ in range(60):
+        output = request(f'/api/projects/{project_id}/output')
+        if output['done']:
+            assert not any('[ERROR]' in line for line in output['lines']), output
+            return output
+        time.sleep(1)
+    raise AssertionError('stack action did not complete')
+
+
 try:
     docker('run', '-d', '--privileged', '--name', engine, '-e', 'DOCKER_TLS_CERTDIR=', '-p', '127.0.0.1::3001', os.environ.get('DOCKTUN_TEST_ENGINE_IMAGE', 'docker:29-dind'))
     for _ in range(90):
@@ -61,9 +72,30 @@ try:
     fixture = 'FROM alpine:3.23\nENTRYPOINT ["/bin/sh", "-c", "exec sleep 3600", "provider-fixture"]\n'
     for provider_image in ['cloudflare/cloudflared:latest', 'tailscale/tailscale:latest', 'lscr.io/linuxserver/wireguard:latest']:
         inner('build', '-q', '-t', provider_image, '-', input=fixture)
+    # Synology-style external Compose labels contain daemon-host paths. The
+    # same directory is deliberately mounted under a different name in DockTun.
+    synology_compose = '''services:
+  app:
+    image: alpine:3.23
+    command: ["sleep", "3600"]
+    environment:
+      STACK_REVISION: "${STACK_REVISION:-initial}"
+    volumes:
+      - ./content:/content:ro
+'''
+    docker('exec', '-i', engine, 'sh', '-c',
+           'mkdir -p /volume1/docker/MediaStorm/content && cat > /volume1/docker/MediaStorm/docker-compose.yml', input=synology_compose)
+    docker('exec', engine, 'sh', '-c',
+           'printf synology-host-marker > /volume1/docker/MediaStorm/content/marker')
+    inner('compose', '-p', 'mediastorm', '-f', '/volume1/docker/MediaStorm/docker-compose.yml', 'up', '-d')
+    docker('exec', '-i', engine, 'sh', '-c',
+           'mkdir -p /volume2/docker/Unmapped && cat > /volume2/docker/Unmapped/compose.yml',
+           input='services:\n  app:\n    image: alpine:3.23\n    command: ["sleep", "3600"]\n')
+    inner('compose', '-p', 'unmapped-external', '-f', '/volume2/docker/Unmapped/compose.yml', 'up', '-d')
     inner('network', 'create', 'docktun')
     inner('run', '-d', '--name', 'docktun', '--network', 'docktun', '-p', '3001:3001',
           '--label', 'com.docker.compose.project=docktun-core', '-v', 'test-app:/app/data', '-v', 'test-projects:/opt/projects', '-v', 'scoped-cloudflare:/etc/cloudflared',
+          '-v', '/volume1/docker:/mounted-stacks',
           '-v', '/var/run/docker.sock:/var/run/docker.sock', '-e', 'DOCKER_NETWORK=docktun', image)
     base = 'http://' + docker('port', engine, '3001/tcp')
     for _ in range(90):
@@ -78,6 +110,59 @@ try:
         raise AssertionError('providers were not staged stopped')
     secret = inner('exec', 'docktun', 'cat', '/app/data/setup.token')
     token = request('/api/setup/complete', {'setup_token': secret, 'admin_username': 'owner', 'admin_password': 'integration-password-123', 'tunnel': {'type': 'tailscale'}})['access_token']
+    containers = request('/api/docker/containers')
+    if isinstance(containers, dict): containers = containers['containers']
+    synology = next(c for c in containers if c.get('project_name') == 'mediastorm')
+    synology_id = synology['project_id']
+    assert synology['project_path'] == '/volume1/docker/MediaStorm', synology
+    request(f'/api/projects/{synology_id}/file-access', expected=401, authenticated=False)
+    access = request(f'/api/projects/{synology_id}/file-access')
+    assert access['available'] and access['writable'] and access['resolved_path'] == '/mounted-stacks/MediaStorm', access
+    loaded = request(f'/api/projects/{synology_id}/compose')
+    # subprocess text stdin uses CRLF on Windows; the app preserves the host
+    # file's line endings while JSON decoding intentionally leaves them intact.
+    assert loaded['filename'] == 'docker-compose.yml' and loaded['content'].replace('\r\n', '\n') == synology_compose, loaded
+    assert request(f'/api/projects/{synology_id}/env')['content'] == ''
+    files = request(f'/api/projects/{synology_id}/files?path=content')
+    assert any(item['name'] == 'marker' for item in files), files
+    edited = synology_compose + '# saved through the mapped stack folder\n'
+    request(f'/api/projects/{synology_id}/compose', {'filename': loaded['filename'], 'content': edited}, method='PUT')
+    request(f'/api/projects/{synology_id}/env', {'content': 'STACK_REVISION=updated\n'}, method='PUT')
+    assert docker('exec', engine, 'cat', '/volume1/docker/MediaStorm/docker-compose.yml') == edited.strip()
+    assert docker('exec', engine, 'cat', '/volume1/docker/MediaStorm/.env') == 'STACK_REVISION=updated'
+    request(f'/api/projects/{synology_id}/up', {})
+    wait_project_action(synology_id)
+    synology_app = inner('ps', '-q', '--filter', 'label=com.docker.compose.project=mediastorm', '--filter', 'label=com.docker.compose.service=app')
+    assert synology_app and synology_app != synology['id'], (synology_app, synology)
+    assert inner('exec', synology_app, 'cat', '/content/marker') == 'synology-host-marker'
+    assert inner('exec', synology_app, 'printenv', 'STACK_REVISION') == 'updated'
+    synology_mount = next(m for m in json.loads(inner('inspect', synology_app))[0]['Mounts'] if m['Destination'] == '/content')
+    assert synology_mount['Source'] == '/volume1/docker/MediaStorm/content' and not synology_mount['RW'], synology_mount
+    assert next(p for p in request('/api/projects') if p['id'] == synology_id)['path'] == '/volume1/docker/MediaStorm'
+    assert not request(f'/api/projects/{synology_id}/delete-options')['can_remove_files']
+    inner('exec', 'docktun', 'sh', '-c', 'test ! -e /volume1/docker/MediaStorm')
+    assert './content:/content:ro' in docker('exec', engine, 'cat', '/volume1/docker/MediaStorm/docker-compose.yml')
+
+    # An unmounted neighbor stays manageable as a container; file operations
+    # explain the missing mount and never manufacture a shadow host directory.
+    unmapped = next(c for c in containers if c.get('project_name') == 'unmapped-external')
+    unmapped_id = unmapped['project_id']
+    access = request(f'/api/projects/{unmapped_id}/file-access')
+    assert not access['available'] and not access['writable'] and 'mount that host folder' in access['reason'], access
+    for route in ['compose', 'env', 'files']:
+        failure = request(f'/api/projects/{unmapped_id}/{route}', expected=500)
+        assert 'mount that host folder' in failure['error'], failure
+    failure = request(f'/api/projects/{unmapped_id}/compose', {'filename': 'compose.yml', 'content': 'services: {}\n'}, expected=500, method='PUT')
+    assert 'mount that host folder' in failure['error'], failure
+    failure = request(f'/api/projects/{unmapped_id}/env', {'content': 'SHOULD_NOT_EXIST=yes\n'}, expected=500, method='PUT')
+    assert 'mount that host folder' in failure['error'], failure
+    inner('exec', 'docktun', 'sh', '-c', 'test ! -e /volume2/docker/Unmapped')
+    request('/api/docker/containers/' + unmapped['id'] + '/stop', {})
+    assert state(unmapped['id']) == 'exited'
+    request('/api/docker/containers/' + unmapped['id'] + '/start', {})
+    assert state(unmapped['id']) == 'running'
+    assert docker('exec', engine, 'cat', '/volume2/docker/Unmapped/compose.yml') == 'services:\n  app:\n    image: alpine:3.23\n    command: ["sleep", "3600"]'
+
     # Projects created in the UI must use the mounted, persistent directory.
     managed_compose = 'services:\n  app:\n    image: alpine:3.23\n    command: ["sleep", "3600"]\n    volumes:\n      - ./content:/content:ro\n    secrets: [key]\n    configs:\n      - source: settings\n        target: /etc/app.conf\n  optional:\n    image: alpine:3.23\n    command: ["sleep", "3600"]\n    profiles: [optional]\nsecrets:\n  key:\n    file: ./content/key\nconfigs:\n  settings:\n    file: ./content/settings\n'
     created = request('/api/projects', {'name': 'managed-example', 'compose_content': managed_compose, 'auto_start': False}, expected=201)
@@ -192,6 +277,6 @@ networks:
     core = next(c for c in containers if c['name'] == 'docktun')
     request(f"/api/projects/{core['project_id']}", method='DELETE', expected=500)
     assert state('docktun') == 'running'
-    print('PASS: managed stack deployed, updated and persisted with shared bind/secret/config data; file errors reported; host-only Compose stack deleted; stopped/profile services removed; volumes, external network and neighboring stack preserved; failures and self-delete refused')
+    print('PASS: Synology host-label stack read, saved and redeployed through a differently named mount; relative bind data preserved; unmounted neighbor file access refused without shadow folders while container controls worked; managed stack deployed, updated and persisted with shared bind/secret/config data; host-only Compose stack deleted; stopped/profile services removed; volumes, external network and neighboring stack preserved; failures and self-delete refused')
 finally:
     docker('rm', '-f', '-v', engine)

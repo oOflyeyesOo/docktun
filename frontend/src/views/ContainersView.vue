@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { createProjectFileEditor } from '../lib/project-file-editor.mjs'
+import { settingsEqual, syncExposureDraft } from '../lib/exposure-draft.mjs'
 import { defaultComposeExample, composeTemplates } from '../lib/compose-templates.mjs'
 import { getPrimaryPort, cleanContainerName, getMdnsPortSuffix } from '../lib/containerPorts.mjs'
 import ContainerExposure from "../components/ContainerExposure.vue"
@@ -68,6 +69,7 @@ import { useApi } from '../composables/useApi'
 const { apiFetch } = useApi()
 
 interface ExposureSettings {
+  tailscale_node?: string
   mode: string
   hostname?: string
   target?: string
@@ -156,7 +158,33 @@ const availableUpdatesCount = computed(() => {
 
 const actionLoading = ref<Record<string, string>>({})
 const exposeForm = ref<Record<string, ExposureSettings>>({})
+const exposureBaselines = ref<Record<string, ExposureSettings>>({})
 const exposeSaving = ref<Record<string, boolean>>({})
+
+function exposureFromContainer(c: ContainerItem): ExposureSettings {
+  const saved = c.exposure || ({} as ExposureSettings)
+  const port = Number(getPrimaryPort(c.ports)) || 80
+  return {
+    mode: saved.mode || c.exposure_mode || 'internal',
+    hostname: saved.hostname ?? c.hostname ?? '',
+    target: saved.target || c.target || `http://${c.name}:${port}`,
+    private_type: saved.private_type ?? c.private_type ?? '',
+    private_host: saved.private_host ?? c.private_host ?? '',
+    private_port: saved.private_port || c.private_port || port,
+    notes: saved.notes ?? c.notes ?? '',
+    zero_trust_enabled: saved.zero_trust_enabled ?? c.zero_trust_enabled ?? false,
+    zero_trust_emails: saved.zero_trust_emails ?? c.zero_trust_emails ?? '',
+    zero_trust_auth_type: saved.zero_trust_auth_type || c.zero_trust_auth_type || 'email',
+    zero_trust_session: saved.zero_trust_session || c.zero_trust_session || '24h',
+  }
+}
+
+function refreshExposureDraft(c: ContainerItem) {
+  const key = Object.keys(exposeForm.value).find((id) => id === c.id || id.startsWith(c.id) || c.id.startsWith(id)) || c.id
+  const result = syncExposureDraft(exposeForm.value[key], exposureBaselines.value[key], exposureFromContainer(c))
+  exposeForm.value[key] = exposeForm.value[c.id] = result.draft
+  exposureBaselines.value[key] = exposureBaselines.value[c.id] = result.baseline
+}
 
 function getExpose(id?: string): ExposureSettings {
   if (!id) {
@@ -189,21 +217,9 @@ function getExpose(id?: string): ExposureSettings {
     : containers.value.find((item) => item.id === id || item.id.startsWith(id) || id.startsWith(item.id) || item.name === id)
 
   if (c) {
-    const pPort = getPrimaryPort(c.ports)
-    const settings: ExposureSettings = {
-      mode: c.exposure_mode || c.exposure?.mode || 'internal',
-      hostname: c.hostname || c.exposure?.hostname || '',
-      target: c.target || c.exposure?.target || `http://${c.name}:${pPort}`,
-      private_type: c.private_type || c.exposure?.private_type || '',
-      private_host: c.private_host || c.exposure?.private_host || '',
-      private_port: c.private_port || c.exposure?.private_port || parseInt(pPort, 10) || 80,
-      notes: c.notes || c.exposure?.notes || '',
-      zero_trust_enabled: c.zero_trust_enabled || c.exposure?.zero_trust_enabled || false,
-      zero_trust_emails: c.zero_trust_emails || c.exposure?.zero_trust_emails || '',
-      zero_trust_auth_type: c.zero_trust_auth_type || c.exposure?.zero_trust_auth_type || 'email',
-      zero_trust_session: c.zero_trust_session || c.exposure?.zero_trust_session || '24h',
-    }
+    const settings = exposureFromContainer(c)
     exposeForm.value[id] = settings
+    exposureBaselines.value[id] = { ...settings }
     return settings
   }
 
@@ -241,9 +257,12 @@ const composeEditor = reactive(createProjectFileEditor('Compose', 'docker-compos
 const { filename: composeFilename, content: composeContent, loading: composeLoading, saving: composeSaving, message: composeMsg } = toRefs(composeEditor)
 const envEditor = reactive(createProjectFileEditor('.env'))
 const { content: envContent, loading: envLoading, saving: envSaving, message: envMsg } = toRefs(envEditor)
+const projectFileAccess = ref<{ path: string; resolved_path?: string; available: boolean; writable: boolean; reason?: string } | null>(null)
+const projectFilesWritable = computed(() => !!projectFileAccess.value?.available && !!projectFileAccess.value?.writable)
 let selectionRevision = 0
 let filesRevision = 0
 function resetProjectEditors() {
+  projectFileAccess.value = null
   composeEditor.invalidate()
   envEditor.invalidate()
   filesRevision++
@@ -937,19 +956,7 @@ async function fetchContainers() {
   try {
     const data = await apiFetch<ContainerItem[]>('/api/docker/containers')
     containers.value = data || []
-    containers.value.forEach((c) => {
-      if (!exposeForm.value[c.id]) {
-        exposeForm.value[c.id] = {
-          mode: c.exposure_mode || c.exposure?.mode || 'internal',
-          hostname: c.hostname || c.exposure?.hostname || '',
-          target: c.target || c.exposure?.target || `http://${c.name}:${getPrimaryPort(c.ports)}`,
-          private_type: c.private_type || c.exposure?.private_type || '',
-          private_host: c.private_host || c.exposure?.private_host || '',
-          private_port: c.private_port || c.exposure?.private_port || Number(getPrimaryPort(c.ports)),
-          notes: c.notes || c.exposure?.notes || '',
-        }
-      }
-    })
+    containers.value.forEach(refreshExposureDraft)
 
     // If modal is open, sync basic stats into selectedContainer
     if (selectedContainer.value) {
@@ -963,6 +970,10 @@ async function fetchContainers() {
         selectedContainer.value.running = updated.running
         selectedContainer.value.status = updated.status
         selectedContainer.value.connected_to_cloudflared = updated.connected_to_cloudflared
+        selectedContainer.value.exposure = updated.exposure
+        selectedContainer.value.exposure_mode = updated.exposure_mode
+        selectedContainer.value.hostname = updated.hostname
+        selectedContainer.value.target = updated.target
         if (updated.project_id && !selectedContainer.value.project_id) {
           selectedContainer.value.project_id = updated.project_id
           selectedContainer.value.project_name = updated.project_name
@@ -1097,18 +1108,18 @@ const exposeMsg = ref<Record<string, { type: 'success' | 'error'; text: string }
 
 async function saveExposure(container: ContainerItem) {
   exposeSaving.value[container.id] = true
+  const payload = { ...getExpose(container.id) }
   try {
-    const payload = getExpose(container.id)
     await apiFetch(`/api/docker/containers/${container.id}/exposure`, {
       method: 'POST',
       body: JSON.stringify(payload),
     })
     await fetchContainers()
-    if (selectedContainer.value && selectedContainer.value.id === container.id) {
-      selectedContainer.value.connected_to_cloudflared = payload.mode === 'public'
-      selectedContainer.value.exposure_mode = payload.mode
-      selectedContainer.value.hostname = payload.hostname
-      selectedContainer.value.target = payload.target
+    const saved = containers.value.find((item) => item.id === container.id)
+    if (saved) {
+      const fresh = exposureFromContainer(saved)
+      if (settingsEqual(getExpose(container.id), payload)) exposeForm.value[container.id] = { ...fresh }
+      exposureBaselines.value[container.id] = { ...fresh }
     }
     exposeMsg.value[container.id] = {
       type: 'success',
@@ -1119,6 +1130,7 @@ async function saveExposure(container: ContainerItem) {
     }, 6000)
   } catch (error: any) {
     exposeMsg.value[container.id] = { type: 'error', text: 'Save failed: ' + error.message }
+    await fetchContainers() // An accepted route can remain after a separate DNS failure.
   } finally {
     exposeSaving.value[container.id] = false
   }
@@ -1156,22 +1168,13 @@ async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' |
     }
     const currentMode = detail.exposure_mode || detail.exposure?.mode || c.exposure_mode || c.exposure?.mode
     if (currentMode) {
-      const pPort = getPrimaryPort(detail.ports || c.ports)
-      const formVal: ExposureSettings = {
-        mode: currentMode,
-        hostname: detail.hostname || detail.exposure?.hostname || c.hostname || c.exposure?.hostname || '',
-        target: detail.target || detail.exposure?.target || c.target || c.exposure?.target || `http://${detail.name}:${pPort}`,
-        private_type: detail.private_type || detail.exposure?.private_type || c.private_type || c.exposure?.private_type || '',
-        private_host: detail.private_host || detail.exposure?.private_host || c.private_host || c.exposure?.private_host || '',
-        private_port: detail.private_port || detail.exposure?.private_port || c.private_port || c.exposure?.private_port || parseInt(pPort, 10) || 80,
-        notes: detail.notes || detail.exposure?.notes || c.notes || c.exposure?.notes || '',
-        zero_trust_enabled: detail.zero_trust_enabled || detail.exposure?.zero_trust_enabled || c.zero_trust_enabled || c.exposure?.zero_trust_enabled || false,
-        zero_trust_emails: detail.zero_trust_emails || detail.exposure?.zero_trust_emails || c.zero_trust_emails || c.exposure?.zero_trust_emails || '',
-        zero_trust_auth_type: detail.zero_trust_auth_type || detail.exposure?.zero_trust_auth_type || c.zero_trust_auth_type || c.exposure?.zero_trust_auth_type || 'email',
-        zero_trust_session: detail.zero_trust_session || detail.exposure?.zero_trust_session || c.zero_trust_session || c.exposure?.zero_trust_session || '24h',
-      }
+      const formVal = exposureFromContainer({ ...c, ...detail })
       exposeForm.value[c.id] = formVal
-      if (detail.id) exposeForm.value[detail.id] = formVal
+      exposureBaselines.value[c.id] = { ...formVal }
+      if (detail.id) {
+        exposeForm.value[detail.id] = formVal
+        exposureBaselines.value[detail.id] = { ...formVal }
+      }
     }
   } catch (err: any) {
     console.error('Failed to load container details:', err)
@@ -1264,12 +1267,23 @@ async function scaffoldProject() {
 }
 
 // --- Compose Functions ---
+async function loadProjectFileAccess(projectId: number) {
+  const selection = selectionRevision
+  const access = await apiFetch<any>(`/api/projects/${projectId}/file-access`)
+  if (selection === selectionRevision && selectedContainer.value?.project_id === projectId) projectFileAccess.value = access
+  if (!access.available) throw new Error(access.reason || 'Mount this stack folder in DockTun to access its files.')
+  return access
+}
+
 async function loadContainerCompose(projectId: number) {
-  await composeEditor.load(projectId, (id) => apiFetch(`/api/projects/${id}/compose`))
+  await composeEditor.load(projectId, async (id) => {
+    await loadProjectFileAccess(id)
+    return apiFetch(`/api/projects/${id}/compose`)
+  })
 }
 
 async function saveContainerCompose(restart = false) {
-  if (selectedContainer.value?.project_id !== composeEditor.projectId) return
+  if (!projectFilesWritable.value || selectedContainer.value?.project_id !== composeEditor.projectId) return
   const saved = await composeEditor.save(
     (id, body) => apiFetch(`/api/projects/${id}/compose`, { method: 'PUT', body: JSON.stringify(body) }),
     restart ? (id) => apiFetch(`/api/projects/${id}/action/restart`, { method: 'POST' }) : undefined,
@@ -1516,11 +1530,14 @@ async function submitNewProject() {
 
 // --- .env Functions ---
 async function loadContainerEnv(projectId: number) {
-  await envEditor.load(projectId, (id) => apiFetch(`/api/projects/${id}/env`))
+  await envEditor.load(projectId, async (id) => {
+    await loadProjectFileAccess(id)
+    return apiFetch(`/api/projects/${id}/env`)
+  })
 }
 
 async function saveContainerEnv(restart = false) {
-  if (selectedContainer.value?.project_id !== envEditor.projectId) return
+  if (!projectFilesWritable.value || selectedContainer.value?.project_id !== envEditor.projectId) return
   const saved = await envEditor.save(
     (id, body) => apiFetch(`/api/projects/${id}/env`, { method: 'PUT', body: JSON.stringify({ content: body.content }) }),
     restart ? (id) => apiFetch(`/api/projects/${id}/action/restart`, { method: 'POST' }) : undefined,
@@ -1538,6 +1555,7 @@ async function loadContainerFiles(projectId: number, path = '') {
   editingFileMsg.value = ''
   editingFile.value = null
   try {
+    await loadProjectFileAccess(projectId)
     const res: any = await apiFetch(`/api/projects/${projectId}/files?path=${encodeURIComponent(path)}`)
     if (revision === filesRevision && selection === selectionRevision) fileList.value = res || []
   } catch (e: any) {
@@ -1574,7 +1592,7 @@ async function openContainerFile(f: FileItem) {
 
 async function saveCurrentContainerFile() {
   const file = editingFile.value
-  if (!file || selectedContainer.value?.project_id !== file.projectId || editingFileSaving.value) return
+  if (!projectFilesWritable.value || !file || selectedContainer.value?.project_id !== file.projectId || editingFileSaving.value) return
   const selection = selectionRevision
   const revision = filesRevision
   editingFileSaving.value = true
@@ -1592,7 +1610,7 @@ async function saveCurrentContainerFile() {
 }
 
 async function createContainerFileItem() {
-  if (!selectedContainer.value?.project_id || !newItemName.value) return
+  if (!projectFilesWritable.value || !selectedContainer.value?.project_id || !newItemName.value) return
   const targetPath = currentDir.value ? `${currentDir.value}/${newItemName.value}` : newItemName.value
   const projectId = selectedContainer.value.project_id
   const directory = currentDir.value
@@ -1616,7 +1634,7 @@ async function createContainerFileItem() {
 }
 
 async function deleteContainerFile(path: string) {
-  if (!selectedContainer.value?.project_id) return
+  if (!projectFilesWritable.value || !selectedContainer.value?.project_id) return
   if (!confirm(`Delete ${path}?`)) return
   const projectId = selectedContainer.value.project_id
   const directory = currentDir.value
@@ -1690,6 +1708,19 @@ async function disconnectFromCloudflared(container: any) {
   } finally {
     disconnectingNetwork.value[container.id] = false
   }
+}
+
+async function disconnectContainerNetwork(container: ContainerItem, network: string) {
+  if (container.exposure?.tailscale_node === network) return
+  if (!confirm(`Disconnect ${container.name} from ${network}? Connections using this network may stop working. The network and other containers are kept.`)) return
+  disconnectingNetwork.value[container.id] = true
+  try {
+    await apiFetch(`/api/docker/containers/${container.id}/network/disconnect`, { method: 'POST', body: JSON.stringify({ network }) })
+    container.networks = container.networks?.filter((name) => name !== network)
+    if (selectedContainer.value?.id === container.id) selectedContainer.value.networks = container.networks
+    await fetchContainers()
+  } catch (e: any) { alert('Failed to disconnect network: ' + e.message) }
+  finally { delete disconnectingNetwork.value[container.id] }
 }
 
 watch(modalLogsAutoRefresh, (enabled) => {
@@ -2724,6 +2755,13 @@ onUnmounted(() => {
 
         <!-- Tab Body Container -->
         <div class="flex-1 overflow-y-auto p-5 text-slate-800">
+          <div v-if="['compose', 'env', 'files'].includes(selectedTab) && projectFileAccess" class="mb-4 rounded-lg border p-3 text-sm" :class="projectFileAccess.available && projectFileAccess.writable ? 'border-slate-200 bg-slate-50' : 'border-amber-300 bg-amber-50'" role="status">
+            <p v-if="!projectFileAccess.available" class="font-semibold">Stack files are unavailable in DockTun</p>
+            <p v-else-if="!projectFileAccess.writable" class="font-semibold">Stack files are read-only</p>
+            <p v-if="projectFileAccess.reason">{{ projectFileAccess.reason }}</p>
+            <p v-if="projectFileAccess.resolved_path && projectFileAccess.resolved_path !== projectFileAccess.path" class="break-all text-xs">Host folder {{ projectFileAccess.path }} is available at {{ projectFileAccess.resolved_path }} inside DockTun.</p>
+            <p v-if="!projectFileAccess.available" class="mt-1 text-xs">Container start, stop, logs, and exposure controls remain available. Add the folder mount to DockTun and recreate DockTun to enable file management.</p>
+          </div>
           <!-- Loading indicator -->
           <div v-if="detailLoading" class="flex items-center justify-center py-16 text-slate-600 text-sm">
             <RotateCcw class="h-5 w-5 animate-spin mr-2 text-cyan-600" />
@@ -2886,15 +2924,14 @@ onUnmounted(() => {
                   <span class="text-slate-500">Gateway:</span>
                   <span class="ml-2 text-slate-800">{{ selectedContainer.gateway || '—' }}</span>
                 </div>
-                <div>
-                  <span class="text-slate-500">Assigned Networks:</span>
-                  <span class="ml-2 text-slate-800">{{ selectedContainer.networks?.join(', ') || 'bridge' }}</span>
-                </div>
-                <div>
-                  <span class="text-slate-500">Cloudflared Network:</span>
-                  <span class="ml-2" :class="selectedContainer.connected_to_cloudflared ? 'text-emerald-600 font-bold' : 'text-slate-600'">
-                    {{ selectedContainer.connected_to_cloudflared ? 'Connected (Internal routing active)' : 'Not Connected' }}
-                  </span>
+                <div class="md:col-span-2 space-y-2">
+                  <span class="text-slate-500">Docker network attachments:</span>
+                  <div v-for="network in selectedContainer.networks || []" :key="network" class="flex items-center justify-between gap-3 rounded border border-slate-200 bg-white p-2">
+                    <code class="break-all">{{ network }}</code>
+                    <span v-if="selectedContainer.exposure?.tailscale_node === network" class="text-xs text-slate-500">Managed in Access</span>
+                    <button v-else-if="network !== 'host' && network !== 'none'" class="cyber-btn-secondary text-xs" :disabled="disconnectingNetwork[selectedContainer.id]" @click="disconnectContainerNetwork(selectedContainer, network)">Disconnect</button>
+                  </div>
+                  <p class="text-xs text-slate-500">Disconnect a network only when this container no longer needs it. Active Tailscale app networks are managed in Access.</p>
                 </div>
                 <div class="md:col-span-2">
                   <span class="text-slate-500">Command:</span>
@@ -3046,7 +3083,7 @@ onUnmounted(() => {
 
                     <button
                       @click="runStackAction(selectedContainer.project_id, 'up')"
-                      :disabled="!!stackActionLoading[selectedContainer.project_id]"
+                      :disabled="!!stackActionLoading[selectedContainer.project_id] || !projectFileAccess?.available"
                       class="cyber-btn-secondary text-xs flex items-center gap-1 text-emerald-600 hover:border-emerald-500/60 hover:bg-emerald-50/30"
                       title="docker compose up -d"
                     >
@@ -3056,7 +3093,7 @@ onUnmounted(() => {
 
                     <button
                       @click="runStackAction(selectedContainer.project_id, 'down')"
-                      :disabled="!!stackActionLoading[selectedContainer.project_id]"
+                      :disabled="!!stackActionLoading[selectedContainer.project_id] || !projectFileAccess?.available"
                       class="cyber-btn-secondary text-xs flex items-center gap-1 text-amber-600 hover:border-amber-500/60 hover:bg-amber-50/30"
                       title="docker compose down"
                     >
@@ -3066,7 +3103,7 @@ onUnmounted(() => {
 
                     <button
                       @click="runStackAction(selectedContainer.project_id, 'restart')"
-                      :disabled="!!stackActionLoading[selectedContainer.project_id]"
+                      :disabled="!!stackActionLoading[selectedContainer.project_id] || !projectFileAccess?.available"
                       class="cyber-btn-secondary text-xs flex items-center gap-1 text-cyan-700 hover:border-cyan-500/60 hover:bg-cyan-50/30"
                       title="docker compose restart"
                     >
@@ -3076,7 +3113,7 @@ onUnmounted(() => {
 
                     <button
                       @click="openDeployPrompt(selectedContainer.project_id, selectedContainer.project_name || selectedContainer.name)"
-                      :disabled="!!stackActionLoading[selectedContainer.project_id]"
+                      :disabled="!!stackActionLoading[selectedContainer.project_id] || !projectFilesWritable"
                       class="cyber-btn-secondary text-xs flex items-center gap-1 text-violet-300 hover:border-violet-500/60 hover:bg-violet-950/30"
                       title="Git pull & docker compose up -d --build"
                     >
@@ -3106,7 +3143,7 @@ onUnmounted(() => {
 
                     <button
                       @click="saveContainerCompose(false)"
-                      :disabled="composeSaving || composeLoading || !composeEditor.loaded"
+                      :disabled="composeSaving || composeLoading || !composeEditor.loaded || !projectFilesWritable"
                       class="cyber-btn text-xs flex items-center gap-1 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
                       title="Save edits to docker-compose.yml"
                     >
@@ -3162,6 +3199,7 @@ onUnmounted(() => {
               <div class="relative">
                 <textarea
                   v-model="composeContent"
+                  :readonly="!projectFilesWritable"
                   :disabled="!composeEditor.loaded || composeSaving"
                   rows="18"
                   spellcheck="false"
@@ -3230,7 +3268,7 @@ onUnmounted(() => {
                   </button>
                   <button
                     @click="saveContainerEnv(false)"
-                    :disabled="envSaving || envLoading || !envEditor.loaded"
+                    :disabled="envSaving || envLoading || !envEditor.loaded || !projectFilesWritable"
                     class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
                   >
                     <Save class="h-3.5 w-3.5" />
@@ -3238,7 +3276,7 @@ onUnmounted(() => {
                   </button>
                   <button
                     @click="saveContainerEnv(true)"
-                    :disabled="envSaving || envLoading || !envEditor.loaded"
+                    :disabled="envSaving || envLoading || !envEditor.loaded || !projectFilesWritable"
                     class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-700 border-emerald-600 bg-emerald-50/40 hover:bg-emerald-100/50"
                   >
                     <RotateCcw class="h-3.5 w-3.5" />
@@ -3250,6 +3288,7 @@ onUnmounted(() => {
               <!-- .env Editor -->
               <textarea
                 v-model="envContent"
+                :readonly="!projectFilesWritable"
                 :disabled="!envEditor.loaded || envSaving"
                 rows="18"
                 spellcheck="false"
@@ -3302,6 +3341,7 @@ onUnmounted(() => {
                   </button>
                   <button
                     @click="showNewItemModal = true"
+                    :disabled="!projectFilesWritable"
                     class="cyber-btn text-xs flex items-center gap-1.5"
                   >
                     <Plus class="h-3.5 w-3.5" />
@@ -3328,7 +3368,7 @@ onUnmounted(() => {
                   <div class="flex items-center gap-2">
                     <button
                       @click="saveCurrentContainerFile"
-                      :disabled="editingFileSaving"
+                      :disabled="editingFileSaving || !projectFilesWritable"
                       class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700"
                     >
                       <Save class="h-3 w-3" />
@@ -3344,6 +3384,7 @@ onUnmounted(() => {
                 </div>
                 <textarea
                   v-model="editingFile.content"
+                  :readonly="!projectFilesWritable"
                   rows="16"
                   spellcheck="false"
                   class="w-full rounded border border-slate-200 bg-white p-3 font-mono text-xs text-slate-800 focus:outline-none"
@@ -3376,6 +3417,7 @@ onUnmounted(() => {
                     <span>{{ item.mod_time }}</span>
                     <button
                       @click="deleteContainerFile(item.path)"
+                      :disabled="!projectFilesWritable"
                       class="text-slate-600 hover:text-red-600 transition-colors"
                       title="Delete file"
                     >

@@ -56,6 +56,11 @@ def api_writes():
     return [item for line in trace.splitlines() if (item := json.loads(line))['method'] != 'GET']
 
 
+def zone_discovery_requests():
+    trace=inner('exec','api-fixture','cat','/certs/requests.jsonl')
+    return [item for line in trace.splitlines() if (item:=json.loads(line))['method']=='GET' and item['path'].split('?',1)[0]=='/client/v4/zones']
+
+
 def failure_diagnostics(names):
     # These are disposable fixtures only. Keep diagnostics bounded and avoid
     # full container inspect output, which would include environment settings.
@@ -71,6 +76,16 @@ def failure_diagnostics(names):
 
 
 public_exposure = {'mode':'public','hostname':'app.example.com','target':'http://fixture-app:8080'}
+tunnel_network = 'tester-tunnel'
+
+
+def saved_exposure(app='fixture-app'):
+    query="import sqlite3,json; c=sqlite3.connect('/data/app.db'); c.row_factory=sqlite3.Row; r=c.execute('SELECT * FROM container_exposures WHERE container_name=?',("+repr(app)+",)).fetchone(); print(json.dumps(dict(r) if r else {}))"
+    return json.loads(inner('run','--rm','-v','data:/data','python:3.13-alpine','python','-c',query))
+
+
+def app_networks(app='fixture-app'):
+    return set(json.loads(inner('inspect',app))[0]['NetworkSettings']['Networks'])
 
 server = r'''
 import http.server,json,ssl,pathlib,urllib.parse
@@ -78,6 +93,8 @@ root=pathlib.Path('/certs')
 configuration={'originRequest':{'connectTimeout':17},'warp-routing':{'enabled':True},'ingress':[
  {'hostname':'other.example.com','service':'http://other:80','originRequest':{'httpHostHeader':'preserve'}},
  {'hostname':'app.example.com','path':'/special','service':'http://special:80'},
+ {'hostname':'remote-only.example.com','service':'http://remote-only-app:8080'},
+ {'hostname':'cold-only.example.com','service':'http://cold-only-app:8080'},
  {'service':'http_status:503'}]}
 records=[]
 next_record_id=0
@@ -152,6 +169,12 @@ class API(http.server.BaseHTTPRequestHandler):
    status=403; result={'success':False,'errors':[{'message':'Insufficient permissions'}]}
   elif dns_only and '/cfd_tunnel/' in path:
    status=403; result={'success':False,'errors':[{'message':'Insufficient account tunnel permissions; token only has zone DNS access'}]}
+  elif path.endswith('/configurations') and self.command=='PUT' and (root/'reject-put').exists():
+   status=403; result={'success':False,'errors':[{'message':'Insufficient permissions to edit tunnel configuration'}]}
+  elif '/dns_records' in path and (root/'reject-dns').exists():
+   status=403; result={'success':False,'errors':[{'message':'Insufficient zone DNS record permissions'}]}
+  elif path=='/client/v4/zones' and (root/'reject-zones').exists():
+   status=403; result={'success':False,'errors':[{'code':10000,'message':'Zone discovery is not permitted'}]}
   elif path.endswith('/configurations'):
    if self.command=='PUT': configuration=body['config']
    result={'success':True,'result':{'config':configuration}}
@@ -191,6 +214,9 @@ try:
             result=subprocess.run(['docker','exec','-i',engine,'docker','load'],stdin=stream,capture_output=True,timeout=240)
             assert result.returncode==0,result.stderr[:1000]
     inner('network','create','docktun')
+    inner('network','create',tunnel_network)
+    inner('network','create','cloudflared')
+    inner('network','create','docktun-shadow')
     inner('run','-d','--name','api-fixture','--network','docktun','--network-alias','api.cloudflare.com','-v','certs:/certs','python:3.13-alpine',
         'sh','-c','apk add --no-cache openssl >/dev/null && openssl req -x509 -nodes -newkey rsa:2048 -keyout /certs/key.pem -out /certs/cert.pem -days 1 -subj /CN=api.cloudflare.com -addext subjectAltName=DNS:api.cloudflare.com,DNS:headscale 2>/dev/null && exec python -u -c "$1"','sh',server)
     for _ in range(90):
@@ -198,7 +224,7 @@ try:
             inner('exec','api-fixture','test','-s','/certs/cert.pem'); break
         except RuntimeError: time.sleep(1)
     else: raise AssertionError('TLS fixture did not start')
-    inner('run','-d','--name','docktun-cloudflared','--network','docktun','alpine:3.23','sleep','3600')
+    inner('run','-d','--name','docktun-cloudflared','--network',tunnel_network,'alpine:3.23','sleep','3600')
     headscale_config = {
         'server_url':'https://headscale:443', 'listen_addr':'0.0.0.0:443',
         'tls_cert_path':'/etc/headscale/cert.pem','tls_key_path':'/etc/headscale/key.pem',
@@ -226,8 +252,11 @@ try:
     else:raise AssertionError('legacy Tailscale daemon did not join the disposable tailnet')
     inner('network','create','origin-only')
     inner('run','-d','--name','fixture-app','--network','origin-only','python:3.13-alpine','python','-u','-c',"from http.server import BaseHTTPRequestHandler,HTTPServer\nclass Handler(BaseHTTPRequestHandler):\n def do_GET(self): self.send_response(200);self.end_headers();self.wfile.write(b'selected-origin-ok')\nHTTPServer(('0.0.0.0',8080),Handler).serve_forever()")
+    inner('network','connect','docktun-shadow','fixture-app')
+    inner('run','-d','--name','remote-only-app','--network',tunnel_network,'python:3.13-alpine','sleep','3600')
+    inner('run','-d','--name','cold-only-app','--network',tunnel_network,'python:3.13-alpine','sleep','3600')
     inner('run','-d','--name','docktun','--network','docktun','-p','3001:3001','-v','data:/app/data','-v','cloudflare:/etc/cloudflared','-v','certs:/test-certs:ro',
-        '-v','/var/run/docker.sock:/var/run/docker.sock','-e','DOCKTUN_PREPARE_PROVIDERS=false','-e','DOCKER_NETWORK=docktun',
+        '-v','/var/run/docker.sock:/var/run/docker.sock','-e','DOCKTUN_PREPARE_PROVIDERS=false','-e','DOCKER_NETWORK='+tunnel_network,
         '-e','SSL_CERT_FILE=/test-certs/cert.pem','-e','NO_PROXY=api.cloudflare.com','-e','HTTPS_PROXY=','-e','HTTP_PROXY=',image)
     base='http://'+docker('port',engine,'3001/tcp')
     for _ in range(90):
@@ -236,7 +265,7 @@ try:
     secret=inner('exec','docktun','cat','/app/data/setup.token')
     token=request('/api/setup/complete',{'setup_token':secret,'admin_username':'owner','admin_password':'fixture-password-123'})['access_token']
     print('Ready: app, TLS Cloudflare fixture, origin, and disposable Tailscale control plane',flush=True)
-    local='tunnel: stale-local-id\ningress:\n  - service: http_status:404\n'
+    local='tunnel: stale-local-id\ningress:\n  - hostname: stale.example.com\n    service: http://fixture-app:9090\n  - service: http_status:404\n'
     inner('exec','-i','docktun','sh','-c','cat > /etc/cloudflared/config.yml',input=local)
     connector=base64.b64encode(json.dumps({'a':'account123','t':'fixture-token-tunnel','s':'fixture-connector-secret'}).encode()).decode()
     identity=request('/api/provider/cloudflare/credentials',{'token':connector},method='PUT')
@@ -247,19 +276,43 @@ try:
     # A running connector does not grant management API permissions. Neither a
     # missing API token nor a DNS-only zone token can publish a remote route.
     writes_before=api_writes()
+    networks_before=app_networks()
     failure=request('/api/docker/containers/fixture-app/exposure',public_exposure,expected=500)
     assert 'API token' in failure['error'],failure
     assert api_writes()==writes_before, 'missing API token changed Cloudflare configuration'
+    assert app_networks()==networks_before, 'missing API token changed app networks'
     request('/api/cloudflare/settings',{'api_token':'fixture-dns-only-token','account_id':'account123','zone_id':'zone123'})
     failure=request('/api/docker/containers/fixture-app/exposure',public_exposure,expected=500)
     assert 'Tunnel' in failure['error'] and 'Edit' in failure['error'],failure
     assert api_writes()==writes_before, 'DNS-only API token changed Cloudflare configuration'
+    assert app_networks()==networks_before, 'DNS-only API token changed app networks'
     assert request('/api/docker/containers/fixture-app/exposure')['mode']!='public'
     print('PASS: missing and DNS-only API tokens report errors without route or DNS writes',flush=True)
     # Save the API token through the same endpoint used by the visible settings form.
+    inner('exec','api-fixture','touch','/certs/reject-zones')
+    discoveries_before=zone_discovery_requests()
     request('/api/cloudflare/settings',{'api_token':'fixture-user-api-token','account_id':'account123','zone_id':'zone123'})
     assert request('/api/cloudflare/tunnel')['status']=='healthy'
-    assert len(request('/api/cloudflare/configuration')['config']['ingress'])==3
+    assert len(request('/api/cloudflare/configuration')['config']['ingress'])==5
+    # Configured routes discovered from Cloudflare are registered even without
+    # an exposure row, while inactive local YAML never masks the active source.
+    assert request('/api/docker/containers/remote-only-app/exposure')['hostname']=='remote-only.example.com'
+    assert saved_exposure('remote-only-app')=={}
+    assert request('/api/docker/containers/fixture-app/exposure')['mode']=='internal'
+    unpublished=next(c for c in request('/api/docker/containers') if c['name']=='fixture-app')
+    assert not unpublished['connected_to_cloudflared'],unpublished
+    # Reject only the configuration write so this exercises endpoint rollback
+    # after preflight succeeds, preserving both original and user-added links.
+    inner('exec','api-fixture','touch','/certs/reject-put')
+    failure=request('/api/docker/containers/fixture-app/exposure',public_exposure,expected=500)
+    assert 'permissions' in failure['error'] and app_networks()==networks_before,failure
+    inner('network','connect',tunnel_network,'fixture-app')
+    user_networks=app_networks()
+    failure=request('/api/docker/containers/fixture-app/exposure',public_exposure,expected=500)
+    assert 'permissions' in failure['error'] and app_networks()==user_networks,failure
+    inner('exec','api-fixture','rm','/certs/reject-put')
+    inner('network','disconnect',tunnel_network,'fixture-app')
+    print('PASS: remote-only routes are registered; stale YAML and substring network names ignored; failed-save endpoint rollback preserves user networks',flush=True)
     # Seed the old exposure entry that triggers the tester's missing Serve-rule error.
     seed_tailscale_exposure()
     for _ in range(30):
@@ -273,6 +326,11 @@ try:
     else: raise AssertionError('the fixture did not reproduce the tester error')
     request('/api/docker/containers/fixture-app/exposure',public_exposure)
     assert request('/api/docker/containers/fixture-app/exposure')['mode']=='public'
+    assert app_networks()==networks_before|{tunnel_network},app_networks()
+    assert 'cloudflared' not in app_networks(), 'publishing joined an unused legacy network'
+    listed=next(c for c in request('/api/docker/containers') if c['name']=='fixture-app')
+    inspected=request('/api/docker/containers/fixture-app')
+    assert listed['connected_to_cloudflared'] and inspected['connected_to_cloudflared'],(listed,inspected)
     assert inner('exec','docktun-cloudflared','wget','-qO-','http://fixture-app:8080')=='selected-origin-ok'
     config=json.loads(inner('exec','api-fixture','cat','/certs/cloudflare-config.json'))
     assert config['ingress'][0]['originRequest']['httpHostHeader']=='preserve'
@@ -285,6 +343,7 @@ try:
     trace=inner('exec','api-fixture','cat','/certs/requests.jsonl')
     assert 'fixture-token-tunnel.cfargotunnel.com' in trace
     assert 'stale-local-id' not in trace
+    assert zone_discovery_requests()==discoveries_before, 'saved Zone ID still attempted Zone Read discovery'
     print('PASS: corrected API token publishes route/DNS, origin is reachable, unrelated settings preserved',flush=True)
     # Regression: the old implementation tries docker exec on a stopped shared
     # daemon, so a Cloudflare save fails with "container ... is not running".
@@ -354,7 +413,9 @@ try:
     assert node in json.loads(inner('inspect','fixture-app'))[0]['NetworkSettings']['Networks']
     active_rules=json.loads(inner('exec',node,'tailscale','serve','status','--json'))['TCP']
     assert active_rules['80']['TCPForward']=='fixture-app:8080',active_rules
-    assert request('/api/docker/containers/fixture-app/exposure')['mode']=='private'
+    assert saved_exposure()['mode']=='private'
+    projected=request('/api/docker/containers/fixture-app/exposure')
+    assert projected['mode']=='public' and projected['private_type']=='tailscale',projected
     inner('exec','api-fixture','rm','/certs/reject')
     print('PASS: rejected Cloudflare save restores running helper and its actual Serve route',flush=True)
     inner('stop',node)
@@ -367,7 +428,7 @@ try:
     assert inner('inspect','--format','{{.State.Status}}',node)=='exited'
     assert node in json.loads(inner('inspect','fixture-app'))[0]['NetworkSettings']['Networks']
     previous=request('/api/docker/containers/fixture-app/exposure')
-    assert previous['mode']=='private' and previous['tailscale_node']==node,previous
+    assert saved_exposure()['mode']=='private' and previous['mode']=='public' and previous['tailscale_node']==node,previous
     print('PASS: rejected Cloudflare save retains stopped helper, private bridge, and previous exposure',flush=True)
     inner('exec','api-fixture','rm','/certs/reject')
     request('/api/docker/containers/fixture-app/exposure',public_exposure)
@@ -377,6 +438,19 @@ try:
     print('PASS: successful publish detaches dormant app bridge and keeps its Tailscale helper stopped',flush=True)
     # Cleanup is durable, rather than an in-memory task lost on a core update.
     inner('restart','docktun')
+    for _ in range(60):
+        try:
+            request('/healthz');break
+        except OSError:time.sleep(1)
+    else:raise AssertionError('DockTun did not restart')
+    # Disable a remote-only app before warming the new process's inventory
+    # snapshot. Mutation lookup must be authoritative even with a cold cache.
+    assert saved_exposure('cold-only-app')=={}
+    request('/api/docker/containers/cold-only-app/exposure',{'mode':'internal'})
+    cold_routes=request('/api/cloudflare/configuration')['config']['ingress']
+    assert not any(rule.get('hostname')=='cold-only.example.com' for rule in cold_routes),cold_routes
+    assert saved_exposure('cold-only-app')['mode']=='internal'
+    print('PASS: cold-cache disable removes a remote-only route before recording internal access',flush=True)
     for _ in range(60):
         try:
             assert request('/api/docker/containers/fixture-app/exposure')['mode']=='public';break
@@ -401,6 +475,49 @@ try:
     assert 'permissions' in failure['error'],failure
     assert request('/api/docker/containers/fixture-app/exposure')['hostname']=='app.example.com'
     inner('exec','api-fixture','rm','/certs/reject')
+    # A route accepted by Cloudflare remains visible if the separate zone DNS
+    # permission fails. The API must identify this partial result explicitly.
+    inner('network','disconnect',tunnel_network,'fixture-app')
+    partial_networks_before=app_networks()
+    inner('exec','api-fixture','touch','/certs/reject-dns')
+    failure=request('/api/docker/containers/fixture-app/exposure',{'mode':'public','hostname':'partial.example.com','target':'http://fixture-app:8080'},expected=500)
+    assert 'hostname route saved' in failure['error'] and 'Zone DNS' in failure['error'],failure
+    assert 'Insufficient zone DNS record permissions' in failure['error'] and 'HTTP 403' in failure['error'],failure
+    assert 'Account DNS Settings Write does not grant DNS record access' in failure['error'] and 'Zone:Zone:Read' in failure['error'],failure
+    assert app_networks()==partial_networks_before|{tunnel_network}, 'accepted route lost its newly needed connector endpoint after DNS failure'
+    assert 'cloudflared' not in app_networks(), 'partial DNS failure joined unused legacy network'
+    assert saved_exposure()['hostname']=='app.example.com'
+    projected=request('/api/docker/containers/fixture-app/exposure')
+    assert projected['mode']=='public' and projected['hostname']=='partial.example.com',projected
+    listed=next(c for c in request('/api/docker/containers') if c['name']=='fixture-app')
+    inspected=request('/api/docker/containers/fixture-app')
+    assert listed['hostname']=='partial.example.com' and inspected['hostname']=='partial.example.com',(listed,inspected)
+    inner('exec','api-fixture','rm','/certs/reject-dns')
+    request('/api/docker/containers/fixture-app/exposure',public_exposure)
+    assert zone_discovery_requests()==discoveries_before, 'explicit-zone publication required Zone Read'
+    # Without a Zone ID, discovery denial prioritizes entering that ID; no
+    # additional Zone Read permission is required when it is supplied.
+    # Model an installation with no saved Zone ID. The settings endpoint keeps
+    # existing credential fields when a caller omits/empties them.
+    clear_zone="import sqlite3; c=sqlite3.connect('/data/app.db'); c.execute(\"UPDATE system_settings SET value='' WHERE key='cf_zone_id'\"); c.commit()"
+    inner('run','--rm','-v','data:/data','python:3.13-alpine','python','-c',clear_zone)
+    failure=request('/api/docker/containers/fixture-app/exposure',{'mode':'public','hostname':'needs-zone.example.com','target':'http://fixture-app:8080'},expected=500)
+    assert "enter the domain's Zone ID in API credentials, or optionally grant Zone Read" in failure['error'],failure
+    assert 'Zone discovery is not permitted' in failure['error'] and 'HTTP 403' in failure['error'] and 'Cloudflare code 10000' in failure['error'],failure
+    assert saved_exposure()['hostname']=='app.example.com'
+    assert request('/api/docker/containers/fixture-app/exposure')['hostname']=='needs-zone.example.com'
+    request('/api/cloudflare/settings',{'api_token':'fixture-user-api-token','account_id':'account123','zone_id':'zone123'})
+    discoveries_after_denial=zone_discovery_requests()
+    request('/api/docker/containers/fixture-app/exposure',public_exposure)
+    assert zone_discovery_requests()==discoveries_after_denial, 'entering Zone ID did not stop discovery requests'
+    # Disabling a discovered remote-only app removes its selected actual route
+    # even though it had never been saved in DockTun's exposure table.
+    request('/api/docker/containers/remote-only-app/exposure',{'mode':'internal'})
+    remote_config=request('/api/cloudflare/configuration')['config']['ingress']
+    assert not any(rule.get('hostname')=='remote-only.example.com' for rule in remote_config),remote_config
+    assert request('/api/docker/containers/remote-only-app/exposure')['mode']=='internal'
+    assert tunnel_network in app_networks('remote-only-app'), 'disabling a route removed an existing user network'
+    print('PASS: accepted route remains visible after DNS permission failure; disabling discovered route updates Cloudflare without deleting user networks',flush=True)
     # Switching to local credentials retains the working YAML editor path.
     request('/api/provider/cloudflare/credentials',{'token':''},method='PUT')
     request('/api/control/stop',{})

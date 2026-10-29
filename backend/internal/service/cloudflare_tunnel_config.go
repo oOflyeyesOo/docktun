@@ -23,6 +23,14 @@ type TunnelIdentity struct {
 	Remote    bool   `json:"remote_managed"`
 }
 
+type cloudflareDNSPartialError struct{ cause error }
+
+func (e *cloudflareDNSPartialError) Error() string {
+	return fmt.Sprintf("hostname route saved in Cloudflare, but DNS setup failed: %v; the API token needs Zone DNS Edit/Write for this hostname's zone (Account DNS Settings permission does not grant DNS record access)", e.cause)
+}
+
+func (e *cloudflareDNSPartialError) Unwrap() error { return e.cause }
+
 // A connector token identifies a remotely managed tunnel. Never fall back to a
 // stale local config when that token is present, and never return its secret.
 func (m *ConfigManager) TunnelIdentity() (TunnelIdentity, error) {
@@ -126,6 +134,7 @@ func (s *CloudflareAPI) TunnelStatus(identity TunnelIdentity) (map[string]any, e
 }
 
 func (s *CloudflareAPI) TunnelConfiguration(identity TunnelIdentity) (map[string]any, error) {
+	version := s.tunnelMutation(identity)
 	raw, err := s.tunnelRequest(identity, http.MethodGet, "/configurations", nil)
 	if err != nil {
 		return nil, err
@@ -139,6 +148,7 @@ func (s *CloudflareAPI) TunnelConfiguration(identity TunnelIdentity) (map[string
 	if result.Config == nil {
 		return nil, fmt.Errorf("Cloudflare returned no tunnel configuration; existing routes were left unchanged")
 	}
+	s.rememberTunnelIngress(identity, result.Config, &version)
 	return result.Config, nil
 }
 
@@ -169,6 +179,9 @@ func (s *DockerContainers) syncRemoteCloudflareIngress(app string, next Exposure
 	if previous.Mode == "public" {
 		oldHost = cleanHostname(previous.Hostname)
 	}
+	// A discovered remote route may have no SQLite row. Capture its actual
+	// hostname/target from inventory, then verify it against this fresh response.
+	actualHost, actualTarget := next.previousCloudflareHost, next.previousCloudflareTarget
 	rules := make([]any, 0, len(ingress)+1)
 	var selected map[string]any
 	for _, item := range ingress[:len(ingress)-1] {
@@ -178,7 +191,10 @@ func (s *DockerContainers) syncRemoteCloudflareIngress(app string, next Exposure
 		}
 		ruleHost, _ := rule["hostname"].(string)
 		path, _ := rule["path"].(string)
-		if path == "" && (oldHost != "" && cleanHostname(ruleHost) == oldHost || next.Mode == "public" && cleanHostname(ruleHost) == host) {
+		service, _ := rule["service"].(string)
+		storedMatch := oldHost != "" && cleanHostname(ruleHost) == oldHost && (service == previous.Target || previous.Target == "" && ingressContainer(service) == app)
+		actualMatch := actualHost != "" && cleanHostname(ruleHost) == cleanHostname(actualHost) && service == actualTarget
+		if path == "" && (storedMatch || actualMatch || next.Mode == "public" && cleanHostname(ruleHost) == host) {
 			selected = rule
 			continue
 		}
@@ -196,9 +212,12 @@ func (s *DockerContainers) syncRemoteCloudflareIngress(app string, next Exposure
 	if _, err := s.cfAPI.tunnelRequest(identity, http.MethodPut, "/configurations", map[string]any{"config": config}); err != nil {
 		return err
 	}
+	// Even a later DNS failure must not hide a route already accepted by the
+	// tunnel API. Keep the partial failure explicit while inventory stays true.
+	s.cfAPI.rememberTunnelIngress(identity, config, nil)
 	if next.Mode == "public" {
 		if err := s.cfAPI.SyncDNSRecord(host, identity.ID); err != nil {
-			return fmt.Errorf("hostname route saved in Cloudflare, but DNS setup failed: %w", err)
+			return &cloudflareDNSPartialError{cause: err}
 		}
 	}
 	return nil

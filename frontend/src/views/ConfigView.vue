@@ -777,7 +777,8 @@ onUnmounted(() => {
     </section>
     <section class="cyber-card p-5 space-y-4" aria-label="Cloudflare API credentials">
       <h2 class="font-semibold">API credentials</h2>
-      <p class="text-sm text-slate-600">The connector token runs the tunnel. Publishing Cloudflare-managed routes from DockTun requires a separate API token with account Cloudflare Tunnel Edit/Write and zone DNS Edit permissions; a DNS-only zone token cannot publish routes. Tunnel Read allows status and route queries. Account ID is detected from a connector token when available. See the setup guide below for token creation and permission names.</p>
+      <p class="text-sm text-slate-600">The connector token runs the tunnel. Publishing Cloudflare-managed routes from DockTun requires a separate user or account API token with account Cloudflare Tunnel Edit/Write and zone DNS Edit/Write permissions. Enter the domain’s Zone ID below to avoid adding Zone Read. Account ID is detected from the connector token when available. The setup guide below covers both token types and resource scopes.</p>
+      <p class="rounded-lg bg-amber-50 p-3 text-xs text-amber-900"><strong>Write means Edit</strong> in Cloudflare’s token summary. Cloudflare Tunnel Write is correct for tunnel changes. <strong>Account DNS Settings Write is separate from Zone DNS record editing</strong>; publishing DNS needs <strong>Zone → DNS → Edit (DNS Write)</strong> for the hostname’s zone.</p>
         <div class="grid gap-4 md:grid-cols-2">
           <div class="col-span-full">
             <div class="flex items-center justify-between mb-1">
@@ -813,15 +814,17 @@ onUnmounted(() => {
 
           <div>
             <label for="cloudflare-zone-id" class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-              Cloudflare Zone ID (Optional)
+              Cloudflare Zone ID (avoids Zone Read)
             </label>
             <input
               id="cloudflare-zone-id"
               v-model="cfZoneId"
               type="text"
-              placeholder="For DNS CNAME verification"
+              placeholder="Paste the domain’s Zone ID"
               class="cyber-input text-xs font-mono"
+              aria-describedby="cloudflare-zone-id-help"
             />
+            <p id="cloudflare-zone-id-help" class="mt-1 text-xs text-slate-600"><strong>Recommended:</strong> copy <strong>Domain → Overview → API → Zone ID</strong> from Cloudflare. This is different from Account ID. A saved Zone ID avoids Zone Read for both user and account API tokens; DNS Edit/Write is still required. Only leave this blank if your token has Zone Read for automatic lookup.</p>
           </div>
         </div>
 

@@ -443,11 +443,30 @@ func (s *Projects) DeployStream(id int, p Project, ref string, onDone func(strin
 			}
 			return
 		}
+		directory, err := s.resolveProjectDirectory(p.Path, false)
+		if err != nil {
+			s.appendOutput(id, "[ERROR] "+err.Error())
+			s.markDone(id)
+			if onDone != nil {
+				lines, _ := s.GetOutput(id)
+				onDone(strings.Join(lines, "\n"))
+			}
+			return
+		}
+		if directory.ReadOnly {
+			s.appendOutput(id, "[ERROR] stack folder is mounted read-only in DockTun; Git deployment requires a writable mount")
+			s.markDone(id)
+			if onDone != nil {
+				lines, _ := s.GetOutput(id)
+				onDone(strings.Join(lines, "\n"))
+			}
+			return
+		}
 
 		remoteURL := s.buildAuthURL(p)
 		if remoteURL != "" {
 			cmd := exec.Command("git", "remote", "set-url", "origin", remoteURL)
-			cmd.Dir = p.Path
+			cmd.Dir = directory.Path
 			cmd.CombinedOutput()
 		}
 
@@ -495,20 +514,28 @@ func (s *Projects) DeployStream(id int, p Project, ref string, onDone func(strin
 }
 
 func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
-	if strings.TrimSpace(path) == "" {
-		s.appendOutput(id, "[ERROR] project directory is missing")
-		return
-	}
-	absolute, err := filepath.Abs(path)
+	directory, err := s.resolveProjectDirectory(path, false)
 	if err != nil {
-		s.appendOutput(id, "[ERROR] resolve project directory: "+err.Error())
+		s.appendOutput(id, "[ERROR] "+err.Error())
 		return
 	}
-	path = absolute
+	path = directory.Path
+	root, err := directory.open(false)
+	if err != nil {
+		s.appendOutput(id, "[ERROR] "+err.Error())
+		return
+	}
+	defer root.Close()
 	for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
 		f := filepath.Join(path, name)
 		if fileExists(f) {
-			SanitizeComposeFile(f)
+			if _, err := readProjectFile(root, name); err != nil {
+				s.appendOutput(id, "[ERROR] cannot read Compose file: "+err.Error())
+				return
+			}
+			if !directory.ReadOnly {
+				SanitizeComposeFile(f)
+			}
 			break
 		}
 	}
@@ -547,8 +574,15 @@ func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
 }
 
 func (s *Projects) runGit(path string, args ...string) (string, error) {
+	directory, err := s.resolveProjectDirectory(path, false)
+	if err != nil {
+		return err.Error(), err
+	}
+	if directory.ReadOnly {
+		return "stack folder is mounted read-only in DockTun", fmt.Errorf("Git deployment requires a writable stack folder")
+	}
 	cmd := exec.Command("git", args...)
-	cmd.Dir = path
+	cmd.Dir = directory.Path
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
@@ -583,16 +617,11 @@ func (s *Projects) projectRoot(id int, create bool) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	if create {
-		if err := os.MkdirAll(p.Path, 0755); err != nil {
-			return nil, err
-		}
-	}
-	root, err := os.OpenRoot(p.Path)
+	directory, err := s.resolveProjectDirectory(p.Path, create)
 	if err != nil {
-		return nil, fmt.Errorf("project folder is unavailable inside DockTun; mount the stack folder before accessing files: %w", err)
+		return nil, err
 	}
-	return root, nil
+	return directory.open(create)
 }
 
 func (s *Projects) ListFiles(id int, relPath string) ([]FileInfo, error) {
@@ -644,6 +673,10 @@ func (s *Projects) GetFile(id int, relPath string) (string, error) {
 		return "", err
 	}
 	defer root.Close()
+	return readProjectFile(root, rel)
+}
+
+func readProjectFile(root *os.Root, rel string) (string, error) {
 	info, err := root.Stat(rel)
 	if err != nil {
 		return "", err
@@ -700,7 +733,18 @@ func (s *Projects) DeleteFile(id int, relPath string) error {
 	if rel == "." {
 		return fmt.Errorf("cannot delete project root directory")
 	}
-	root, err := s.projectRoot(id, false)
+	project, err := s.GetByID(id)
+	if err != nil {
+		return err
+	}
+	directory, err := s.resolveProjectDirectory(project.Path, false)
+	if err != nil {
+		return err
+	}
+	if directory.ReadOnly {
+		return fmt.Errorf("stack folder is mounted read-only in DockTun")
+	}
+	root, err := directory.open(false)
 	if err != nil {
 		return err
 	}
@@ -729,10 +773,15 @@ func (s *Projects) GetComposeFile(id int) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
+	root, err := s.projectRoot(id, false)
+	if err != nil {
+		return "", "", err
+	}
+	defer root.Close()
 	candidates := []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
 	for _, candidate := range candidates {
 		fullPath := filepath.Join(p.Path, candidate)
-		content, err := s.GetFile(id, candidate)
+		content, err := readProjectFile(root, candidate)
 		if err == nil {
 			return candidate, content, nil
 		}
@@ -740,11 +789,6 @@ func (s *Projects) GetComposeFile(id int) (string, string, error) {
 			return "", "", fmt.Errorf("cannot read Compose file %s: %w", fullPath, err)
 		}
 	}
-	info, err := os.Stat(p.Path)
-	if err != nil || !info.IsDir() {
-		return "", "", fmt.Errorf("stack folder %s is not available inside DockTun; mount the host's project folder before editing its Compose file", p.Path)
-	}
-
 	defaultTmpl := fmt.Sprintf(`services:
   %s:
     image: nginx:alpine
@@ -769,18 +813,17 @@ func (s *Projects) SaveComposeFile(id int, filename string, content string) erro
 }
 
 func (s *Projects) GetEnvFile(id int) (string, error) {
-	content, err := s.GetFile(id, ".env")
+	root, err := s.projectRoot(id, false)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	content, err := readProjectFile(root, ".env")
 	if err == nil {
 		return content, nil
 	}
 	if os.IsNotExist(err) {
-		project, projectErr := s.GetByID(id)
-		if projectErr != nil {
-			return "", projectErr
-		}
-		if info, statErr := os.Stat(project.Path); statErr == nil && info.IsDir() {
-			return "", nil // An optional .env may be absent in an accessible stack.
-		}
+		return "", nil // An optional .env may be absent in an accessible stack.
 	}
 	return "", fmt.Errorf("cannot read stack .env; ensure the project folder is mounted inside DockTun: %w", err)
 }

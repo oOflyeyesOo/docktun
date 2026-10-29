@@ -18,6 +18,7 @@ func NewSelfUpdate(svc *service.SelfUpdater, audit *service.AuditLogger) *SelfUp
 }
 func (h *SelfUpdate) Status(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(h.svc.Status())
 }
 func (h *SelfUpdate) Check(w http.ResponseWriter, r *http.Request) {

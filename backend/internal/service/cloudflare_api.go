@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"docktun/internal/db"
@@ -18,8 +19,10 @@ import (
 )
 
 type CloudflareAPI struct {
-	db     *db.DB
-	client *http.Client
+	db            *db.DB
+	client        *http.Client
+	tunnelCacheMu sync.Mutex
+	tunnelCache   map[string]*tunnelIngressSnapshot
 }
 
 type CloudflareCredentials struct {
@@ -342,7 +345,7 @@ func (s *CloudflareAPI) FindZoneID(token, hostname string) (string, error) {
 			return zones[0].ID, nil
 		}
 	}
-	return "", fmt.Errorf("could not find active Cloudflare zone for %s; enable Zone:Zone:Read or supply the Zone ID", hostname)
+	return "", fmt.Errorf("could not find active Cloudflare zone for %s; enter the domain's Zone ID in API credentials, or optionally grant Zone Read (Zone:Zone:Read) for discovery", hostname)
 }
 
 type DNSCheckResult struct {
@@ -379,12 +382,9 @@ func (s *CloudflareAPI) CheckDNSRecord(hostname, tunnelID string) (*DNSCheckResu
 		return nil, fmt.Errorf("Cloudflare API Token required to inspect DNS records")
 	}
 
-	zoneID, err := s.FindZoneID(creds.APIToken, cleanHost)
-	if err != nil || zoneID == "" {
-		zoneID = creds.ZoneID
-	}
-	if zoneID == "" {
-		return nil, fmt.Errorf("could not resolve Cloudflare Zone for %s", cleanHost)
+	zoneID, err := s.resolveDNSZone(creds, cleanHost)
+	if err != nil {
+		return nil, err
 	}
 
 	expectedTarget := fmt.Sprintf("%s.cfargotunnel.com", tunnelID)
@@ -506,13 +506,9 @@ func (s *CloudflareAPI) CreateWildcardRoute(domain, tunnelID string) error {
 	clean = strings.TrimPrefix(clean, "*.")
 	target := fmt.Sprintf("%s.cfargotunnel.com", tunnelID)
 
-	zoneID := creds.ZoneID
-	var err error
-	if zoneID == "" {
-		zoneID, err = s.FindZoneID(creds.APIToken, clean)
-		if err != nil {
-			return fmt.Errorf("resolve zone ID: %w", err)
-		}
+	zoneID, err := s.resolveDNSZone(creds, clean)
+	if err != nil {
+		return err
 	}
 
 	wildcardName := "*." + clean

@@ -157,6 +157,22 @@ func (h *Projects) DeleteOptions(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(options)
 }
 
+func (h *Projects) FileAccess(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil || id < 1 {
+		jsonError(w, "invalid project ID", http.StatusBadRequest)
+		return
+	}
+	access, err := h.svc.FileAccess(id)
+	if err != nil {
+		jsonError(w, "project not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(access)
+}
+
 func (h *Projects) Delete(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
 	p, err := h.svc.GetByID(id)

@@ -61,16 +61,36 @@ func (s *DockerContainers) tailscaleNodeState(app, node string) (exists, running
 		return false, false, err
 	}
 	var nodes []struct {
-		State  struct{ Running bool }
+		State  *struct{ Running *bool }
 		Config struct{ Labels map[string]string }
 	}
-	if json.Unmarshal(out, &nodes) != nil || len(nodes) != 1 {
+	if json.Unmarshal(out, &nodes) != nil || len(nodes) != 1 || nodes[0].State == nil || nodes[0].State.Running == nil {
 		return false, false, fmt.Errorf("cannot inspect Tailscale container %s", node)
 	}
 	if node != "docktun-tailscale" && nodes[0].Config.Labels[tailscaleOwnerLabel] != app {
 		return false, false, fmt.Errorf("refusing to modify a Tailscale container not owned by this app")
 	}
-	return true, nodes[0].State.Running, nil
+	return true, *nodes[0].State.Running, nil
+}
+
+// Docker inspection and exec are separate operations. Confirm that a failed
+// operation raced with stopping/removing this exact device before deferring its
+// cleanup. Ownership, inspection and permission errors must remain visible.
+func (s *DockerContainers) confirmTailscaleInactive(app, node string, operationErr error) error {
+	_, running, err := s.tailscaleNodeState(app, node)
+	if err != nil {
+		return fmt.Errorf("%w; cannot confirm Tailscale container state: %v", operationErr, err)
+	}
+	message := strings.ToLower(operationErr.Error())
+	for _, denied := range []string{"permission denied", "access denied", "operation not permitted", "unauthorized", "forbidden"} {
+		if strings.Contains(message, denied) {
+			return operationErr
+		}
+	}
+	if running {
+		return operationErr
+	}
+	return nil
 }
 
 func (s *DockerContainers) pendingTailscaleRules(node string) ([]tailscaleRuleCleanup, error) {

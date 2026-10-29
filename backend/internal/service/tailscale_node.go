@@ -214,12 +214,19 @@ func (s *DockerContainers) setTailscaleRule(node string, port int, target string
 	return err
 }
 
+// Keep failed Docker reads distinct from validation of a successfully read
+// configuration. A malformed response or unrelated rule must never be deferred.
+type tailscaleServeReadError struct{ cause error }
+
+func (e *tailscaleServeReadError) Error() string { return e.cause.Error() }
+func (e *tailscaleServeReadError) Unwrap() error { return e.cause }
+
 // Existing shared-device rules are migrated only when the user explicitly saves
 // that app. Never reset the shared daemon or touch another app's Serve rule.
 func (s *DockerContainers) verifyTailscaleRule(node string, port int, target string, expected bool) (bool, error) {
 	out, err := s.runExposure("exec", node, "tailscale", "serve", "status", "--json")
 	if err != nil {
-		return false, err
+		return false, &tailscaleServeReadError{cause: err}
 	}
 	var config struct {
 		TCP map[string]struct{ TCPForward string }
@@ -280,6 +287,20 @@ func (s *DockerContainers) syncTailscaleExposure(app string, previous ExposureSe
 	}
 	oldRulePresent := false
 	oldRunning := false
+	deferOldCleanup := func() {
+		// A device stopped outside this request must stay stopped on rollback.
+		oldRunning, oldRulePresent = false, false
+		next.cleanup = &tailscaleRuleCleanup{App: app, Node: oldNode, Port: previous.PrivatePort, Target: oldTarget}
+	}
+	restoreOldRule := func() {
+		if oldRulePresent {
+			// A failed stop can also mean the helper was removed or replaced.
+			// Restore only while its ownership and running state still match.
+			if _, running, err := s.tailscaleNodeState(app, oldNode); err == nil && running {
+				_ = s.setTailscaleRule(oldNode, previous.PrivatePort, oldTarget)
+			}
+		}
+	}
 	if was {
 		var err error
 		_, oldRunning, err = s.tailscaleNodeState(app, oldNode)
@@ -289,12 +310,19 @@ func (s *DockerContainers) syncTailscaleExposure(app string, previous ExposureSe
 		if oldRunning {
 			oldRulePresent, err = s.verifyTailscaleRule(oldNode, previous.PrivatePort, oldTarget, true)
 			if err != nil {
-				return noop, err
+				var readErr *tailscaleServeReadError
+				if is || !errors.As(err, &readErr) {
+					return noop, err
+				}
+				if err = s.confirmTailscaleInactive(app, oldNode, err); err != nil {
+					return noop, err
+				}
+				deferOldCleanup()
 			}
 		} else {
 			// Publish to another provider without starting or exec-ing a dormant
 			// Tailscale container. Its exact old rule is cleaned on re-enable.
-			next.cleanup = &tailscaleRuleCleanup{App: app, Node: oldNode, Port: previous.PrivatePort, Target: oldTarget}
+			deferOldCleanup()
 		}
 	}
 	if is {
@@ -306,8 +334,12 @@ func (s *DockerContainers) syncTailscaleExposure(app string, previous ExposureSe
 		if err := s.setTailscaleRule(oldNode, previous.PrivatePort, ""); err != nil {
 			if is {
 				_ = s.setTailscaleRule(node, next.PrivatePort, "")
+				return noop, err
 			}
-			return noop, err
+			if err = s.confirmTailscaleInactive(app, oldNode, err); err != nil {
+				return noop, err
+			}
+			deferOldCleanup()
 		}
 	}
 	// A disconnected device retains its named state volume, preserving identity on re-enable.
@@ -316,21 +348,32 @@ func (s *DockerContainers) syncTailscaleExposure(app string, previous ExposureSe
 		var err error
 		detached, err = s.detachTailscaleApp(app)
 		if err != nil {
-			if oldRulePresent {
-				_ = s.setTailscaleRule(oldNode, previous.PrivatePort, oldTarget)
-			}
+			restoreOldRule()
 			return noop, err
 		}
 		if oldRunning {
-			_, err = s.runExposure("stop", node)
+			// Network changes take time. Recheck immediately before stopping so
+			// rollback does not restart a device stopped outside this request.
+			var running bool
+			_, running, err = s.tailscaleNodeState(app, oldNode)
+			if err == nil {
+				if !running {
+					deferOldCleanup()
+				} else {
+					_, err = s.runExposure("stop", node)
+					if err != nil {
+						if err = s.confirmTailscaleInactive(app, oldNode, err); err == nil {
+							deferOldCleanup()
+						}
+					}
+				}
+			}
 		}
 		if err != nil {
 			if detached {
 				_, _ = s.runExposure("network", "connect", node, app)
 			}
-			if oldRulePresent {
-				_ = s.setTailscaleRule(oldNode, previous.PrivatePort, oldTarget)
-			}
+			restoreOldRule()
 			return noop, err
 		}
 	}

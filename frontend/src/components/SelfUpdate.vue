@@ -6,10 +6,11 @@ const state = ref<any>({ phase: 'idle' })
 const working = ref(false)
 const error = ref('')
 const reconnecting = ref(false)
+const runningBuild = ref<any>(null)
 const busy = computed(() => working.value || ['checking', 'pulling', 'restarting'].includes(state.value.phase))
 let timer: ReturnType<typeof setInterval> | undefined
 async function refresh() {
-  try { state.value = await apiFetch('/api/self-update'); reconnecting.value = false }
+  try { state.value = await apiFetch('/api/self-update'); runningBuild.value = state.value.running; reconnecting.value = false }
   catch { if (busy.value) reconnecting.value = true }
 }
 async function act(action: string) {
@@ -26,6 +27,13 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 <template>
   <section class="cyber-panel p-5 space-y-3">
     <h2 class="font-semibold text-lg">Update DockTun</h2>
+    <div class="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm space-y-1" aria-label="Running DockTun build">
+      <p>Running revision: <code>{{ runningBuild?.revision ? runningBuild.revision.slice(0, 12) : 'Unknown / local build' }}</code></p>
+      <p v-if="runningBuild?.image" class="break-all text-xs text-slate-600">Image: {{ runningBuild.image }}</p>
+      <p v-if="runningBuild?.image_id" class="break-all text-xs text-slate-600">Installed image ID: {{ runningBuild.image_id }}</p>
+      <p v-if="runningBuild?.error" class="text-xs text-amber-800">{{ runningBuild.error }}</p>
+      <p class="text-xs text-slate-600">This identifies the running container. Pulling or rebuilding an image does not replace it until installation or recreation completes.</p>
+    </div>
     <p class="text-sm text-slate-600">Install the published image here without a Git pull. Your settings, storage mounts, ports and networks are preserved. The dashboard briefly disconnects during installation.</p>
     <p role="status" class="text-sm">{{ reconnecting ? 'DockTun is restarting. Reconnecting…' : state.message || 'Check for a published update.' }}</p>
     <p v-if="error" role="alert" class="text-sm text-red-700">{{ error }}</p>
