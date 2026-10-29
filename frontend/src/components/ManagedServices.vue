@@ -11,7 +11,7 @@ const loadError = ref('')
 const reloadedJob = ref(sessionStorage.getItem('docktun-services-reloaded') || '')
 const error = ref(''), expanded = ref(''), logs = ref(''), logsLoading = ref(false)
 let timer: ReturnType<typeof setInterval> | undefined
-let refreshing = false, initialized = false, lastCheck = ''
+let refreshing = false, initialized = false, lastCheck = '', logsRevision = 0
 const busy = computed(() => submitting.value || ['checking', 'updating'].includes(job.value.phase))
 const chosen = computed(() => services.value.filter(s => selected.value[s.name]))
 const available = computed(() => services.value.filter(s => s.available).length)
@@ -43,12 +43,16 @@ async function act(action: 'check' | 'update', ids?: string[]) {
   finally { submitting.value = false; await refresh() }
 }
 async function showLogs(service: Service) {
-  if (expanded.value === service.name) { expanded.value = ''; return }
+  const revision = ++logsRevision
+  if (expanded.value === service.name) { expanded.value = ''; logsLoading.value = false; return }
   expanded.value = service.name; logs.value = ''; logsLoading.value = true
-  try { logs.value = (await apiFetch<{ logs: string }>(`/api/docker/containers/${service.id}/logs?tail=100`)).logs || 'No log output yet.' }
-  catch (e: any) { logs.value = e.message }
-  finally { logsLoading.value = false }
+  try {
+    const result = await apiFetch<{ logs: string }>(`/api/docker/containers/${service.id}/logs?tail=100`)
+    if (revision === logsRevision) logs.value = result.logs || 'No log output yet.'
+  } catch (e: any) { if (revision === logsRevision) logs.value = e.message }
+  finally { if (revision === logsRevision) logsLoading.value = false }
 }
+
 onMounted(() => { refresh(); timer = setInterval(refresh, 5000) })
 onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
