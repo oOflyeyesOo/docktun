@@ -253,3 +253,9 @@ pnpm run dev
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
+
+### Local `.local` links
+
+Portless `http://app.local` links require the `zeroconf` service in the current Compose file. For an existing prebuilt installation, download the updated `compose.prebuilt.yml`, retain your existing volume/project settings, then run `docker compose -f compose.prebuilt.yml up -d --pull always docktun zeroconf`. Updating only the DockTun container does not add or recreate this separate service.
+
+The proxy uses Linux host networking and host TCP port 80. Check `docker logs docktun-zeroconf` if names resolve but pages fail. A Synology web server or another proxy may already occupy port 80; arrange the existing LAN reverse proxy to serve these hostnames or free that port before using portless links. Keep direct LAN IP and published-port URLs available as a fallback. mDNS clients must be on a network that passes local multicast. On hosts with multiple interfaces, set `HOST_IP` in the zeroconf service to the Docker host's LAN address. These links do not enable a remote tunnel.
