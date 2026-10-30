@@ -2,7 +2,7 @@
 import { applicationContainers, matchesServiceID } from '../lib/managed-services.mjs'
 import { createProjectFileEditor } from '../lib/project-file-editor.mjs'
 import { settingsEqual, syncExposureDraft } from '../lib/exposure-draft.mjs'
-import { defaultComposeExample, composeTemplates } from '../lib/compose-templates.mjs'
+import { defaultComposeExample } from '../lib/compose-templates.mjs'
 import { getPrimaryPort, cleanContainerName, hasLocalWebLink, localAddress } from '../lib/containerPorts.mjs'
 import { containerStack, stackProjectID } from '../lib/container-stacks.mjs'
 import ContainerExposure from "../components/ContainerExposure.vue"
@@ -365,9 +365,6 @@ const composeDeployForm = ref({
 const composeDeploying = ref(false)
 const composeStorageReady = ref(false)
 const composeTemplateSource = ref('')
-const composeTemplateCategory = ref<'all' | 'web' | 'database' | 'monitoring' | 'media' | 'utility'>('all')
-const composeTemplateSearch = ref('')
-
 // Cloudflare Settings Cache for Zero Trust
 const cfSettings = ref<{ has_token: boolean; masked_token?: string; api_token?: string } | null>(null)
 async function fetchCfSettings() {
@@ -380,50 +377,11 @@ async function fetchCfSettings() {
   } catch {}
 }
 
-interface ComposeTemplate {
-  id: string
-  name: string
-  category: 'web' | 'database' | 'monitoring' | 'media' | 'utility'
-  iconComponent: any
-  description: string
-  ports: string[]
-  compose: string
-  env?: string
-}
-
-const templateIcons: Record<string, any> = { Globe, Database, Cpu, Activity, Box, Film, HardDrive, Key, Tv }
-const COMPOSE_TEMPLATES: ComposeTemplate[] = composeTemplates.map(template => ({
-  ...template,
-  iconComponent: templateIcons[template.icon],
-}))
-
-const filteredTemplates = computed(() => {
-  return COMPOSE_TEMPLATES.filter((t) => {
-    const matchesCat = composeTemplateCategory.value === 'all' || t.category === composeTemplateCategory.value
-    const matchesSearch = !composeTemplateSearch.value.trim() ||
-      t.name.toLowerCase().includes(composeTemplateSearch.value.toLowerCase()) ||
-      t.description.toLowerCase().includes(composeTemplateSearch.value.toLowerCase())
-    return matchesCat && matchesSearch
-  })
-})
-
-function selectTemplate(tmpl: ComposeTemplate) {
-  composeDeployForm.value.name = tmpl.id
-  composeDeployForm.value.path = ''
-  composeTemplateSource.value = 'bundled:' + tmpl.id
-  composeDeployForm.value.compose_content = tmpl.compose
-  composeDeployForm.value.env_content = tmpl.env || ''
-  if (tmpl.env) {
-    composeDeployForm.value.show_env = true
-  }
-  launchTab.value = 'compose'
-}
-
 function selectCommunityTemplate(template: any) {
   composeDeployForm.value.name = template.name
   composeDeployForm.value.path = ''
   composeDeployForm.value.compose_content = template.compose_content
-  composeDeployForm.value.env_content = ''
+  composeDeployForm.value.env_content = template.env_content || ''
   composeDeployForm.value.show_env = true
   composeTemplateSource.value = template.source_url
   launchTab.value = 'compose'
@@ -4045,85 +4003,6 @@ onUnmounted(() => {
         <!-- TAB 2: Compose App Templates -->
         <div v-if="launchTab === 'templates'" class="space-y-4 overflow-y-auto pr-1 flex-1">
           <CommunityTemplates @select="selectCommunityTemplate" />
-          <h3 class="text-sm font-semibold text-slate-800">Included with DockTun</h3>
-          <div class="flex flex-col sm:flex-row items-center justify-between gap-3">
-            <!-- Category Pills -->
-            <div class="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
-              <button
-                v-for="cat in ['all', 'web', 'database', 'monitoring', 'media', 'utility']"
-                :key="cat"
-                @click="composeTemplateCategory = cat as any"
-                class="px-2.5 py-1 rounded text-[11px] font-semibold uppercase tracking-wider transition"
-                :class="composeTemplateCategory === cat ? 'bg-cyan-500/20 text-cyan-700 border border-cyan-500/40' : 'text-slate-600 hover:text-slate-800 border border-slate-200 bg-white/60'"
-              >
-                {{ cat }}
-              </button>
-            </div>
-
-            <!-- Search Filter -->
-            <div class="relative w-full sm:w-64">
-              <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
-              <input
-                v-model="composeTemplateSearch"
-                type="text"
-                placeholder="Search templates…"
-                class="cyber-input text-xs pl-8 w-full"
-              />
-            </div>
-          </div>
-
-          <!-- Templates Grid -->
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            <div
-              v-for="tmpl in filteredTemplates"
-              :key="tmpl.id"
-              class="rounded-xl border border-slate-200 bg-slate-50/70 p-3.5 flex flex-col justify-between hover:border-cyan-500/50 hover:bg-white/40 transition group"
-            >
-              <div class="space-y-2">
-                <div class="flex items-start justify-between">
-                  <div class="flex items-center gap-2">
-                    <div class="rounded-lg bg-cyan-50/80 border border-cyan-800/40 p-2 text-cyan-700">
-                      <component :is="tmpl.iconComponent" class="h-4 w-4" />
-                    </div>
-                    <div>
-                      <div class="text-xs font-bold text-slate-900 group-hover:text-cyan-700 transition">
-                        {{ tmpl.name }}
-                      </div>
-                      <span class="text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">
-                        {{ tmpl.category }}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <p class="text-[11px] text-slate-600 leading-relaxed">
-                  {{ tmpl.description }}
-                </p>
-
-                <div v-if="tmpl.ports.length" class="flex flex-wrap gap-1 pt-1">
-                  <span
-                    v-for="port in tmpl.ports"
-                    :key="port"
-                    class="rounded bg-white border border-slate-200 px-1.5 py-0.2 text-[9px] font-mono text-cyan-600"
-                  >
-                    {{ port }}
-                  </span>
-                </div>
-              </div>
-
-              <div class="pt-3 mt-2 border-t border-slate-200/80 flex items-center justify-between">
-                <span class="text-[10px] text-slate-500 font-mono">Compose starter</span>
-                <button
-                  type="button"
-                  @click="selectTemplate(tmpl)"
-                  class="cyber-btn text-[11px] py-1 px-2.5 text-cyan-700 border-cyan-600 bg-cyan-50/30 hover:bg-cyan-100/60 flex items-center gap-1.5"
-                >
-                  <Rocket class="h-3 w-3" />
-                  <span>Use Template</span>
-                </button>
-              </div>
-            </div>
-          </div>
         </div>
 
         <!-- TAB 3: Docker Run -->
