@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -77,6 +78,10 @@ func (h *Projects) Create(w http.ResponseWriter, r *http.Request) {
 
 	p, err := h.svc.Create(body.Name, body.Path, body.RepoURL, body.GitUsername, body.GitToken)
 	if err != nil {
+		if errors.Is(err, service.ErrProjectConflict) {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

@@ -87,6 +87,10 @@ type Container struct {
 	ProjectID              int              `json:"project_id,omitempty"`
 	ProjectName            string           `json:"project_name,omitempty"`
 	ProjectPath            string           `json:"project_path,omitempty"`
+	ComposeProject         string           `json:"compose_project,omitempty"`
+	ComposeService         string           `json:"compose_service,omitempty"`
+	ComposeWorkingDir      string           `json:"compose_working_dir,omitempty"`
+	ComposeConfigFiles     string           `json:"compose_config_files,omitempty"`
 	ConnectedToCloudflared bool             `json:"connected_to_cloudflared"`
 	UpdateAvailable        bool             `json:"update_available"`
 	LatestDigest           string           `json:"latest_digest,omitempty"`
@@ -193,42 +197,11 @@ type liveStats struct {
 	pids  int
 }
 
-type projRef struct {
-	ID   int
-	Name string
-	Path string
-}
-
-func (s *DockerContainers) loadAllProjectsMap() (map[string]projRef, map[string]projRef) {
-	byPath := make(map[string]projRef)
-	byName := make(map[string]projRef)
-	if s.db == nil {
-		return byPath, byName
-	}
-	rows, err := s.db.Query(`SELECT id, name, path FROM projects`)
-	if err != nil {
-		return byPath, byName
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var p projRef
-		if err := rows.Scan(&p.ID, &p.Name, &p.Path); err == nil {
-			if p.Path != "" {
-				byPath[p.Path] = p
-			}
-			if p.Name != "" {
-				byName[strings.ToLower(p.Name)] = p
-			}
-		}
-	}
-	return byPath, byName
-}
-
 func (s *DockerContainers) List() ([]Container, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "docker", "ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.State}}\t{{.Ports}}\t{{.RunningFor}}\t{{.Command}}\t{{.Networks}}\t{{.Labels}}")
+	cmd := exec.CommandContext(ctx, "docker", "ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.State}}\t{{.Ports}}\t{{.RunningFor}}\t{{.Command}}\t{{.Networks}}\t{{.Label \"docktun.update.target\"}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}\t{{.Label \"com.docker.compose.project.config_files\"}}")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("docker ps failed: %w", err)
@@ -242,7 +215,7 @@ func (s *DockerContainers) List() ([]Container, error) {
 	statsMap := s.getCachedStats()
 	ingressMap := s.loadCloudflareIngressMap()
 	dbExposures := s.loadAllExposuresFromDB()
-	projectsByPath, projectsByName := s.loadAllProjectsMap()
+	projectIndex := s.loadContainerProjects()
 	cachedUpdates := s.loadAllUpdatesFromDB()
 	exposureNetwork := s.exposureNetworkName()
 
@@ -250,12 +223,11 @@ func (s *DockerContainers) List() ([]Container, error) {
 	containers := make([]Container, 0, len(rows))
 
 	for _, row := range rows {
-		row = strings.TrimSpace(row)
-		if row == "" {
+		if strings.TrimSpace(row) == "" {
 			continue
 		}
 
-		fields := strings.SplitN(row, "\t", 10)
+		fields := strings.SplitN(row, "\t", 14)
 		if len(fields) < 6 {
 			continue
 		}
@@ -282,94 +254,21 @@ func (s *DockerContainers) List() ([]Container, error) {
 		c.Name = strings.TrimPrefix(c.Name, "/")
 		c.Running = c.Running || strings.HasPrefix(strings.ToLower(c.Status), "up ")
 
-		if strings.HasPrefix(c.Name, "docktun-updater-") {
-			continue
-		}
-
 		if len(fields) >= 9 {
 			networksStr := strings.TrimSpace(fields[8])
 			c.ConnectedToCloudflared = exactNetworkMembership(networksStr, exposureNetwork)
 		}
 
-		if len(fields) >= 10 {
-			labelsStr := strings.TrimSpace(fields[9])
-			updateHelper := false
-			var compProj, compDir string
-			for _, part := range strings.Split(labelsStr, ",") {
-				kv := strings.SplitN(part, "=", 2)
-				if len(kv) == 2 {
-					k := strings.TrimSpace(kv[0])
-					v := strings.TrimSpace(kv[1])
-					if k == "docktun.update.target" && v != "" {
-						updateHelper = true
-					}
-					if k == "com.docker.compose.project" {
-						compProj = v
-					} else if k == "com.docker.compose.project.working_dir" {
-						compDir = v
-					}
-				}
-			}
-			if updateHelper {
-				continue
-			}
-			if p, ok := projectsByPath[compDir]; ok {
-				c.ProjectID = p.ID
-				c.ProjectName = p.Name
-				c.ProjectPath = p.Path
-			} else if p, ok := projectsByName[strings.ToLower(compProj)]; ok {
-				c.ProjectID = p.ID
-				c.ProjectName = p.Name
-				c.ProjectPath = p.Path
-			} else if compProj != "" || compDir != "" {
-				c.ProjectName = compProj
-				c.ProjectPath = compDir
-				if s.db != nil {
-					pName := compProj
-					if pName == "" {
-						pName = filepath.Base(compDir)
-					}
-					pPath := compDir
-					if pPath == "" {
-						pPath = "/opt/projects/" + pName
-					}
-					_, _ = s.db.Exec(`INSERT OR IGNORE INTO projects (name, path) VALUES (?, ?)`, pName, pPath)
-					var newID int
-					if compDir != "" {
-						_ = s.db.QueryRow(`SELECT id FROM projects WHERE path = ?`, compDir).Scan(&newID)
-					}
-					if newID == 0 {
-						_ = s.db.QueryRow(`SELECT id FROM projects WHERE lower(name) = ?`, strings.ToLower(pName)).Scan(&newID)
-					}
-					if newID > 0 {
-						c.ProjectID = newID
-						c.ProjectName = pName
-						c.ProjectPath = pPath
-						projectsByName[strings.ToLower(pName)] = projRef{ID: newID, Name: pName, Path: pPath}
-						if pPath != "" {
-							projectsByPath[pPath] = projRef{ID: newID, Name: pName, Path: pPath}
-						}
-					}
-				}
+		if len(fields) >= 10 && strings.TrimSpace(fields[9]) != "" {
+			continue
+		}
+		labels := map[string]string{}
+		for offset, key := range []string{"com.docker.compose.project", "com.docker.compose.project.working_dir", "com.docker.compose.service", "com.docker.compose.project.config_files"} {
+			if len(fields) > 10+offset {
+				labels[key] = strings.TrimSpace(fields[10+offset])
 			}
 		}
-		if c.ProjectID == 0 {
-			if p, ok := projectsByName[strings.ToLower(c.Name)]; ok {
-				c.ProjectID = p.ID
-				c.ProjectName = p.Name
-				c.ProjectPath = p.Path
-			} else {
-				cLower := strings.ToLower(c.Name)
-				for pNameLower, p := range projectsByName {
-					if strings.HasPrefix(cLower, pNameLower+"-") || strings.HasPrefix(cLower, pNameLower+"_") {
-						c.ProjectID = p.ID
-						c.ProjectName = p.Name
-						c.ProjectPath = p.Path
-						break
-					}
-				}
-			}
-		}
+		s.assignContainerProject(&c, labels, projectIndex)
 
 		if c.Running {
 			if st, ok := statsMap[c.Name]; ok {
@@ -722,66 +621,14 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 	detail.ConnectedToCloudflared = connected
 	detail.Container.ConnectedToCloudflared = connected
 
-	compProj := inspect.Config.Labels["com.docker.compose.project"]
-	compDir := inspect.Config.Labels["com.docker.compose.project.working_dir"]
 	compFile := inspect.Config.Labels["com.docker.compose.project.config_files"]
 	detail.ComposeFile = compFile
 
-	projectsByPath, projectsByName := s.loadAllProjectsMap()
-	if p, ok := projectsByPath[compDir]; ok {
-		detail.ProjectID = p.ID
-		detail.ProjectName = p.Name
-		detail.ProjectPath = p.Path
-		detail.Container.ProjectID = p.ID
-		detail.Container.ProjectName = p.Name
-		detail.Container.ProjectPath = p.Path
-	} else if p, ok := projectsByName[strings.ToLower(compProj)]; ok {
-		detail.ProjectID = p.ID
-		detail.ProjectName = p.Name
-		detail.ProjectPath = p.Path
-		detail.Container.ProjectID = p.ID
-		detail.Container.ProjectName = p.Name
-		detail.Container.ProjectPath = p.Path
-	} else if p, ok := projectsByName[strings.ToLower(c.Name)]; ok {
-		detail.ProjectID = p.ID
-		detail.ProjectName = p.Name
-		detail.ProjectPath = p.Path
-		detail.Container.ProjectID = p.ID
-		detail.Container.ProjectName = p.Name
-		detail.Container.ProjectPath = p.Path
-	} else {
-		cLower := strings.ToLower(c.Name)
-		for pNameLower, p := range projectsByName {
-			if strings.HasPrefix(cLower, pNameLower+"-") || strings.HasPrefix(cLower, pNameLower+"_") {
-				detail.ProjectID = p.ID
-				detail.ProjectName = p.Name
-				detail.ProjectPath = p.Path
-				detail.Container.ProjectID = p.ID
-				detail.Container.ProjectName = p.Name
-				detail.Container.ProjectPath = p.Path
-				break
-			}
-		}
-	}
-
-	// Auto-register project if working_dir exists on host disk
-	if detail.ProjectID == 0 && compDir != "" && s.db != nil {
-		pName := compProj
-		if pName == "" {
-			pName = filepath.Base(compDir)
-		}
-		_, _ = s.db.Exec(`INSERT OR IGNORE INTO projects (name, path) VALUES (?, ?)`, pName, compDir)
-		var newID int
-		_ = s.db.QueryRow(`SELECT id FROM projects WHERE path = ?`, compDir).Scan(&newID)
-		if newID > 0 {
-			detail.ProjectID = newID
-			detail.ProjectName = pName
-			detail.ProjectPath = compDir
-			detail.Container.ProjectID = newID
-			detail.Container.ProjectName = pName
-			detail.Container.ProjectPath = compDir
-		}
-	}
+	projectIndex := s.loadContainerProjects()
+	s.assignContainerProject(&detail.Container, inspect.Config.Labels, projectIndex)
+	detail.ProjectID = detail.Container.ProjectID
+	detail.ProjectName = detail.Container.ProjectName
+	detail.ProjectPath = detail.Container.ProjectPath
 
 	if u, ok := s.getUpdateFromDB(detail.ID); ok {
 		detail.UpdateAvailable = u.UpdateAvailable
@@ -988,7 +835,6 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 	if cname == "" {
 		cname = id
 	}
-	cLower := strings.ToLower(cname)
 
 	// Determine canonical Stack / Project Name
 	targetProjectName := strings.TrimSpace(detail.ProjectName)
@@ -998,29 +844,13 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 		return 0, fmt.Errorf("manage DockTun through Settings > DockTun services")
 	}
 
+	if detail.ProjectID > 0 {
+		return detail.ProjectID, nil
+	}
+	if detail.ComposeProject != "" {
+		return 0, fmt.Errorf("Compose stack %q has no registered source folder; configure its actual stack folder instead of importing a single container", detail.ComposeProject)
+	}
 	if targetProjectName == "" {
-		// Check if container name is part of an existing stack (e.g. mediastorm-postgres -> mediastorm)
-		if s.db != nil {
-			rows, _ := s.db.Query(`SELECT id, name, path FROM projects`)
-			if rows != nil {
-				var existingID int
-				for rows.Next() {
-					var pid int
-					var pName, pPath string
-					if err := rows.Scan(&pid, &pName, &pPath); err == nil {
-						pLower := strings.ToLower(pName)
-						if strings.HasPrefix(cLower, pLower+"-") || strings.HasPrefix(cLower, pLower+"_") {
-							existingID = pid
-							break
-						}
-					}
-				}
-				rows.Close()
-				if existingID > 0 {
-					return existingID, nil
-				}
-			}
-		}
 		targetProjectName = cname
 	}
 

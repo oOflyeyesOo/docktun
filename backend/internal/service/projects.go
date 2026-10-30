@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,12 +39,12 @@ type FileInfo struct {
 
 type Projects struct {
 	requireMountInspection func() bool
-	db        *db.DB
-	selfPath  string
-	mu        sync.Mutex
-	outMu     sync.RWMutex
-	outputs   map[int]*projectOutput
-	runDocker func(context.Context, ...string) ([]byte, error)
+	db                     *db.DB
+	selfPath               string
+	mu                     sync.Mutex
+	outMu                  sync.RWMutex
+	outputs                map[int]*projectOutput
+	runDocker              func(context.Context, ...string) ([]byte, error)
 }
 
 type projectOutput struct {
@@ -132,6 +133,8 @@ func ProjectsRoot() string {
 	return root
 }
 
+var ErrProjectConflict = errors.New("stack name or folder is already registered")
+
 func (s *Projects) Create(name, path, repoURL, gitUsername, gitToken string) (Project, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -142,46 +145,24 @@ func (s *Projects) Create(name, path, repoURL, gitUsername, gitToken string) (Pr
 		return Project{}, fmt.Errorf("cannot add DockTun itself as a project")
 	}
 
-	// Check if a project with the same path or name already exists to prevent UNIQUE constraint errors
+	// New-stack creation must never silently rename a saved project, change
+	// its source folder or erase its Git credentials. Existing stacks use Update.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var existing Project
-	err = s.db.QueryRow("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects WHERE path = ? OR name = ?", path, name).
-		Scan(&existing.ID, &existing.Name, &existing.Path, &existing.RepoURL, &existing.GitUsername, &existing.GitToken, &existing.CreatedAt)
+	err = s.db.QueryRow("SELECT id, name, path FROM projects WHERE path = ? OR lower(name) = lower(?) ORDER BY id LIMIT 1", path, name).
+		Scan(&existing.ID, &existing.Name, &existing.Path)
 	if err == nil {
-		// Update existing record
-		_, updateErr := s.db.Exec("UPDATE projects SET name = ?, path = ?, repo_url = ?, git_username = ?, git_token = ? WHERE id = ?",
-			name, path, repoURL, gitUsername, gitToken, existing.ID)
-		if updateErr != nil {
-			return Project{}, updateErr
-		}
-		return Project{
-			ID:          existing.ID,
-			Name:        name,
-			Path:        path,
-			RepoURL:     repoURL,
-			GitUsername: gitUsername,
-			CreatedAt:   existing.CreatedAt,
-		}, nil
+		return Project{}, fmt.Errorf("%w: %q at %s already exists; manage that stack or choose a different name and folder", ErrProjectConflict, existing.Name, existing.Path)
 	}
-
-	res, err := s.db.Exec("INSERT INTO projects (name, path, repo_url, git_username, git_token) VALUES (?, ?, ?, ?, ?)",
-		name, path, repoURL, gitUsername, gitToken)
-	if err != nil {
-		// Fallback in case of concurrent insert or edge constraint
-		err2 := s.db.QueryRow("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects WHERE path = ? OR name = ?", path, name).
-			Scan(&existing.ID, &existing.Name, &existing.Path, &existing.RepoURL, &existing.GitUsername, &existing.GitToken, &existing.CreatedAt)
-		if err2 == nil {
-			_ = s.Update(existing.ID, name, path, repoURL, gitUsername, gitToken)
-			return Project{
-				ID:          existing.ID,
-				Name:        name,
-				Path:        path,
-				RepoURL:     repoURL,
-				GitUsername: gitUsername,
-				CreatedAt:   existing.CreatedAt,
-			}, nil
-		}
+	if !errors.Is(err, sql.ErrNoRows) {
 		return Project{}, err
 	}
+	res, err := s.db.Exec("INSERT INTO projects (name, path, repo_url, git_username, git_token) VALUES (?, ?, ?, ?, ?)", name, path, repoURL, gitUsername, gitToken)
+	if err != nil {
+		return Project{}, err
+	}
+
 	id, _ := res.LastInsertId()
 	return Project{ID: int(id), Name: name, Path: path, RepoURL: repoURL, GitUsername: gitUsername}, nil
 }

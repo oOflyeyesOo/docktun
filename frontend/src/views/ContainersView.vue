@@ -4,6 +4,7 @@ import { createProjectFileEditor } from '../lib/project-file-editor.mjs'
 import { settingsEqual, syncExposureDraft } from '../lib/exposure-draft.mjs'
 import { defaultComposeExample, composeTemplates } from '../lib/compose-templates.mjs'
 import { getPrimaryPort, cleanContainerName, hasLocalWebLink, localAddress } from '../lib/containerPorts.mjs'
+import { containerStack, stackProjectID } from '../lib/container-stacks.mjs'
 import ContainerExposure from "../components/ContainerExposure.vue"
 import { computed, onMounted, onUnmounted, reactive, ref, toRefs, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -115,6 +116,10 @@ interface ContainerItem {
   project_id?: number
   project_name?: string
   project_path?: string
+  compose_project?: string
+  compose_service?: string
+  compose_working_dir?: string
+  compose_config_files?: string
   compose_file?: string
   connected_to_cloudflared?: boolean
   update_available?: boolean
@@ -892,10 +897,7 @@ const containerGroups = computed<ContainerGroup[]>(() => {
 
   const map = new Map<string, ContainerItem[]>()
   list.forEach((c) => {
-    let key = c.project_name ? c.project_name.trim() : ''
-    if (!key) {
-      key = '__standalone__'
-    }
+    const key = containerStack(c).key
     if (!map.has(key)) {
       map.set(key, [])
     }
@@ -914,10 +916,10 @@ const containerGroups = computed<ContainerGroup[]>(() => {
 
     const isStack = key !== '__standalone__'
     const firstWithProj = items.find((c) => c.project_id)
-    const projectId = firstWithProj?.project_id
-    const projectPath = firstWithProj?.project_path
+    const projectId = stackProjectID(items)
+    const projectPath = projectId ? firstWithProj?.project_path : undefined
 
-    let groupName = isStack ? key : 'Standalone Containers'
+    const groupName = containerStack(items[0]).name
 
     groups.push({
       key,
@@ -2346,7 +2348,7 @@ onUnmounted(() => {
                 v-if="container.project_id"
                 @click.stop="openContainerModal(container, 'compose')"
                 class="inline-flex items-center gap-1 rounded border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-700 font-mono hover:bg-cyan-500/20 hover:border-cyan-400 transition cursor-pointer"
-                :title="`Open stack '${container.project_name}' compose & controls`"
+                :title="`Compose project: ${container.compose_project || container.project_name}\nSource folder: ${container.compose_working_dir || container.project_path || 'Not reported by Docker'}`"
               >
                 <Layers class="h-3 w-3" />
                 <span>Stack: {{ container.project_name }}</span>
@@ -2754,6 +2756,19 @@ onUnmounted(() => {
           <!-- TAB 1: OVERVIEW & TELEMETRY                    -->
           <!-- ============================================== -->
           <div v-else-if="selectedTab === 'overview'" class="space-y-5">
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4 text-xs space-y-2">
+              <h3 class="font-bold text-slate-800">Stack membership</h3>
+              <template v-if="selectedContainer.compose_project">
+                <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
+                  <dt class="text-slate-500">Compose project</dt><dd class="font-mono break-all">{{ selectedContainer.compose_project }}</dd>
+                  <dt class="text-slate-500">Service</dt><dd class="font-mono break-all">{{ selectedContainer.compose_service || 'Not reported by Docker' }}</dd>
+                  <dt class="text-slate-500">Source folder</dt><dd class="font-mono break-all">{{ selectedContainer.compose_working_dir || 'Not reported by Docker' }}</dd>
+                  <dt class="text-slate-500">Compose files</dt><dd class="font-mono break-all">{{ selectedContainer.compose_config_files || 'Not reported by Docker' }}</dd>
+                </dl>
+                <p class="text-slate-500">Docker reports this membership. Container names and shared networks do not place services in the same stack. Different Compose projects stay separate.</p>
+              </template>
+              <p v-else class="text-slate-500">Docker reports no Compose project for this container. It is standalone; its name does not associate it with another stack.</p>
+            </div>
             <!-- Telemetry Gauges -->
             <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <!-- CPU (Click to view full Metrics) -->
