@@ -3,7 +3,7 @@ import { applicationContainers, matchesServiceID } from '../lib/managed-services
 import { createProjectFileEditor } from '../lib/project-file-editor.mjs'
 import { settingsEqual, syncExposureDraft } from '../lib/exposure-draft.mjs'
 import { defaultComposeExample, composeTemplates } from '../lib/compose-templates.mjs'
-import { getPrimaryPort, cleanContainerName, getMdnsPortSuffix } from '../lib/containerPorts.mjs'
+import { getPrimaryPort, cleanContainerName, hasLocalWebLink, localAddress } from '../lib/containerPorts.mjs'
 import ContainerExposure from "../components/ContainerExposure.vue"
 import { computed, onMounted, onUnmounted, reactive, ref, toRefs, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -2410,19 +2410,21 @@ onUnmounted(() => {
               <div v-if="container.running" class="flex items-center gap-1.5 font-mono">
                 <span class="text-slate-500 font-sans text-[11px]">Local:</span>
                 <a
-                  :href="`http://${cleanContainerName(container.name)}.local${getMdnsPortSuffix(container.ports)}`"
+                  v-if="hasLocalWebLink(container.ports)"
+                  :href="localAddress(container)"
                   target="_blank"
                   rel="noopener"
                   @click.stop
                   class="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-700 hover:underline font-semibold"
                 >
-                  <span>http://{{ cleanContainerName(container.name) }}.local{{ getMdnsPortSuffix(container.ports) }}</span>
+                  <span>{{ localAddress(container) }}</span>
                   <ExternalLink class="h-3 w-3" />
                 </a>
+                <span v-else class="text-slate-600">{{ localAddress(container) }}</span>
                 <button
-                  @click.stop="copyToClipboard('mdns-' + container.id, `http://${cleanContainerName(container.name)}.local${getMdnsPortSuffix(container.ports)}`)"
+                  @click.stop="copyToClipboard('mdns-' + container.id, localAddress(container))"
                   class="text-slate-400 hover:text-slate-600 ml-0.5"
-                  title="Copy local .local URL"
+                  title="Copy local address"
                 >
                   <Check v-if="copiedKey === 'mdns-' + container.id" class="h-3 w-3 text-emerald-600" />
                   <Copy v-else class="h-3 w-3" />
@@ -2980,7 +2982,7 @@ onUnmounted(() => {
                   <div>
                     <h3 class="text-sm font-bold text-slate-900">Local LAN Access (mDNS)</h3>
                     <p class="text-xs text-slate-500">
-                      Reach this container directly from any computer, phone, or tablet on your Wi-Fi with zero configuration.
+                      Local hostnames are advertised when DockTun's local proxy is running. Web services use the portless gateway; other protocols require a published host port and a compatible client.
                     </p>
                   </div>
                 </div>
@@ -2994,13 +2996,14 @@ onUnmounted(() => {
                 <div class="space-y-0.5">
                   <div class="text-[10px] uppercase tracking-wider font-semibold text-indigo-600">Local LAN Address</div>
                   <div class="font-mono text-sm font-bold text-slate-900">
-                    http://{{ cleanContainerName(selectedContainer.name) }}.local{{ getMdnsPortSuffix(selectedContainer.ports) }}
+                    {{ localAddress(selectedContainer) }}
                   </div>
                 </div>
 
                 <div class="flex items-center gap-2">
                   <a
-                    :href="`http://${cleanContainerName(selectedContainer.name)}.local${getMdnsPortSuffix(selectedContainer.ports)}`"
+                    v-if="hasLocalWebLink(selectedContainer.ports)"
+                    :href="localAddress(selectedContainer)"
                     target="_blank"
                     rel="noopener"
                     class="cyber-btn flex items-center gap-1.5 text-xs text-white bg-indigo-600 hover:bg-indigo-700"
@@ -3009,7 +3012,7 @@ onUnmounted(() => {
                     <ExternalLink class="h-3 w-3" />
                   </a>
                   <button
-                    @click="copyToClipboard('mdns', `http://${cleanContainerName(selectedContainer.name)}.local${getMdnsPortSuffix(selectedContainer.ports)}`)"
+                    @click="copyToClipboard('mdns', localAddress(selectedContainer))"
                     class="cyber-btn-secondary text-xs flex items-center gap-1.5"
                     title="Copy local mDNS address"
                   >

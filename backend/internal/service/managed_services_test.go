@@ -1,6 +1,40 @@
 package service
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestLegacyWireGuardRequiresSharedState(t *testing.T) {
+	for _, tc := range []struct {
+		name, coreMount, providerMount string
+		owned                          bool
+	}{
+		{"named volume", `{"Type":"volume","Name":"nas_wireguard","Source":"/var/lib/docker/volumes/nas_wireguard/_data","Destination":"/app/data/wireguard"}`, `{"Type":"volume","Name":"nas_wireguard","Destination":"/config","RW":true}`, true},
+		{"Synology bind", `{"Type":"bind","Source":"/volume1/docker/docktun/data","Destination":"/app/data"}`, `{"Type":"bind","Source":"/volume1/docker/docktun/data/wireguard","Destination":"/config","RW":true}`, true},
+		{"neighbor storage", `{"Type":"bind","Source":"/volume1/docker/docktun/data","Destination":"/app/data"}`, `{"Type":"bind","Source":"/volume1/docker/neighbor/wireguard","Destination":"/config","RW":true}`, false},
+		{"container-only path", `{"Type":"bind","Source":"/volume1/docker/docktun/data","Destination":"/app/data"}`, `{"Type":"bind","Source":"/app/data/wireguard","Destination":"/config","RW":true}`, false},
+		{"read-only state", `{"Type":"volume","Name":"nas_wireguard","Destination":"/app/data/wireguard"}`, `{"Type":"volume","Name":"nas_wireguard","Destination":"/config","RW":false}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			core, provider := managedFixture("core", nil), managedFixture("docktun-wireguard", nil)
+			if err := json.Unmarshal([]byte(`{"Mounts":[`+tc.coreMount+`]}`), &core); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(`{"Mounts":[`+tc.providerMount+`]}`), &provider); err != nil {
+				t.Fatal(err)
+			}
+			provider.Config["Image"] = "lscr.io/linuxserver/wireguard:latest"
+			if got := managedServiceKind(provider, core); (got == "wireguard") != tc.owned {
+				t.Fatalf("classification = %q, owned = %v", got, tc.owned)
+			}
+			provider.Config["Image"] = "unrelated/wireguard:latest"
+			if managedServiceKind(provider, core) != "" {
+				t.Fatal("untrusted image captured")
+			}
+		})
+	}
+}
 
 func managedFixture(name string, labels map[string]string) updateContainer {
 	c := updateContainer{Name: "/" + name, ID: name + "0123456789abcdef", Config: map[string]any{}, HostConfig: map[string]any{}}
