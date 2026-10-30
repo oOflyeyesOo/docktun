@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"docktun/internal/service"
@@ -15,13 +16,45 @@ func NewTemplates() *Templates { return &Templates{library: service.NewTemplateL
 
 func (h *Templates) Setup(w http.ResponseWriter, r *http.Request) {
 	var input service.TemplateSetupInput
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&input) != nil {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&input) != nil {
 		jsonError(w, "invalid template setup request", http.StatusBadRequest)
 		return
 	}
 	result, err := service.ConfigureTemplate(input)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(result)
+}
+func (h *Templates) Ports(w http.ResponseWriter, r *http.Request) {
+	var input service.TemplateSetupInput
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&input) != nil {
+		jsonError(w, "invalid port request", 400)
+		return
+	}
+	result, err := service.FindTemplatePorts(r.Context(), input)
+	if err != nil {
+		jsonError(w, err.Error(), 400)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(result)
+}
+func (h *Templates) Files(w http.ResponseWriter, r *http.Request) {
+	var input service.TemplateFilesInput
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&input) != nil {
+		jsonError(w, "invalid file request", 400)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	result, err := h.library.TemplateFiles(ctx, input)
+	if err != nil {
+		jsonError(w, err.Error(), 400)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -65,11 +98,18 @@ func (h *Templates) Import(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"compose_content": content, "source_url": source})
+	projectSource := source
+	if body.Collection != "" {
+		projectSource = ""
+		if first, _, ok := strings.Cut(content, "\n"); ok && strings.HasPrefix(first, "# Source: https://raw.githubusercontent.com/") {
+			projectSource = strings.TrimPrefix(first, "# Source: ")
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]string{"compose_content": content, "source_url": source, "project_source": projectSource})
 }
 func (h *Templates) Review(w http.ResponseWriter, r *http.Request) {
 	var body service.ComposeReviewInput
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&body) != nil {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&body) != nil {
 		jsonError(w, "invalid Compose review request", http.StatusBadRequest)
 		return
 	}

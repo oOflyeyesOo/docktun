@@ -80,3 +80,72 @@ For advanced YAML aliases, expressions or multiline Environment values, the
 advanced editor remains available. New and saved project `.env` files use mode
 600 so generated login details are not written as world-readable Environment
 files.
+
+## Ports, dependencies, source files and compatibility
+
+- **Find free host ports** keeps available ports and suggests alternatives for
+  occupied ones. It checks the Docker daemon host, including non-Docker listeners,
+  with a short-lived helper that binds sockets without serving traffic. TCP/UDP
+  sharing and IPv6 bindings are preserved. Shared port variables update their
+  references; recognized local public/base URLs update to the chosen port.
+  Advanced ranges/protocols remain in the Compose editor. Ports are not reserved.
+- **App dependencies** shows internal database/cache relationships. Matching
+  username, password and database settings can stay linked, including literal
+  connection URLs whose credentials must be URL-encoded. Links are visible and
+  can be disabled. Detected dependencies can be added to startup order. Existing
+  dependency options are preserved; health-based ordering is used when a health
+  check is declared. Startup order alone does not prove an app is ready.
+- **Supporting files & secrets** lists referenced configuration, environment and
+  secret files. Fetch repository files imports a pinned public GitHub snapshot
+  and the complete local build contexts within the Compose folder. Downloads
+  are bounded to 128 files, 256 KiB per file, 4 MiB total, with four concurrent
+  requests. Executable bits and binary assets are preserved. Symlinks, Git
+  submodules, parent-folder escapes and projects beyond those limits require a
+  complete checkout. Include/extends imports are not flattened. An upstream
+  Environment example can seed the normal app settings form. Public sample
+  secrets must be replaced; password files can be generated. App-specific keys
+  and configuration syntax still follow the app's own instructions.
+- **App checks** reports host CPU architecture, image/tag availability, Docker
+  and project filesystem space, occupied host ports and app-user permissions.
+  Local images or registry manifests are inspected without pulling whole images
+  or starting apps. A missing image or known incompatible architecture blocks
+  deployment; unavailable/private registry metadata is clearly marked unverified.
+  Explicit foreign platforms require host emulation. Source builds are checked
+  by Docker at deployment. Numeric UID:GID or PUID/PGID settings enable targeted
+  filesystem permission checks. Missing user metadata remains a note; the check
+  does not guess image users or automatically chmod host folders.
+
+Files stay in the draft until deployment. Review stages their exact contents and
+permissions in temporary storage; creation revalidates the draft, then saves
+files inside the new project before Compose starts. Existing supporting files
+with different contents are never overwritten. Private secret files use mode
+600 and can have an explicit app UID/GID owner. This workflow does not enable an
+exposure provider or publish an app automatically.
+
+## Community template compatibility
+
+Native Portainer PostgreSQL templates using the official `postgres:latest` or
+version 18+ image receive the current `/var/lib/postgresql` mount destination
+when imported as a new draft, unless the template explicitly sets `PGDATA`.
+Older image versions keep their existing destination. This corrects an outdated
+upstream template; it does not migrate existing databases. App preflight also
+reports the old destination in manually supplied PostgreSQL 18+ Compose files.
+
+## Testing community apps
+
+`tests/template_review_integration.py` runs in a disposable nested Docker engine.
+Enable `DOCKTUN_TEST_SETUP=1`, `DOCKTUN_TEST_NEXT=1` and
+`DOCKTUN_TEST_COMMUNITY=1` for the guided setup, supporting files, credentials,
+compatibility and live catalog regressions against the production image.
+
+For a live app sample, retain that test engine with
+`DOCKTUN_KEEP_TEST_ENGINE=1`, then pass its reported name and localhost URL as
+`DOCKTUN_SAMPLE_ENGINE` and `DOCKTUN_SAMPLE_URL` to
+`tests/template_catalog_smoke.py`. The script randomly selects one app from each
+of five documented category pools; `DOCKTUN_SAMPLE_SEED` defaults to `20261030`.
+It imports the actual pinned community entries, generates credentials, selects
+free ports, uses managed storage, runs compatibility review, deploys, verifies
+HTTP or database responses, and checks stored files and database records after
+restart. Its JSON report records the source revision, image IDs and results.
+This requires downloading upstream images. It does not certify every catalog
+entry, complete app-specific onboarding, or enable any exposure provider.

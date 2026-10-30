@@ -138,6 +138,8 @@ func main() {
     r.Get("/api/templates/catalog", templatesHandler.Catalog)
     r.Post("/api/templates/import", templatesHandler.Import)
     r.Post("/api/templates/setup", templatesHandler.Setup)
+    r.Post("/api/templates/ports", templatesHandler.Ports)
+    r.Post("/api/templates/files", templatesHandler.Files)
     r.Post("/api/projects/review", templatesHandler.Review)
     updater := handler.NewSelfUpdate(service.NewSelfUpdater(dataDir), auditSvc)
     servicesUpdater := handler.NewManagedServices(service.NewManagedServices(dataDir), auditSvc)

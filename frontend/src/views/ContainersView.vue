@@ -6,6 +6,7 @@ import { defaultComposeExample } from '../lib/compose-templates.mjs'
 import { getPrimaryPort, cleanContainerName, hasLocalWebLink, localAddress } from '../lib/containerPorts.mjs'
 import { containerStack, stackProjectID } from '../lib/container-stacks.mjs'
 import ContainerExposure from "../components/ContainerExposure.vue"
+import TemplateFiles from '../components/TemplateFiles.vue'
 import TemplateSetup from '../components/TemplateSetup.vue'
 import ComposeStorageReview from '../components/ComposeStorageReview.vue'
 import CommunityTemplates from '../components/CommunityTemplates.vue'
@@ -366,6 +367,14 @@ const composeDeployForm = ref({
 const composeDeploying = ref(false)
 const composeStorageReady = ref(false)
 const composeTemplateSource = ref('')
+const composeProjectSource = ref('')
+const composeFiles = ref<Record<string, any>>({})
+const composeFilesDirty = ref(false)
+const composeCompatibility = ref(true)
+async function applyTemplateFiles(files: Record<string, any>) {
+  composeFiles.value = files; composeFilesDirty.value = false
+  await nextTick(); await composeReview.value?.review()
+}
 const composeReview = ref<any>(null)
 const composeSetupDirty = ref(false)
 async function applyTemplateSetup(result: any) {
@@ -393,6 +402,8 @@ function selectCommunityTemplate(template: any) {
   composeDeployForm.value.env_content = template.env_content || ''
   composeDeployForm.value.show_env = true
   composeTemplateSource.value = template.source_url
+  composeProjectSource.value = template.project_source || ''
+  composeFiles.value = {}; composeFilesDirty.value = false
   launchTab.value = 'compose'
 }
 
@@ -408,7 +419,7 @@ function insertComposeSnippet(type: 'network' | 'restart' | 'ports' | 'volumes' 
 }
 
 async function deployComposeStack() {
-  if (composeTemplateSource.value && composeSetupDirty.value) { alert('Apply the app setup settings before deploying'); return }
+  if (composeTemplateSource.value && (composeSetupDirty.value || composeFilesDirty.value)) { alert('Apply the app setup settings before deploying'); return }
   if (isPastedDockerRun.value) {
     convertComposeDockerRun()
   }
@@ -434,6 +445,8 @@ async function deployComposeStack() {
         auto_start: true,
         review_storage: true,
         template_source: composeTemplateSource.value,
+        files: composeFiles.value,
+        compatibility: Boolean(composeTemplateSource.value) && composeCompatibility.value,
       }),
     })
     showLaunchModal.value = false
@@ -3998,13 +4011,15 @@ onUnmounted(() => {
           </div>
 
           </details>
+          <TemplateFiles v-if="composeTemplateSource" :input="{ compose_content: composeDeployForm.compose_content, env_content: composeDeployForm.env_content }" :source="composeProjectSource" :files="composeFiles" @apply="applyTemplateFiles" @dirty="composeFilesDirty = $event" @source="composeProjectSource = $event" @environment="composeDeployForm.env_content = $event" />
+          <label v-if="composeTemplateSource" class="flex items-center gap-2 text-xs text-slate-700"><input v-model="composeCompatibility" type="checkbox">Check image architecture, availability, disk space and app permissions</label>
           <p v-if="composeTemplateSource" class="text-xs text-slate-500 break-all">Template source: {{ composeTemplateSource }}</p>
-          <ComposeStorageReview ref="composeReview" :input="{ name: composeDeployForm.name, path: composeDeployForm.path, compose_content: composeDeployForm.compose_content, env_content: composeDeployForm.env_content }" @ready="composeStorageReady = $event" />
+          <ComposeStorageReview ref="composeReview" :input="{ name: composeDeployForm.name, path: composeDeployForm.path, compose_content: composeDeployForm.compose_content, env_content: composeDeployForm.env_content, files: composeFiles, compatibility: Boolean(composeTemplateSource) && composeCompatibility }" @ready="composeStorageReady = $event" />
           <div class="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
             <button @click="showLaunchModal = false" class="cyber-btn-secondary text-xs">Cancel</button>
             <button
               @click="deployComposeStack"
-              :disabled="composeDeploying || (composeTemplateSource && composeSetupDirty) || !composeStorageReady || !composeDeployForm.name.trim() || !composeDeployForm.compose_content.trim()"
+              :disabled="composeDeploying || (composeTemplateSource && (composeSetupDirty || composeFilesDirty)) || !composeStorageReady || !composeDeployForm.name.trim() || !composeDeployForm.compose_content.trim()"
               class="cyber-btn flex items-center gap-2 text-xs text-cyan-700 border-cyan-500/80 bg-cyan-50/40 hover:bg-cyan-100/60 font-bold"
             >
               <RotateCcw v-if="composeDeploying" class="h-3.5 w-3.5 animate-spin" />

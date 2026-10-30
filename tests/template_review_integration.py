@@ -223,6 +223,127 @@ volumes:
         except subprocess.CalledProcessError as error:
             assert 'password authentication failed' in error.output, error.output
         print('PASS: guided setup deployed PostgreSQL with working password authentication; shared and literal special-character passwords preserved; named storage created automatically and shared read-only; no fake host path created; Environment mode 600; occupied/duplicate host ports rejected', flush=True)
+    if os.environ.get('DOCKTUN_TEST_NEXT') == '1':
+        from urllib.parse import urlparse
+        for endpoint in ['/api/templates/ports', '/api/templates/files']:
+            request(endpoint, {'compose_content': 'services: {}'}, expected=401, auth=False)
+        inner('pull', 'postgres:16-alpine')
+        docker('exec', '-d', engine, 'sh', '-c', 'nc -l -p 18080 >/dev/null')
+        dependency_compose = """services:
+  client:
+    image: postgres:16-alpine
+    container_name: linked-client
+    command: [sleep, '600']
+    environment:
+      DATABASE_URL: postgres://testuser:old-password@database/testdb
+      PUBLIC_URL: http://localhost:18080
+    ports:
+      - "18080:80"
+  database:
+    image: postgres:16-alpine
+    container_name: linked-database
+    environment:
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: old-password
+      POSTGRES_DB: testdb
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - database-data:/var/lib/postgresql/data
+volumes:
+  database-data:
+"""
+        schema = request('/api/templates/setup', {'compose_content': dependency_compose})
+        assert len(schema['dependencies']) == 1 and len(schema['credential_links']) == 3, schema
+        ports = request('/api/templates/ports', {'compose_content': dependency_compose})
+        port_field = next(f for f in schema['fields'] if f.get('port_uses'))
+        assert ports['values'][port_field['id']] != '18080', ports
+        url_field = next(f for f in schema['fields'] if f['name'] == 'PUBLIC_URL')
+        assert urlparse(ports['values'][url_field['id']]).port == int(ports['values'][port_field['id']]), ports
+        linked_password = "p$'\\#word\\"
+        choices = {link['id']: {'username': 'easy_user', 'database': 'easy_db', 'password': linked_password}[link['kind']] for link in schema['credential_links']}
+        draft = request('/api/templates/setup', {'compose_content': dependency_compose, 'apply': True, 'values': ports['values'], 'credential_links': choices, 'connect_dependencies': True})
+        assert 'service_healthy' in draft['compose_content'], draft
+        linked_form = {'name': 'linked-dependencies', 'compose_content': draft['compose_content'], 'env_content': draft['env_content'], 'compatibility': True}
+        compatible = request('/api/projects/review', linked_form)
+        assert compatible['ready'] and any(c['check'] == 'CPU architecture' for c in compatible['checks']), compatible
+        linked = request('/api/projects', {**linked_form, 'auto_start': True, 'review_storage': True}, expected=201)
+        action_done(linked['id'])
+        uri = inner('exec', 'linked-client', 'printenv', 'DATABASE_URL')
+        from urllib.parse import unquote
+        assert unquote(urlparse(uri).password) == linked_password and urlparse(uri).username == 'easy_user', uri
+        assert inner('exec', 'linked-client', 'sh', '-c', 'psql "$DATABASE_URL" -tAc "SELECT 1"') == '1'
+        print('PASS: host listener detected outside Docker port inventory; free port and local URL selected; username/password/database linked into encoded URI; dependency waits for real PostgreSQL health; connection succeeds', flush=True)
+        asset_compose = """services:
+  worker:
+    build: ./worker
+    container_name: asset-worker
+    user: "1000:1000"
+    volumes:
+      - ./config/app.conf:/app/config.txt:ro
+    secrets:
+      - db-password
+    env_file: ./config/worker.env
+secrets:
+  db-password:
+    file: ./secrets/db-password.txt
+"""
+        files = {
+            'worker/Dockerfile': {'content': 'FROM alpine:3.23\nCOPY start.sh /start.sh\nENTRYPOINT ["/start.sh"]\n'},
+            'worker/start.sh': {'content': '#!/bin/sh\ncat /run/secrets/db-password > /tmp/secret-copy\ncat /app/config.txt > /tmp/config-copy\nprintenv EXTRA_VALUE > /tmp/env-copy\nsleep 600\n', 'executable': True},
+            'config/app.conf': {'content': 'configuration-ready'},
+            'config/worker.env': {'content': "EXTRA_VALUE='from-file-$literal'\n", 'secret': True},
+            'secrets/db-password.txt': {'content': linked_password, 'secret': True, 'owner_uid': 1000, 'owner_gid': 1000},
+        }
+        plan = request('/api/templates/files', {'compose_content': asset_compose})
+        assert {r['path'] for r in plan['requirements']} == {'worker/Dockerfile', 'config/app.conf', 'config/worker.env', 'secrets/db-password.txt'}, plan
+        assets_form = {'name': 'supplied-assets', 'compose_content': asset_compose, 'files': files, 'compatibility': True}
+        assets_check = request('/api/projects/review', assets_form)
+        assert assets_check['ready'], assets_check
+        wrong_owner = json.loads(json.dumps(assets_form))
+        wrong_owner['files']['secrets/db-password.txt'].update(owner_uid=0, owner_gid=0)
+        denied_secret = request('/api/projects/review', wrong_owner)
+        assert not denied_secret['ready'] and any('not accessible' in p for p in denied_secret['problems']), denied_secret
+        supplied = request('/api/projects', {**assets_form, 'review_storage': True, 'auto_start': True}, expected=201)
+        action_done(supplied['id'])
+        assert inner('exec', 'asset-worker', 'cat', '/tmp/secret-copy') == linked_password
+        assert inner('exec', 'asset-worker', 'cat', '/tmp/config-copy') == 'configuration-ready'
+        assert inner('exec', 'asset-worker', 'cat', '/tmp/env-copy') == 'from-file-$literal'
+        assert inner('exec', 'docktun', 'stat', '-c', '%a:%u:%g', '/opt/projects/supplied-assets/secrets/db-password.txt') == '600:1000:1000'
+        inner('rm', '-f', 'asset-worker')
+        existing = request('/api/projects/review', assets_form)
+        assert existing['ready'], existing
+        inner('exec', 'docktun', 'chmod', '644', '/opt/projects/supplied-assets/secrets/db-password.txt')
+        request('/api/projects/review', assets_form, expected=400)
+        inner('exec', 'docktun', 'chmod', '600', '/opt/projects/supplied-assets/secrets/db-password.txt')
+        request('/api/projects/review', {'name': 'unsafe-file', 'compose_content': asset_compose, 'files': {'../escape': {'content': 'bad'}}}, expected=400)
+        print('PASS: build assets, config bind and private secret staged before deployment; actual image built and non-root app reads config/secret; wrong file ownership and unsafe paths blocked', flush=True)
+        docker('exec', engine, 'sh', '-c', 'mkdir -p /volume1/private-check && chmod 700 /volume1/private-check')
+        permissions = request('/api/projects/review', {'name': 'permission-check', 'compose_content': 'services:\n  app:\n    image: alpine:3.23\n    user: "1000:1000"\n    volumes: ["/volume1/private-check:/data"]\n', 'compatibility': True})
+        assert not permissions['ready'] and any('required permissions' in p for p in permissions['problems']), permissions
+        import io, tarfile
+        image_tar = io.BytesIO()
+        with tarfile.open(fileobj=image_tar, mode='w'):
+            pass
+        subprocess.run(['docker', 'exec', '-i', engine, 'docker', 'import', '--platform=linux/arm64', '-', 'fixture-arm-only:latest'], input=image_tar.getvalue(), stdout=subprocess.DEVNULL, check=True)
+        incompatible = request('/api/projects/review', {'name': 'wrong-architecture', 'compose_content': 'services:\n  app:\n    image: fixture-arm-only:latest\n', 'compatibility': True})
+        assert not incompatible['ready'] and any('does not provide' in p for p in incompatible['problems']), incompatible
+        missing_image = request('/api/projects/review', {'name': 'missing-image', 'compose_content': 'services:\n  app:\n    image: alpine:docktun-nonexistent-image-test-8461156\n', 'compatibility': True})
+        assert not missing_image['ready'] and any('not found' in p for p in missing_image['problems']), missing_image
+        old_pg_mount = request('/api/projects/review', {'name': 'outdated-postgres', 'compose_content': 'services:\n  db:\n    image: postgres:18\n    volumes: ["db:/var/lib/postgresql/data"]\nvolumes:\n  db:\n', 'compatibility': True})
+        assert not old_pg_mount['ready'] and any('major-version migration' in p for p in old_pg_mount['problems']), old_pg_mount
+        print('PASS: CPU/disk checks shown; incompatible ARM image, unavailable tag and non-root host-directory permissions rejected before deployment', flush=True)
+        catalog = request('/api/templates/catalog')
+        example = next(item for item in catalog if item['name'] == 'nginx golang')
+        example_draft = request('/api/templates/import', {'url': example['url']})
+        fetched = request('/api/templates/files', {'compose_content': example_draft['compose_content'], 'source_url': example_draft['project_source'], 'fetch': True})
+        assert len(fetched['files']) > 1 and all('/' + example['url'].split('/')[5] + '/' in f['source'] for f in fetched['files'].values()), fetched
+        fetched_check = request('/api/projects/review', {'name': 'fetched-project', 'compose_content': example_draft['compose_content'], 'files': fetched['files']})
+        assert fetched_check['ready'], fetched_check
+        print('PASS: supporting files and full local build context fetched from the pinned public source revision and passed pre-deploy review', flush=True)
     passed = True
     print('PASS: authenticated template review; real host directories/files checked read-only; placeholder/missing bind sources and external volumes blocked without creation; core-only paths mapped to host sources; stack .env respected and dashboard credentials excluded; strict bind sources preserved after deployment; probe helpers cleaned', flush=True)
     if os.environ.get('DOCKTUN_KEEP_TEST_ENGINE') == '1':

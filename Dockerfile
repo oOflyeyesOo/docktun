@@ -19,6 +19,7 @@ COPY backend/ ./
 ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /template-helper ./cmd/template-helper
 COPY zeroconf/ /zeroconf-src/
 RUN cd /zeroconf-src && go test ./... && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /zeroconf .
 
@@ -33,6 +34,7 @@ WORKDIR /app
 
 # Copy compiled backend binary and built frontend SPA assets
 COPY --from=backend-builder /server /app/server
+COPY --from=backend-builder /template-helper /app/template-helper
 COPY --from=backend-builder /zeroconf /app/zeroconf
 COPY --from=frontend-builder /app/dist /app/dist
 

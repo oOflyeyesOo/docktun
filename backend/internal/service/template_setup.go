@@ -5,37 +5,42 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
+	"docktun/internal/templateprobe"
 	"gopkg.in/yaml.v3"
 )
 
 // Setup edits a draft only. Actual resource creation remains in the audited
 // project deployment flow, after Compose and Docker-host storage validation.
 type TemplateSetupInput struct {
-	Compose string                        `json:"compose_content"`
-	Env     string                        `json:"env_content"`
-	Apply   bool                          `json:"apply"`
-	Values  map[string]string             `json:"values"`
-	Storage map[string]SetupStorageChoice `json:"storage"`
+	Compose             string                        `json:"compose_content"`
+	Env                 string                        `json:"env_content"`
+	ConnectDependencies bool                          `json:"connect_dependencies"`
+	CredentialLinks     map[string]string             `json:"credential_links"`
+	Apply               bool                          `json:"apply"`
+	Values              map[string]string             `json:"values"`
+	Storage             map[string]SetupStorageChoice `json:"storage"`
 }
 type SetupStorageChoice struct {
 	Mode   string `json:"mode"`
 	Source string `json:"source"`
 }
 type SetupField struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Service  string `json:"service"`
-	Value    string `json:"value"`
-	Kind     string `json:"kind"`
-	Hint     string `json:"hint"`
-	Required bool   `json:"required"`
-	Password bool   `json:"password"`
-	Secret   bool   `json:"secret"`
+	PortUses []templateprobe.Use `json:"port_uses,omitempty"`
+	ID       string              `json:"id"`
+	Name     string              `json:"name"`
+	Service  string              `json:"service"`
+	Value    string              `json:"value"`
+	Kind     string              `json:"kind"`
+	Hint     string              `json:"hint"`
+	Required bool                `json:"required"`
+	Password bool                `json:"password"`
+	Secret   bool                `json:"secret"`
 }
 type SetupStorage struct {
 	ID        string `json:"id"`
@@ -47,17 +52,20 @@ type SetupStorage struct {
 	Hint      string `json:"hint"`
 }
 type TemplateSetup struct {
-	Fields  []SetupField   `json:"fields"`
-	Storage []SetupStorage `json:"storage"`
-	Notes   []string       `json:"notes"`
-	Compose string         `json:"compose_content,omitempty"`
-	Env     string         `json:"env_content"`
+	Dependencies    []SetupDependency     `json:"dependencies"`
+	CredentialLinks []SetupCredentialLink `json:"credential_links"`
+	AppliedValues   map[string]string     `json:"applied_values,omitempty"`
+	Fields          []SetupField          `json:"fields"`
+	Storage         []SetupStorage        `json:"storage"`
+	Notes           []string              `json:"notes"`
+	Compose         string                `json:"compose_content,omitempty"`
+	Env             string                `json:"env_content"`
 }
 
 var setupInterpolation = regexp.MustCompile(`\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:-|-|:\?|\?|:\+|\+)([^{}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
 var setupPassword = regexp.MustCompile(`(?i)(password|passwd|(^|_)pass($|_))`)
 var setupSecret = regexp.MustCompile(`(?i)(password|passwd|secret|token|api_?key|auth_?key|(^|_)pass($|_))`)
-var setupSimplePort = regexp.MustCompile(`^((?:[0-9.]+:)?)([0-9]+):([0-9]+)(/(?:tcp|udp))?$`)
+var setupSimplePort = regexp.MustCompile(`^((?:[0-9.]+:|\[[0-9a-fA-F:]+\]:)?)([0-9]+):([0-9]+)(/(?:tcp|udp))?$`)
 
 func setupGet(node *yaml.Node, key string) *yaml.Node {
 	if node == nil || node.Kind != yaml.MappingNode {
@@ -169,6 +177,12 @@ func setupMountParts(value string) []string {
 		if value[i] == '}' && depth > 0 {
 			depth--
 		}
+		if value[i] == '[' {
+			depth++
+		}
+		if value[i] == ']' && depth > 0 {
+			depth--
+		}
 		if value[i] == ':' && depth == 0 {
 			parts = append(parts, value[start:i])
 			start = i + 1
@@ -178,7 +192,7 @@ func setupMountParts(value string) []string {
 }
 
 func ConfigureTemplate(input TemplateSetupInput) (TemplateSetup, error) {
-	result := TemplateSetup{Fields: []SetupField{}, Storage: []SetupStorage{}, Notes: []string{}}
+	result := TemplateSetup{Fields: []SetupField{}, Storage: []SetupStorage{}, Notes: []string{}, Dependencies: []SetupDependency{}, CredentialLinks: []SetupCredentialLink{}}
 	if len(input.Compose) > 1<<20 || len(input.Env) > 128<<10 || strings.TrimSpace(input.Compose) == "" {
 		return result, fmt.Errorf("provide a Compose draft up to 1 MiB and Environment up to 128 KiB")
 	}
@@ -208,6 +222,11 @@ func ConfigureTemplate(input TemplateSetupInput) (TemplateSetup, error) {
 			hint = "Timezone, for example America/Chicago."
 		}
 		secret := setupSecret.MatchString(name)
+		if address, err := url.Parse(value); err == nil && address.User != nil {
+			if _, ok := address.User.Password(); ok {
+				secret = true
+			}
+		}
 		password := setupPassword.MatchString(name) && !strings.HasSuffix(strings.ToUpper(name), "_FILE") && !strings.Contains(strings.ToUpper(name), "HASH")
 		result.Fields = append(result.Fields, SetupField{ID: id, Name: name, Service: service, Value: value, Kind: kind, Hint: hint, Required: required, Password: password, Secret: secret})
 		setters[id] = set
@@ -275,11 +294,15 @@ func ConfigureTemplate(input TemplateSetupInput) (TemplateSetup, error) {
 		}
 	}
 	addLiteral := func(node *yaml.Node, name, service, kind, hint string, set func(string) error) {
-		if node == nil || node.Kind != yaml.ScalarNode || node.Tag == "!!null" || strings.Contains(node.Value, "$") {
+		if node == nil || node.Kind != yaml.ScalarNode || node.Tag == "!!null" {
+			return
+		}
+		literal, ok := setupLiteral(node.Value)
+		if !ok {
 			return
 		}
 		counter++
-		addField(fmt.Sprintf("field:%d", counter), name, service, node.Value, kind, hint, false, set)
+		addField(fmt.Sprintf("field:%d", counter), name, service, literal, kind, hint, false, set)
 	}
 	for i := 0; i+1 < len(services.Content); i += 2 {
 		name, service := services.Content[i].Value, services.Content[i+1]
@@ -295,7 +318,7 @@ func ConfigureTemplate(input TemplateSetupInput) (TemplateSetup, error) {
 			} else if environment.Kind == yaml.SequenceNode {
 				for _, node := range environment.Content {
 					key, value, ok := strings.Cut(node.Value, "=")
-					if !ok || strings.Contains(value, "$") {
+					if !ok {
 						continue
 					}
 					copy := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
@@ -316,7 +339,7 @@ func ConfigureTemplate(input TemplateSetupInput) (TemplateSetup, error) {
 					copy := &yaml.Node{Kind: yaml.ScalarNode, Value: match[2]}
 					addLiteral(copy, "Host port → "+match[3]+match[4], name, "port", "Choose an unused host port (1–65535).", func(value string) error {
 						port, err := strconv.Atoi(value)
-						if err != nil || port < 1 || port > 65535 {
+						if err != nil || port < 0 || port > 65535 {
 							return fmt.Errorf("host port must be 1–65535")
 						}
 						setupSet(node, match[1]+value+":"+match[3]+match[4])
@@ -325,7 +348,7 @@ func ConfigureTemplate(input TemplateSetupInput) (TemplateSetup, error) {
 				} else if published := setupGet(node, "published"); published != nil {
 					addLiteral(published, "Host port", name, "port", "Choose an unused host port (1–65535).", func(value string) error {
 						port, err := strconv.Atoi(value)
-						if err != nil || port < 1 || port > 65535 {
+						if err != nil || port < 0 || port > 65535 {
 							return fmt.Errorf("host port must be 1–65535")
 						}
 						setupSet(published, value)
@@ -456,6 +479,10 @@ func ConfigureTemplate(input TemplateSetupInput) (TemplateSetup, error) {
 		}
 	}
 	result.Notes = append(result.Notes, "Some apps create their first administrator in the app's own web UI. Credentials not declared by the template cannot be configured here.")
+	setupPortMetadata(root, &result)
+	if err := setupDependencyPlan(root, &result, &input); err != nil {
+		return result, err
+	}
 	if !input.Apply {
 		return result, nil
 	}
@@ -513,6 +540,7 @@ func ConfigureTemplate(input TemplateSetupInput) (TemplateSetup, error) {
 		return result, err
 	}
 	result.Compose = string(raw)
+	result.AppliedValues = input.Values
 	// Preserve existing comments/expressions for unchanged values; only replace
 	// explicitly edited Environment entries and append new shared variables.
 	lines := strings.Split(input.Env, "\n")

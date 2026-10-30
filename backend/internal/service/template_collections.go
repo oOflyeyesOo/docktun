@@ -11,6 +11,7 @@ import (
 	"html"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,22 +74,32 @@ func (s *TemplateLibrary) pinFile(ctx context.Context, address string) (string, 
 			return address, nil
 		}
 	}
-	raw, err := s.fetch(ctx, "https://api.github.com/repos/"+parts[0]+"/"+parts[1]+"/commits/"+url.PathEscape(parts[2]))
-	if err != nil {
-		return "", err
+	var lastErr error
+	for end := 3; end < len(parts) && end <= 10; end++ {
+		ref := strings.Join(parts[2:end], "/")
+		raw, err := s.fetch(ctx, "https://api.github.com/repos/"+parts[0]+"/"+parts[1]+"/commits/"+url.PathEscape(ref))
+		if err != nil {
+			lastErr = err
+			if strings.Contains(err.Error(), "HTTP 404") {
+				continue
+			}
+			return "", err
+		}
+		var commit struct {
+			SHA string `json:"sha"`
+		}
+		if json.Unmarshal(raw, &commit) != nil || len(commit.SHA) != 40 {
+			return "", fmt.Errorf("invalid public repository revision")
+		}
+		if _, err := hex.DecodeString(commit.SHA); err != nil {
+			return "", fmt.Errorf("invalid repository revision")
+		}
+		pinned := append([]string{parts[0], parts[1], commit.SHA}, parts[end:]...)
+		u.Path = "/" + strings.Join(pinned, "/")
+		u.RawPath = ""
+		return u.String(), nil
 	}
-	var commit struct {
-		SHA string `json:"sha"`
-	}
-	if json.Unmarshal(raw, &commit) != nil || len(commit.SHA) != 40 {
-		return "", fmt.Errorf("invalid public repository revision")
-	}
-	if _, err := hex.DecodeString(commit.SHA); err != nil {
-		return "", fmt.Errorf("invalid repository revision")
-	}
-	parts[2] = commit.SHA
-	u.Path = "/" + strings.Join(parts, "/")
-	return u.String(), nil
+	return "", fmt.Errorf("cannot resolve public file revision: %w", lastErr)
 }
 
 func (s *TemplateLibrary) PortainerCatalog(ctx context.Context, address string) ([]CommunityTemplate, error) {
@@ -314,7 +325,14 @@ func portainerCompose(raw []byte) (string, error) {
 		if !strings.HasPrefix(volume.Container, "/") {
 			return "", fmt.Errorf("invalid container volume path")
 		}
-		mount := map[string]any{"target": literalTemplate(volume.Container), "read_only": volume.Readonly}
+		target := volume.Container
+		// This conversion creates a new editable draft, never migrates an existing
+		// database. The official image changed its default data layout in v18.
+		if modernPostgresTemplate(item.Image) && target == "/var/lib/postgresql/data" && env["PGDATA"] == "" {
+			target = "/var/lib/postgresql"
+			notes = append(notes, "# Storage: PostgreSQL 18+ uses /var/lib/postgresql. Existing databases require a separate major-version migration.")
+		}
+		mount := map[string]any{"target": literalTemplate(target), "read_only": volume.Readonly}
 		if volume.Bind != "" {
 			mount["type"] = "bind"
 			mount["source"] = literalTemplate(volume.Bind)
@@ -343,6 +361,27 @@ func portainerCompose(raw []byte) (string, error) {
 	document["services"] = map[string]any{templateSlug(item.Title): service}
 	content, err := yaml.Marshal(document)
 	return strings.Join(notes, "\n") + "\n" + string(content), err
+}
+
+func modernPostgresTemplate(image string) bool {
+	if strings.Contains(image, "@") {
+		return false // A digest alone does not reveal its major version.
+	}
+	image = strings.TrimPrefix(image, "docker.io/")
+	image = strings.TrimPrefix(image, "library/")
+	repository, tag, tagged := strings.Cut(image, ":")
+	if repository != "postgres" {
+		return false
+	}
+	if !tagged || tag == "latest" {
+		return true
+	}
+	major := strings.FieldsFunc(tag, func(r rune) bool { return r == '.' || r == '-' })
+	if len(major) == 0 {
+		return false
+	}
+	version, err := strconv.Atoi(major[0])
+	return err == nil && version >= 18
 }
 
 func (s *TemplateLibrary) ImportPortainer(ctx context.Context, collectionURL, id string) (string, string, error) {
