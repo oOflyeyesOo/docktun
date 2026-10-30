@@ -152,3 +152,12 @@ func TestGuidedSetupDisplaysComposeDefaultWithAnEmptyEnvironmentValue(t *testing
 		t.Fatalf("wrong effective default: %+v %v", schema, err)
 	}
 }
+
+func TestGuidedEnvironmentQuotingRetainsTrailingBackslashesAndDollars(t *testing.T) {
+	for _, value := range []string{"plain", `p$'\#word`, `p$'\#word\`, `literal\`, `two\\`, `dollar$\`} {
+		values, err := setupEnv("PASSWORD=" + setupQuote(value) + "\n")
+		if err != nil || values["PASSWORD"] != value {
+			t.Fatalf("password changed: %q => %q (%v)", value, values["PASSWORD"], err)
+		}
+	}
+}

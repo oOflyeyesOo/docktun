@@ -113,17 +113,38 @@ func setupEnv(raw string) (map[string]string, error) {
 			}
 			value = strings.ReplaceAll(value[1:len(value)-1], `\'`, "'")
 		} else {
-			if strings.Contains(value, "$") {
-				return nil, fmt.Errorf("Environment interpolation needs the advanced editor; literal values can be single-quoted")
-			}
 			if strings.HasPrefix(value, `"`) {
+				// Compose accepts backslash-dollar in double quotes. Decode that
+				// literal without treating genuine .env interpolation as a value.
+				var quoted strings.Builder
+				for i := 0; i < len(value); i++ {
+					if value[i] == '\\' && i+1 < len(value) {
+						if value[i+1] == '$' {
+							quoted.WriteByte('$')
+						} else {
+							quoted.WriteByte('\\')
+							quoted.WriteByte(value[i+1])
+						}
+						i++
+						continue
+					}
+					if value[i] == '$' {
+						return nil, fmt.Errorf("Environment interpolation needs the advanced editor; literal values can be single-quoted")
+					}
+					quoted.WriteByte(value[i])
+				}
 				var decoded string
-				if json.Unmarshal([]byte(value), &decoded) != nil {
+				if json.Unmarshal([]byte(quoted.String()), &decoded) != nil {
 					return nil, fmt.Errorf("this quoted Environment value needs the advanced editor")
 				}
 				value = decoded
-			} else if index := strings.Index(value, " #"); index >= 0 {
-				value = strings.TrimSpace(value[:index])
+			} else {
+				if strings.Contains(value, "$") {
+					return nil, fmt.Errorf("Environment interpolation needs the advanced editor; literal values can be single-quoted")
+				}
+				if index := strings.Index(value, " #"); index >= 0 {
+					value = strings.TrimSpace(value[:index])
+				}
 			}
 		}
 		values[key] = value
@@ -131,6 +152,10 @@ func setupEnv(raw string) (map[string]string, error) {
 	return values, nil
 }
 func setupQuote(value string) string {
+	// A final backslash would escape a single quote's closing delimiter.
+	if strings.HasSuffix(value, `\`) {
+		return strings.ReplaceAll(strconv.Quote(value), "$", `\$`)
+	}
 	return "'" + strings.ReplaceAll(value, "'", `\'`) + "'"
 }
 

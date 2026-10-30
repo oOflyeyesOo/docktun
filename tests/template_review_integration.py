@@ -189,7 +189,7 @@ volumes:
 """
         schema = request('/api/templates/setup', {'compose_content': setup_compose})
         assert len([f for f in schema['fields'] if f['id'] == 'var:APP_PASSWORD']) == 1, schema
-        password = "p$'\\#word"
+        password = "p$'\\#word\\"
         literal_id = next(f['id'] for f in schema['fields'] if f['name'] == 'LITERAL_PASSWORD')
         configured = request('/api/templates/setup', {'compose_content': setup_compose, 'apply': True,
             'values': {'var:APP_PASSWORD': password, literal_id: password},
