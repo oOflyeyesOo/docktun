@@ -45,6 +45,8 @@ func (h *Projects) Create(w http.ResponseWriter, r *http.Request) {
 		ComposeContent string `json:"compose_content"`
 		EnvContent     string `json:"env_content"`
 		AutoStart      bool   `json:"auto_start"`
+		ReviewStorage  bool   `json:"review_storage"`
+		TemplateSource string `json:"template_source"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -76,6 +78,17 @@ func (h *Projects) Create(w http.ResponseWriter, r *http.Request) {
 		body.Path = filepath.Join(service.ProjectsRoot(), body.Name)
 	}
 
+	if body.ReviewStorage {
+		review, err := service.ReviewCompose(r.Context(), service.ComposeReviewInput{Name: body.Name, Path: body.Path, Compose: body.ComposeContent, Env: body.EnvContent})
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !review.Ready {
+			jsonError(w, "storage review needs attention: "+strings.Join(review.Problems, "; "), http.StatusConflict)
+			return
+		}
+	}
 	p, err := h.svc.Create(body.Name, body.Path, body.RepoURL, body.GitUsername, body.GitToken)
 	if err != nil {
 		if errors.Is(err, service.ErrProjectConflict) {
@@ -108,6 +121,12 @@ func (h *Projects) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// If auto_start is true and compose file exists, start compose up -d asynchronously
+	if body.ReviewStorage {
+		if err := h.svc.MarkStorageReviewed(p.ID, body.TemplateSource); err != nil {
+			jsonError(w, "cannot save template review metadata: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 	if body.AutoStart && strings.TrimSpace(body.ComposeContent) != "" {
 		onDone := func(output string) {
 			h.audit.Log(userID, "project_up", p.Name+"\n"+output, r.RemoteAddr)

@@ -115,6 +115,7 @@ func main() {
   settingsHandler := handler.NewSettings(database, auditSvc)
   notifHandler := handler.NewNotifications(dataDir)
   projectsHandler := handler.NewProjects(projectsSvc, auditSvc)
+  templatesHandler := handler.NewTemplates()
   dockerRunHandler := handler.NewDockerRun(dockerRunSvc, auditSvc)
   dockerContainersHandler := handler.NewDockerContainers(dockerContainersSvc)
   meshHandler := handler.NewMesh(meshSvc)
@@ -134,6 +135,9 @@ func main() {
 
   r.Group(func(r chi.Router) {
     r.Use(authMw.Verify)
+    r.Get("/api/templates/catalog", templatesHandler.Catalog)
+    r.Post("/api/templates/import", templatesHandler.Import)
+    r.Post("/api/projects/review", templatesHandler.Review)
     updater := handler.NewSelfUpdate(service.NewSelfUpdater(dataDir), auditSvc)
     servicesUpdater := handler.NewManagedServices(service.NewManagedServices(dataDir), auditSvc)
     r.Get("/api/services", servicesUpdater.Status)

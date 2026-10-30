@@ -28,10 +28,11 @@ type dockerPort struct {
 }
 
 type dockerContainer struct {
-	ID              string       `json:"Id"`
-	Names           []string     `json:"Names"`
-	State           string       `json:"State"`
-	Ports           []dockerPort `json:"Ports"`
+	Labels          map[string]string `json:"Labels"`
+	ID              string            `json:"Id"`
+	Names           []string          `json:"Names"`
+	State           string            `json:"State"`
+	Ports           []dockerPort      `json:"Ports"`
 	NetworkSettings struct {
 		Networks map[string]struct {
 			IPAddress string `json:"IPAddress"`
@@ -278,6 +279,9 @@ func (m *mDNSManager) refreshContainers(client *http.Client) {
 	newRoutes := make(map[string]*containerRoute)
 
 	for _, c := range list {
+		if c.Labels["docktun.storage-check"] != "" || c.Labels["docktun.update.target"] != "" {
+			continue
+		}
 		var internalIP string
 		// Prefer docktun or cloudflared bridge network IP if available
 		if netw, ok := c.NetworkSettings.Networks["docktun"]; ok && netw.IPAddress != "" {

@@ -113,7 +113,9 @@ func (s *Projects) List() ([]Project, error) {
 // A provider-like name or an inaccessible host path does not make a stack orphaned.
 func (s *Projects) PruneDuplicates() (int, error) {
 	result, err := s.db.Exec(`DELETE FROM projects WHERE id NOT IN (
-  SELECT MIN(id) FROM projects GROUP BY name,path,repo_url,git_username,git_token
+  SELECT MIN(id) FROM projects GROUP BY name,path,repo_url,git_username,git_token,
+  (SELECT source FROM project_storage_reviews WHERE project_id=projects.id),
+  (SELECT files FROM project_compose_sources WHERE project_id=projects.id)
  )`)
 	if err != nil {
 		return 0, err
@@ -246,8 +248,20 @@ func (s *Projects) DeleteProject(id int, down bool, removeFiles bool) error {
 			return fmt.Errorf("containers removed but project files could not be deleted: %w", err)
 		}
 	}
-	_, err = s.db.Exec("DELETE FROM projects WHERE id = ?", id)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, table := range []string{"project_storage_reviews", "project_compose_sources"} {
+		if _, err := tx.Exec("DELETE FROM "+table+" WHERE project_id=?", id); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec("DELETE FROM projects WHERE id=?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Projects) removeStackResources(name string) error {
@@ -540,7 +554,7 @@ func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
 	if p, err := s.GetByID(id); err == nil {
 		projectName = p.Name
 	}
-	cmd, err := composeProjectCommandWithFiles(projectName, path, sources, args...)
+	cmd, err := composeProjectCommandPolicy(projectName, path, sources, reviewedProject(s.db, id), args...)
 	if err != nil {
 		s.appendOutput(id, "[ERROR] "+err.Error())
 		return

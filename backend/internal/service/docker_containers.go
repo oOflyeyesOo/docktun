@@ -203,7 +203,7 @@ func (s *DockerContainers) List() ([]Container, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "docker", "ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.State}}\t{{.Ports}}\t{{.RunningFor}}\t{{.Command}}\t{{.Networks}}\t{{.Label \"docktun.update.target\"}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}\t{{.Label \"com.docker.compose.project.config_files\"}}")
+	cmd := exec.CommandContext(ctx, "docker", "ps", "-a", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.State}}\t{{.Ports}}\t{{.RunningFor}}\t{{.Command}}\t{{.Networks}}\t{{or (.Label \"docktun.update.target\") (.Label \"docktun.storage-check\")}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}\t{{.Label \"com.docker.compose.project.config_files\"}}")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("docker ps failed: %w", err)
@@ -2008,6 +2008,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 	if s.isSelfContainer(detail.ID, cname) {
 		return "", fmt.Errorf("cannot safely identify DockTun for self-update; use Settings and configure DOCKTUN_CONTAINER if using a custom hostname")
 	}
+	strictStorage := reviewedProject(s.db, detail.ProjectID)
 	image := detail.Image
 	if image == "" {
 		return "", fmt.Errorf("container has no image specified")
@@ -2115,7 +2116,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 
 		if isLocalBuild {
 			appendLog(fmt.Sprintf("[BUILD] Building local service %s via Docker Compose in %s...", compService, validComposeDir))
-			buildCmd, buildPlanErr := composeProjectCommandWithFiles(compProj, validComposeDir, composeSources, "build", compService)
+			buildCmd, buildPlanErr := composeProjectCommandPolicy(compProj, validComposeDir, composeSources, strictStorage, "build", compService)
 			var bOut []byte
 			bErr := buildPlanErr
 			if bErr == nil {
@@ -2129,7 +2130,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		}
 
 		appendLog(fmt.Sprintf("[STEP 2/4] Updating via Docker Compose in %s (service: %s)...", validComposeDir, compService))
-		upCmd, planErr := composeProjectCommandWithFiles(compProj, validComposeDir, composeSources, "up", "-d", "--no-deps", "--force-recreate", compService)
+		upCmd, planErr := composeProjectCommandPolicy(compProj, validComposeDir, composeSources, strictStorage, "up", "-d", "--no-deps", "--force-recreate", compService)
 		if planErr != nil {
 			return logOutput.String(), fmt.Errorf("validate project before update: %w", planErr)
 		}
@@ -2145,7 +2146,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 				backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
 				_ = exec.Command("docker", "stop", detail.ID).Run()
 				if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
-					retryCmd, retryPlanErr := composeProjectCommandWithFiles(compProj, validComposeDir, composeSources, "up", "-d", "--no-deps", "--force-recreate", compService)
+					retryCmd, retryPlanErr := composeProjectCommandPolicy(compProj, validComposeDir, composeSources, strictStorage, "up", "-d", "--no-deps", "--force-recreate", compService)
 					var retryOut []byte
 					retryErr := retryPlanErr
 					if retryErr == nil {
@@ -2168,6 +2169,10 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 				appendLog(fmt.Sprintf("[NOTE] Compose notice: %s. Attempting direct recreation...", strings.TrimSpace(string(upOut))))
 			}
 		}
+	}
+
+	if !recreated && strictStorage {
+		return logOutput.String(), fmt.Errorf("reviewed stack could not be recreated from its Compose sources; restore its files and host storage before retrying")
 	}
 
 	// Strategy B: Scaffold compose and recreate

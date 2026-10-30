@@ -83,6 +83,15 @@ try:
         raise AssertionError('providers were not staged stopped')
     secret = inner('exec', 'docktun', 'cat', '/app/data/setup.token')
     token = request('/api/setup/complete', {'setup_token': secret, 'admin_username': 'owner', 'admin_password': 'integration-password-123', 'tunnel': {'type': 'tailscale'}})['access_token']
+    managed = {row['name']: row for row in request('/api/services')['services']}
+    for name, kind in [('docktun-cloudflared', 'cloudflare'), ('docktun-tailscale', 'tailscale'), ('docktun-wireguard', 'wireguard')]:
+        assert managed[name]['kind'] == kind and not managed[name]['running'], managed
+    own = json.loads(inner('inspect', 'docktun'))[0]
+    wire = json.loads(inner('inspect', 'docktun-wireguard'))[0]
+    data_source = next(m['Source'] for m in own['Mounts'] if m['Destination'] == '/app/data')
+    state_source = next(m['Source'] for m in wire['Mounts'] if m['Destination'] == '/config')
+    assert state_source == data_source + '/wireguard' and state_source != '/app/data/wireguard', wire['Mounts']
+    assert wire['Config']['Labels']['docktun.provider'] == 'wireguard'
     existing_id = inner('run', '-d', '--name', 'already-running', 'alpine:3.23', 'sleep', '3600')
     for mode in ['compose', 'direct']:
         request('/api/docker/run', {'command': 'docker run --name already-running alpine:3.23 sleep 3600', 'mode': mode}, expected=400)

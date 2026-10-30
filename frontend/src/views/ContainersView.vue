@@ -6,6 +6,8 @@ import { defaultComposeExample, composeTemplates } from '../lib/compose-template
 import { getPrimaryPort, cleanContainerName, hasLocalWebLink, localAddress } from '../lib/containerPorts.mjs'
 import { containerStack, stackProjectID } from '../lib/container-stacks.mjs'
 import ContainerExposure from "../components/ContainerExposure.vue"
+import ComposeStorageReview from '../components/ComposeStorageReview.vue'
+import CommunityTemplates from '../components/CommunityTemplates.vue'
 import { computed, onMounted, onUnmounted, reactive, ref, toRefs, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -361,6 +363,8 @@ const composeDeployForm = ref({
   show_env: false,
 })
 const composeDeploying = ref(false)
+const composeStorageReady = ref(false)
+const composeTemplateSource = ref('')
 const composeTemplateCategory = ref<'all' | 'web' | 'database' | 'monitoring' | 'media' | 'utility'>('all')
 const composeTemplateSearch = ref('')
 
@@ -405,12 +409,23 @@ const filteredTemplates = computed(() => {
 
 function selectTemplate(tmpl: ComposeTemplate) {
   composeDeployForm.value.name = tmpl.id
-  composeDeployForm.value.path = `./projects/${tmpl.id}`
+  composeDeployForm.value.path = ''
+  composeTemplateSource.value = 'bundled:' + tmpl.id
   composeDeployForm.value.compose_content = tmpl.compose
   composeDeployForm.value.env_content = tmpl.env || ''
   if (tmpl.env) {
     composeDeployForm.value.show_env = true
   }
+  launchTab.value = 'compose'
+}
+
+function selectCommunityTemplate(template: any) {
+  composeDeployForm.value.name = template.name
+  composeDeployForm.value.path = ''
+  composeDeployForm.value.compose_content = template.compose_content
+  composeDeployForm.value.env_content = ''
+  composeDeployForm.value.show_env = true
+  composeTemplateSource.value = template.source_url
   launchTab.value = 'compose'
 }
 
@@ -438,16 +453,19 @@ async function deployComposeStack() {
     alert('docker-compose.yml content cannot be empty.')
     return
   }
+  if (!composeStorageReady.value) { alert('Review storage after editing this stack before deploying.'); return }
   composeDeploying.value = true
   try {
     const res: any = await apiFetch('/api/projects', {
       method: 'POST',
       body: JSON.stringify({
         name: name,
-        path: composeDeployForm.value.path.trim() || `./projects/${name}`,
+        path: composeDeployForm.value.path.trim(),
         compose_content: composeDeployForm.value.compose_content,
         env_content: composeDeployForm.value.env_content,
         auto_start: true,
+        review_storage: true,
+        template_source: composeTemplateSource.value,
       }),
     })
     showLaunchModal.value = false
@@ -3826,7 +3844,7 @@ onUnmounted(() => {
               <Rocket class="h-5 w-5 text-cyan-600" />
               <span>Deploy New Container or Stack</span>
             </h3>
-            <p class="text-xs text-slate-600">Launch a Docker Compose stack, use 1-click templates, execute Docker run commands, or connect a Git repository.</p>
+            <p class="text-xs text-slate-600">Launch a Docker Compose stack, use app templates, execute Docker run commands, or connect a Git repository.</p>
           </div>
           <button @click="showLaunchModal = false" class="text-slate-600 hover:text-slate-800">
             <X class="h-5 w-5" />
@@ -3889,7 +3907,7 @@ onUnmounted(() => {
               <input
                 v-model="composeDeployForm.path"
                 class="cyber-input text-xs font-mono"
-                :placeholder="composeDeployForm.name ? `./projects/${composeDeployForm.name}` : './projects/my-stack'"
+                placeholder="Leave empty to use DockTun's persistent projects folder"
               />
             </div>
           </div>
@@ -4001,18 +4019,20 @@ onUnmounted(() => {
               <textarea
                 v-model="composeDeployForm.env_content"
                 rows="4"
-                class="cyber-input font-mono text-xs w-full leading-relaxed bg-slate-50 border-slate-200 text-amber-200"
+                class="cyber-input font-mono text-xs w-full leading-relaxed bg-slate-50 border-slate-200 text-slate-800"
                 placeholder="KEY=value&#10;POSTGRES_PASSWORD=secret"
                 spellcheck="false"
               ></textarea>
             </div>
           </div>
 
+          <p v-if="composeTemplateSource" class="text-xs text-slate-500 break-all">Template source: {{ composeTemplateSource }}</p>
+          <ComposeStorageReview :input="{ name: composeDeployForm.name, path: composeDeployForm.path, compose_content: composeDeployForm.compose_content, env_content: composeDeployForm.env_content }" @ready="composeStorageReady = $event" />
           <div class="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
             <button @click="showLaunchModal = false" class="cyber-btn-secondary text-xs">Cancel</button>
             <button
               @click="deployComposeStack"
-              :disabled="composeDeploying || !composeDeployForm.name.trim() || !composeDeployForm.compose_content.trim()"
+              :disabled="composeDeploying || !composeStorageReady || !composeDeployForm.name.trim() || !composeDeployForm.compose_content.trim()"
               class="cyber-btn flex items-center gap-2 text-xs text-cyan-700 border-cyan-500/80 bg-cyan-50/40 hover:bg-cyan-100/60 font-bold"
             >
               <RotateCcw v-if="composeDeploying" class="h-3.5 w-3.5 animate-spin" />
@@ -4024,6 +4044,8 @@ onUnmounted(() => {
 
         <!-- TAB 2: Compose App Templates -->
         <div v-if="launchTab === 'templates'" class="space-y-4 overflow-y-auto pr-1 flex-1">
+          <CommunityTemplates @select="selectCommunityTemplate" />
+          <h3 class="text-sm font-semibold text-slate-800">Included with DockTun</h3>
           <div class="flex flex-col sm:flex-row items-center justify-between gap-3">
             <!-- Category Pills -->
             <div class="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
@@ -4090,7 +4112,7 @@ onUnmounted(() => {
               </div>
 
               <div class="pt-3 mt-2 border-t border-slate-200/80 flex items-center justify-between">
-                <span class="text-[10px] text-slate-500 font-mono">1-click starter</span>
+                <span class="text-[10px] text-slate-500 font-mono">Compose starter</span>
                 <button
                   type="button"
                   @click="selectTemplate(tmpl)"

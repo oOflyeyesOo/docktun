@@ -100,6 +100,10 @@ func (d *DB) migrate() error {
 			files TEXT NOT NULL,
 			error TEXT NOT NULL DEFAULT ''
 		);
+		CREATE TABLE IF NOT EXISTS project_storage_reviews (
+			project_id INTEGER PRIMARY KEY,
+			source TEXT NOT NULL DEFAULT ''
+		);
 
 		CREATE TABLE IF NOT EXISTS container_exposures (
 			container_name TEXT PRIMARY KEY,
