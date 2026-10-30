@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getPrimaryPort, cleanContainerName, getMdnsPortSuffix } from './containerPorts.mjs'
+import { getPrimaryPort, cleanContainerName, getMdnsPortSuffix, hasLocalWebLink, localAddress } from './containerPorts.mjs'
+
+test('local addresses do not promise a web page for database or UDP listeners', () => {
+  for (const ports of ['0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp', '3306/tcp', '6379/tcp', '51820/udp', '53/tcp, 53/udp', '']) {
+    assert.equal(hasLocalWebLink(ports), false, ports)
+    assert.equal(localAddress({ name: '/Database', ports }), 'database.local')
+  }
+  for (const ports of ['127.0.0.1:18080->80/tcp', '3001/tcp', '12345/tcp', '5432/tcp, 8080/tcp']) {
+    assert.equal(hasLocalWebLink(ports), true, ports)
+    assert.equal(localAddress({ name: 'App', ports }), 'http://app.local')
+  }
+})
 
 test('exposure uses container TCP port rather than the published host port', () => {
   assert.equal(getPrimaryPort('127.0.0.1:18083->3001/tcp'), '3001')

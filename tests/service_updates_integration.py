@@ -79,7 +79,7 @@ try:
     inner('run', '--rm', '-v', 'data:/state', 'alpine:3.23', 'sh', '-c', 'touch /state/.initialized && chown -R 1001:1001 /state')
     socket_gid = docker('exec', engine, 'stat', '-c', '%g', '/var/run/docker.sock')
     core = inner('run', '-d', '--name', 'custom-dashboard', '--restart', 'unless-stopped', '--user', '1001:1001', '--group-add', socket_gid, '-p', '3001:3001', '--network', 'kept-network',
-                 '-v', 'data:/app/data', '-v', '/var/run/docker.sock:/var/run/docker.sock', '-e', 'DOCKTUN_PREPARE_PROVIDERS=false',
+                 '-v', 'data:/app/data', '-v', 'wireguard-state:/app/data/wireguard', '-v', '/var/run/docker.sock:/var/run/docker.sock', '-e', 'DOCKTUN_PREPARE_PROVIDERS=false',
                  '-e', 'DOCKTUN_UPDATE_IMAGE=' + core_candidate, 'fixture-core:installed')
     base = 'http://' + docker('port', engine, '3001/tcp').splitlines()[0]
     eventually(lambda: request('/api/setup/status'))
@@ -105,7 +105,12 @@ try:
     assert inspect('custom-dashboard')['Id'] == core
     inner('rm', '-f', 'docktun-tailscale')
     cloud = helper('docktun-cloudflared', 'cloudflare', helper_candidate)
-    wire = helper('docktun-wireguard', 'wireguard', helper_candidate, running=False)
+    # Legacy installer companion has no provider/Compose labels. Ownership must
+    # come from its image/name AND the same persisted state mounted in the core.
+    inner('tag', 'alpine:3.23', 'lscr.io/linuxserver/wireguard:fixture')
+    wire = inner('create', '--name', 'docktun-wireguard', '--restart', 'unless-stopped', '--network', 'kept-network',
+                 '--label', 'io.docktun.update-image=' + helper_candidate, '-v', 'wireguard-state:/config',
+                 'lscr.io/linuxserver/wireguard:fixture', 'sh', '-c', trap)
     node_name = 'docktun-ts-' + hashlib.sha256(b'photos').hexdigest()[:20]
     node = inner('run', '-d', '--name', node_name, '--restart', 'unless-stopped', '--network', 'kept-network', '--label', 'io.docktun.tailscale-app=photos',
                  '--label', 'io.docktun.update-image=' + helper_candidate, '-v', 'device-identity:/state', 'alpine:3.23', 'sh', '-c', trap)

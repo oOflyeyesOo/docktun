@@ -115,6 +115,27 @@ func managedServiceKind(c, core updateContainer) string {
 		}
 	}
 	image, _ := c.Config["Image"].(string)
+	// Older installers created WireGuard without provider labels. Require the
+	// exact companion name, image family and shared persistent state; a name or
+	// Compose project alone is not evidence that DockTun owns a user's VPN.
+	if name == "docktun-wireguard" && (image == "lscr.io/linuxserver/wireguard" || strings.HasPrefix(image, "lscr.io/linuxserver/wireguard:") || strings.HasPrefix(image, "lscr.io/linuxserver/wireguard@")) {
+		directory := filepath.Join(filepath.Dir(coreEnvironment(core, "DB_PATH", "/app/data/app.db")), "wireguard")
+		expected, err := providerMount(core, directory, "/config", false)
+		if err == nil {
+			for _, mount := range c.Mounts {
+				if mount.Destination != "/config" || !mount.RW {
+					continue
+				}
+				source := mount.Source
+				if mount.Type == "volume" {
+					source = mount.Name
+				}
+				if expected == fmt.Sprintf("type=%s,source=%s,target=/config", mount.Type, source) {
+					return "wireguard"
+				}
+			}
+		}
+	}
 	entry, _ := c.Config["Entrypoint"].([]any)
 	if name == "docktun-zeroconf" && c.HostConfig["NetworkMode"] == "host" && len(entry) == 1 && (entry[0] == "/app/zeroconf" || entry[0] == "/zeroconf") && (labels["io.docktun.service"] == "zeroconf" || strings.HasPrefix(image, "ghcr.io/ooflyeyesoo/docktun:") || strings.HasPrefix(image, "docktun-zeroconf:")) {
 		return "zeroconf"
@@ -152,7 +173,7 @@ func managedInventory(ctx context.Context, core updateContainer) ([]ManagedServi
 			candidate = true
 		}
 		for _, name := range summary.Names {
-			if strings.TrimPrefix(name, "/") == "docktun-zeroconf" {
+			if clean := strings.TrimPrefix(name, "/"); clean == "docktun-zeroconf" || clean == "docktun-wireguard" {
 				candidate = true
 			}
 		}
@@ -490,6 +511,9 @@ func replaceManagedService(ctx context.Context, row ManagedService, core updateC
 	body["Env"] = old.Config["Env"]
 	labels := containerLabels(old)
 	labels[serviceImageLabel] = row.Image
+	if row.Kind == "wireguard" || row.Kind == "tailscale" || row.Kind == "cloudflare" {
+		labels["docktun.provider"] = row.Kind
+	}
 	body["Labels"] = labels
 	if row.Kind == "zeroconf" {
 		labels["io.docktun.service"] = "zeroconf"
