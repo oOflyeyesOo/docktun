@@ -29,6 +29,10 @@ func composeProjectCommandWithFile(projectName, directory, source string, args .
 }
 
 func composeProjectCommandWithFiles(projectName, directory string, sources []string, args ...string) (*exec.Cmd, error) {
+	return composeProjectCommandPolicy(projectName, directory, sources, false, args...)
+}
+
+func composeProjectCommandPolicy(projectName, directory string, sources []string, strictStorage bool, args ...string) (*exec.Cmd, error) {
 	absolute, err := filepath.Abs(directory)
 	if err != nil {
 		return nil, err
@@ -80,6 +84,24 @@ func composeProjectCommandWithFiles(projectName, directory string, sources []str
 			return nil, err
 		}
 	}
+	if strictStorage {
+		services, _ := document["services"].(map[string]any)
+		for _, value := range services {
+			service, _ := value.(map[string]any)
+			volumes, _ := service["volumes"].([]any)
+			for _, value := range volumes {
+				volume, _ := value.(map[string]any)
+				if volume["type"] == "bind" {
+					bind, _ := volume["bind"].(map[string]any)
+					if bind == nil {
+						bind = map[string]any{}
+						volume["bind"] = bind
+					}
+					bind["create_host_path"] = false
+				}
+			}
+		}
+	}
 	resolved, err := json.Marshal(document)
 	if err != nil {
 		return nil, err
@@ -88,6 +110,7 @@ func composeProjectCommandWithFiles(projectName, directory string, sources []str
 	commandArgs = append(commandArgs, args...)
 	cmd := exec.Command("docker", commandArgs...)
 	cmd.Dir = absolute
+	cmd.Env = composeEnvironment()
 	cmd.Stdin = bytes.NewReader(resolved)
 	return cmd, nil
 }
@@ -99,6 +122,7 @@ func composeDockerOutput(ctx context.Context, args ...string) ([]byte, error) {
 func composeDockerOutputInDir(ctx context.Context, directory string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = directory
+	cmd.Env = composeEnvironment()
 	out, err := cmd.Output()
 	if err != nil {
 		detail := err.Error()
