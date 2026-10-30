@@ -152,6 +152,9 @@ func writeStagedTemplateFiles(directory string, files map[string]TemplateProject
 }
 
 func (s *Projects) SaveTemplateFiles(id int, files map[string]TemplateProjectFile) error {
+	if len(files) == 0 {
+		return nil
+	}
 	decoded, err := decodeTemplateFiles(files)
 	if err != nil {
 		return err

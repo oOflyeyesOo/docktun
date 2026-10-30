@@ -137,7 +137,10 @@ func TestSupportingFilesAreConfinedPrivateAndNeverOverwrite(t *testing.T) {
 		t.Fatal(info.Mode())
 	}
 	svc := projectPathService(t)
-	project, err := svc.Create("assets", t.TempDir(), "", "", "")
+	projectDirectory := t.TempDir()
+	mounts, _ := json.Marshal([]map[string]any{{"Type": "bind", "Source": projectDirectory, "Destination": projectDirectory, "RW": true}})
+	projectMountFixture(t, svc, string(mounts))
+	project, err := svc.Create("assets", projectDirectory, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +150,17 @@ func TestSupportingFilesAreConfinedPrivateAndNeverOverwrite(t *testing.T) {
 	files["secrets/password.txt"] = TemplateProjectFile{Content: "replacement", Secret: true}
 	if err = svc.SaveTemplateFiles(project.ID, files); err == nil {
 		t.Fatal("overwrote existing secret")
+	}
+}
+
+func TestNoSupportingFilesDoesNotOpenAnUnavailableProject(t *testing.T) {
+	// Registration of a host-only stack must not require file access. No DB or
+	// Docker access is needed when there are no supporting files to write.
+	service := &Projects{}
+	for _, files := range []map[string]TemplateProjectFile{nil, {}} {
+		if err := service.SaveTemplateFiles(123, files); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
