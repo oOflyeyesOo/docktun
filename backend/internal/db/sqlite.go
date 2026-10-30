@@ -95,6 +95,12 @@ func (d *DB) migrate() error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
+		CREATE TABLE IF NOT EXISTS project_compose_sources (
+			project_id INTEGER PRIMARY KEY,
+			files TEXT NOT NULL,
+			error TEXT NOT NULL DEFAULT ''
+		);
+
 		CREATE TABLE IF NOT EXISTS container_exposures (
 			container_name TEXT PRIMARY KEY,
 			mode TEXT NOT NULL DEFAULT 'internal',

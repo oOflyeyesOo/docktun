@@ -120,6 +120,8 @@ interface ContainerItem {
   compose_service?: string
   compose_working_dir?: string
   compose_config_files?: string
+  compose_sources?: string[]
+  compose_source_error?: string
   compose_file?: string
   connected_to_cloudflared?: boolean
   update_available?: boolean
@@ -2763,9 +2765,10 @@ onUnmounted(() => {
                   <dt class="text-slate-500">Compose project</dt><dd class="font-mono break-all">{{ selectedContainer.compose_project }}</dd>
                   <dt class="text-slate-500">Service</dt><dd class="font-mono break-all">{{ selectedContainer.compose_service || 'Not reported by Docker' }}</dd>
                   <dt class="text-slate-500">Source folder</dt><dd class="font-mono break-all">{{ selectedContainer.compose_working_dir || 'Not reported by Docker' }}</dd>
-                  <dt class="text-slate-500">Compose files</dt><dd class="font-mono break-all">{{ selectedContainer.compose_config_files || 'Not reported by Docker' }}</dd>
+                  <dt class="text-slate-500">Compose files</dt><dd class="font-mono break-all">{{ selectedContainer.compose_sources?.join(', ') || (selectedContainer.compose_config_files === '-' ? 'Streamed input; original files not recorded' : selectedContainer.compose_config_files) || 'Not reported by Docker' }}</dd>
                 </dl>
                 <p class="text-slate-500">Docker reports this membership. Container names and shared networks do not place services in the same stack. Different Compose projects stay separate.</p>
+                <p v-if="selectedContainer.compose_source_error" class="text-amber-700">{{ selectedContainer.compose_source_error }}</p>
               </template>
               <p v-else class="text-slate-500">Docker reports no Compose project for this container. It is standalone; its name does not associate it with another stack.</p>
             </div>

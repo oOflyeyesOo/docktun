@@ -74,6 +74,7 @@ func (s *DockerContainers) loadContainerProjects() *containerProjects {
 // Docker Compose labels define membership. Display names, shared networks,
 // directory names and container-name prefixes cannot establish stack ownership.
 func (s *DockerContainers) assignContainerProject(c *Container, labels map[string]string, index *containerProjects) {
+	c.ComposeSources, c.ComposeSourceError = nil, ""
 	c.ComposeProject = strings.TrimSpace(labels["com.docker.compose.project"])
 	c.ComposeService = labels["com.docker.compose.service"]
 	c.ComposeWorkingDir = labels["com.docker.compose.project.working_dir"]
@@ -104,5 +105,13 @@ func (s *DockerContainers) assignContainerProject(c *Container, labels map[strin
 	}
 	if found {
 		c.ProjectID, c.ProjectPath = ref.ID, ref.Path
+		rememberComposeSources(s.db, ref.ID, c.ComposeWorkingDir, c.ComposeConfigFiles)
+		if s.db != nil {
+			var err error
+			c.ComposeSources, err = storedComposeSources(s.db, ref.ID)
+			if err != nil {
+				c.ComposeSourceError = err.Error()
+			}
+		}
 	}
 }

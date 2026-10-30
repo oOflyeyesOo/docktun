@@ -508,25 +508,38 @@ func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
 		return
 	}
 	defer root.Close()
-	for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
-		f := filepath.Join(path, name)
-		if fileExists(f) {
-			if _, err := readProjectFile(root, name); err != nil {
-				s.appendOutput(id, "[ERROR] cannot read Compose file: "+err.Error())
-				return
+	files, err := storedComposeSources(s.db, id)
+	if err != nil {
+		s.appendOutput(id, "[ERROR] "+err.Error())
+		return
+	}
+	knownSources := len(files) > 0
+	if !knownSources {
+		files = []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
+	}
+	sources := []string{}
+	for _, name := range files {
+		if _, err := readProjectFile(root, name); err != nil {
+			if !knownSources && os.IsNotExist(err) {
+				continue
 			}
-			if !directory.ReadOnly {
-				SanitizeComposeFile(f)
-			}
+			s.appendOutput(id, "[ERROR] cannot read Compose source "+name+": "+err.Error())
+			return
+		}
+		sources = append(sources, filepath.Join(path, name))
+		if !knownSources {
 			break
 		}
+	}
+	if len(sources) > 0 && !directory.ReadOnly {
+		SanitizeComposeFile(sources[0])
 	}
 
 	projectName := ""
 	if p, err := s.GetByID(id); err == nil {
 		projectName = p.Name
 	}
-	cmd, err := composeProjectCommand(projectName, path, args...)
+	cmd, err := composeProjectCommandWithFiles(projectName, path, sources, args...)
 	if err != nil {
 		s.appendOutput(id, "[ERROR] "+err.Error())
 		return
@@ -760,14 +773,23 @@ func (s *Projects) GetComposeFile(id int) (string, string, error) {
 		return "", "", err
 	}
 	defer root.Close()
-	candidates := []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
+	candidates, err := storedComposeSources(s.db, id)
+	if err != nil {
+		return "", "", err
+	}
+	knownSource := len(candidates) > 0
+	if knownSource {
+		candidates = candidates[:1]
+	} else {
+		candidates = []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
+	}
 	for _, candidate := range candidates {
 		fullPath := filepath.Join(p.Path, candidate)
 		content, err := readProjectFile(root, candidate)
 		if err == nil {
 			return candidate, content, nil
 		}
-		if !os.IsNotExist(err) {
+		if knownSource || !os.IsNotExist(err) {
 			return "", "", fmt.Errorf("cannot read Compose file %s: %w", fullPath, err)
 		}
 	}
@@ -791,7 +813,13 @@ func (s *Projects) SaveComposeFile(id int, filename string, content string) erro
 			content = parsed.GenerateComposeYAML()
 		}
 	}
-	return s.SaveFile(id, filename, content)
+	if err := s.SaveFile(id, filename, content); err != nil {
+		return err
+	}
+	if files, err := storedComposeSources(s.db, id); err == nil && len(files) == 0 {
+		rememberComposeSources(s.db, id, "", filename)
+	}
+	return nil
 }
 
 func (s *Projects) GetEnvFile(id int) (string, error) {

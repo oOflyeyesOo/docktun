@@ -91,6 +91,8 @@ type Container struct {
 	ComposeService         string           `json:"compose_service,omitempty"`
 	ComposeWorkingDir      string           `json:"compose_working_dir,omitempty"`
 	ComposeConfigFiles     string           `json:"compose_config_files,omitempty"`
+	ComposeSources         []string         `json:"compose_sources,omitempty"`
+	ComposeSourceError     string           `json:"compose_source_error,omitempty"`
 	ConnectedToCloudflared bool             `json:"connected_to_cloudflared"`
 	UpdateAvailable        bool             `json:"update_available"`
 	LatestDigest           string           `json:"latest_digest,omitempty"`
@@ -2047,48 +2049,40 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		compService = cname
 	}
 
-	// Path translation: Check if compDir exists or can be mapped to container's /opt/projects
+	// Use the same verified project source as stack actions. Never guess an
+	// unrelated /opt/projects folder from a basename or discard override files.
 	validComposeDir := ""
-	if compDir != "" {
-		if fi, err := os.Stat(compDir); err == nil && fi.IsDir() {
-			validComposeDir = compDir
-		} else {
-			if idx := strings.Index(compDir, "/projects/"); idx != -1 {
-				mapped := filepath.Join("/opt/projects", compDir[idx+len("/projects/"):])
-				if fi, err := os.Stat(mapped); err == nil && fi.IsDir() {
-					validComposeDir = mapped
-				}
+	composeSources := []string{}
+	if detail.ProjectID > 0 && s.db != nil {
+		planner := NewProjects(s.db, s.cfg.SelfPath)
+		if directory, err := planner.resolveProjectDirectory(detail.ProjectPath, false); err == nil {
+			files, sourceErr := storedComposeSources(s.db, detail.ProjectID)
+			if sourceErr == nil && len(files) == 0 {
+				files, sourceErr = relativeComposeSources(compDir, compFile)
 			}
-			if validComposeDir == "" {
-				if idx := strings.Index(compDir, "/compose/"); idx != -1 {
-					mapped := filepath.Join("/opt/projects", compDir[idx+len("/compose/"):])
-					if fi, err := os.Stat(mapped); err == nil && fi.IsDir() {
-						validComposeDir = mapped
+			root, openErr := directory.open(false)
+			if sourceErr == nil && openErr == nil {
+				if len(files) == 0 {
+					for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
+						if _, err := readProjectFile(root, name); err == nil {
+							files = []string{name}
+							break
+						}
 					}
 				}
-			}
-			if validComposeDir == "" && (compProj == "" || strings.EqualFold(compProj, cname)) {
-				cDir := filepath.Join("/opt/projects", cname)
-				if fi, err := os.Stat(cDir); err == nil && fi.IsDir() {
-					validComposeDir = cDir
+				for _, name := range files {
+					if _, err := readProjectFile(root, name); err != nil {
+						sourceErr = err
+						break
+					}
+					composeSources = append(composeSources, filepath.Join(directory.Path, name))
+				}
+				if sourceErr == nil && len(composeSources) > 0 {
+					validComposeDir = directory.Path
 				}
 			}
-			if validComposeDir == "" && compProj != "" {
-				pDir := filepath.Join("/opt/projects", compProj)
-				if fi, err := os.Stat(pDir); err == nil && fi.IsDir() {
-					validComposeDir = pDir
-				}
-			}
-		}
-	}
-
-	if validComposeDir == "" && detail.ProjectPath != "" {
-		if fi, err := os.Stat(detail.ProjectPath); err == nil && fi.IsDir() {
-			validComposeDir = detail.ProjectPath
-		} else if idx := strings.Index(detail.ProjectPath, "/projects/"); idx != -1 {
-			mapped := filepath.Join("/opt/projects", detail.ProjectPath[idx+len("/projects/"):])
-			if fi, err := os.Stat(mapped); err == nil && fi.IsDir() {
-				validComposeDir = mapped
+			if root != nil {
+				root.Close()
 			}
 		}
 	}
@@ -2118,23 +2112,10 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 
 	// Strategy A: Existing valid compose stack
 	if validComposeDir != "" {
-		composeCandidate := compFile
-		if composeCandidate == "" || !fileExists(composeCandidate) {
-			for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
-				p := filepath.Join(validComposeDir, name)
-				if fileExists(p) {
-					composeCandidate = p
-					break
-				}
-			}
-		}
-		if composeCandidate != "" && fileExists(composeCandidate) {
-			sanitizeComposeFile(composeCandidate)
-		}
 
 		if isLocalBuild {
 			appendLog(fmt.Sprintf("[BUILD] Building local service %s via Docker Compose in %s...", compService, validComposeDir))
-			buildCmd, buildPlanErr := composeProjectCommandWithFile(compProj, validComposeDir, composeCandidate, "build", compService)
+			buildCmd, buildPlanErr := composeProjectCommandWithFiles(compProj, validComposeDir, composeSources, "build", compService)
 			var bOut []byte
 			bErr := buildPlanErr
 			if bErr == nil {
@@ -2148,7 +2129,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		}
 
 		appendLog(fmt.Sprintf("[STEP 2/4] Updating via Docker Compose in %s (service: %s)...", validComposeDir, compService))
-		upCmd, planErr := composeProjectCommandWithFile(compProj, validComposeDir, composeCandidate, "up", "-d", "--no-deps", "--force-recreate", compService)
+		upCmd, planErr := composeProjectCommandWithFiles(compProj, validComposeDir, composeSources, "up", "-d", "--no-deps", "--force-recreate", compService)
 		if planErr != nil {
 			return logOutput.String(), fmt.Errorf("validate project before update: %w", planErr)
 		}
@@ -2164,7 +2145,7 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 				backupName := fmt.Sprintf("%s_bk_%d", cname, time.Now().Unix())
 				_ = exec.Command("docker", "stop", detail.ID).Run()
 				if renameErr := exec.Command("docker", "rename", detail.ID, backupName).Run(); renameErr == nil {
-					retryCmd, retryPlanErr := composeProjectCommandWithFile(compProj, validComposeDir, composeCandidate, "up", "-d", "--no-deps", "--force-recreate", compService)
+					retryCmd, retryPlanErr := composeProjectCommandWithFiles(compProj, validComposeDir, composeSources, "up", "-d", "--no-deps", "--force-recreate", compService)
 					var retryOut []byte
 					retryErr := retryPlanErr
 					if retryErr == nil {

@@ -30,6 +30,23 @@ func TestCreateProjectDoesNotRenameOrOverwriteExistingRecords(t *testing.T) {
 	}
 }
 
+func TestComposeSourcesKeepOrderAndSurviveStreamedRecreation(t *testing.T) {
+	svc := projectPathService(t)
+	rememberComposeSources(svc.db, 1, "/volume1/stacks/photos", "/volume1/stacks/photos/compose.yml,/volume1/stacks/photos/override.yml")
+	rememberComposeSources(svc.db, 1, "/stack-files/photos", "-")
+	files, err := storedComposeSources(svc.db, 1)
+	if err != nil || len(files) != 2 || files[0] != "compose.yml" || files[1] != "override.yml" {
+		t.Fatalf("source order lost: %v %v", files, err)
+	}
+	rememberComposeSources(svc.db, 2, "/stacks/photos", "/stacks/neighbor/compose.yml")
+	if _, err := storedComposeSources(svc.db, 2); err == nil {
+		t.Fatal("outside source silently fell back to a different Compose file")
+	}
+	if files, err := storedComposeSources(svc.db, 3); err != nil || len(files) != 0 {
+		t.Fatal("newly authored stack lost normal file discovery")
+	}
+}
+
 func TestContainerProjectIdentityUsesLabelsAndSource(t *testing.T) {
 	index := newContainerProjects(updateContainer{})
 	index.add(projRef{1, "archive", "/stacks/shared"})

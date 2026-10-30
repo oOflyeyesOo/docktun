@@ -94,6 +94,8 @@ try:
         for key in ('project_id', 'project_name', 'project_path', 'compose_project', 'compose_service', 'compose_working_dir', 'compose_config_files'):
             assert row.get(key) == detail.get(key), (key, row, detail)
     assert request('/api/docker/containers/' + database['id'] + '/project', {})['project_id'] == app['project_id']
+    assert request('/api/projects/' + str(archive['id']) + '/compose')['filename'] == 'archive.yml'
+    assert request('/api/projects/' + str(app['project_id']) + '/compose')['filename'] == 'compose.yml'
     before = docker('exec', engine, 'cat', folder + '/compose.yml')
     for name, directory in [('new-name', folder), ('photos', '/volume2/new-photos'), ('archive', folder)]:
         request('/api/projects', {'name': name, 'path': directory, 'compose_content': 'services: {}'}, expected=409)
@@ -112,6 +114,19 @@ try:
     rows = {row['name']: row for row in request('/api/docker/containers')}
     assert rows['gallery-web']['project_id'] == rows['custom-database']['project_id'] == app['project_id'], rows
     assert rows['gallery-web']['project_path'] == folder, rows
+    assert inner('exec', 'gallery-web', 'printenv', 'FIXTURE') == 'generic', 'override file was dropped during stack redeploy'
+    request('/api/docker/containers/' + rows['gallery-web']['id'] + '/update', {})
+    assert inner('exec', 'gallery-web', 'printenv', 'FIXTURE') == 'generic', 'override file was dropped during container update'
+    # Another stack in the same source folder must deploy archive.yml only.
+    archive_id = rows['photos-archive']['id']
+    request('/api/projects/' + str(archive['id']) + '/up', {})
+    def archive_done():
+        output = request('/api/projects/' + str(archive['id']) + '/output')
+        assert output['done'] and not any('[ERROR]' in line for line in output['lines']), output
+        return output
+    eventually(archive_done)
+    assert request('/api/projects/' + str(archive['id']) + '/compose')['filename'] == 'archive.yml'
+    assert inner('ps', '-q', '--filter', 'label=com.docker.compose.project=archive', '--filter', 'label=com.docker.compose.service=database') == ''
     assert inner('inspect', '--format', '{{.Id}}', 'photos-postgres') == standalone
     passed = True
     print('PASS: generic Compose labels determine membership; same-folder/different-project and obsolete saved names do not capture containers; standalone prefixes stay standalone; list/details agree; multi-file labels preserved; creation conflicts keep files and project metadata; Synology remapped redeploy keeps identity', flush=True)
