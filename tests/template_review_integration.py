@@ -137,6 +137,22 @@ volumes:
     action_done(project['id'], failure=True)
     docker('exec', engine, 'sh', '-c', 'test ! -e /volume1/photos')
     assert inner('ps', '-aq', '--filter', 'label=docktun.storage-check') == '', 'storage probe leaked a helper'
+    if os.environ.get('DOCKTUN_TEST_COMMUNITY') == '1':
+        from urllib.parse import quote
+        collection_url = 'https://raw.githubusercontent.com/Lissy93/portainer-templates/main/templates.json'
+        catalog = request('/api/templates/catalog?url=' + quote(collection_url, safe=''))
+        assert len(catalog) > 100 and all(t['description'] for t in catalog), len(catalog)
+        container = next(t for t in catalog if t['name'].lower() == 'adguard' and not t.get('unavailable'))
+        draft = request('/api/templates/import', {'collection': container['collection'], 'id': container['id']})
+        assert 'adguard/adguardhome' in draft['compose_content'] and 'create_host_path: false' in draft['compose_content'], draft
+        assert container['id'] in draft['source_url'] and '/main/' not in draft['source_url'], draft
+        missing = request('/api/projects/review', {'name': 'community-test', 'compose_content': draft['compose_content']})
+        assert not missing['ready'], missing
+        stack = next(t for t in catalog if t['name'] == '2FAuth' and not t.get('unavailable'))
+        stack_draft = request('/api/templates/import', {'collection': stack['collection'], 'id': stack['id']})
+        assert '# Source: https://raw.githubusercontent.com/' in stack_draft['compose_content'] and 'services:' in stack_draft['compose_content'], stack_draft
+        request('/api/templates/catalog?url=https%3A%2F%2F127.0.0.1%2Ftemplates.json', expected=502)
+        print(f"PASS: live public Portainer catalog ({len(catalog)} entries), descriptions, pinned container and stack imports, and missing storage rejection", flush=True)
     passed = True
     print('PASS: authenticated template review; real host directories/files checked read-only; placeholder/missing bind sources and external volumes blocked without creation; core-only paths mapped to host sources; stack .env respected and dashboard credentials excluded; strict bind sources preserved after deployment; probe helpers cleaned', flush=True)
     if os.environ.get('DOCKTUN_KEEP_TEST_ENGINE') == '1':

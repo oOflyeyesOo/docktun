@@ -13,7 +13,13 @@ type Templates struct{ library *service.TemplateLibrary }
 
 func NewTemplates() *Templates { return &Templates{library: service.NewTemplateLibrary()} }
 func (h *Templates) Catalog(w http.ResponseWriter, r *http.Request) {
-	items, err := h.library.Catalog(r.Context())
+	var items []service.CommunityTemplate
+	var err error
+	if source := r.URL.Query().Get("url"); source != "" {
+		items, err = h.library.PortainerCatalog(r.Context(), source)
+	} else {
+		items, err = h.library.Catalog(r.Context())
+	}
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadGateway)
 		return
@@ -23,13 +29,21 @@ func (h *Templates) Catalog(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Templates) Import(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		URL string `json:"url"`
+		URL        string `json:"url"`
+		Collection string `json:"collection"`
+		ID         string `json:"id"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&body) != nil {
 		jsonError(w, "invalid public Compose URL", http.StatusBadRequest)
 		return
 	}
-	content, source, err := h.library.Import(r.Context(), body.URL)
+	var content, source string
+	var err error
+	if body.Collection != "" {
+		content, source, err = h.library.ImportPortainer(r.Context(), body.Collection, body.ID)
+	} else {
+		content, source, err = h.library.Import(r.Context(), body.URL)
+	}
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return

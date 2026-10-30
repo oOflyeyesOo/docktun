@@ -16,16 +16,23 @@ import (
 )
 
 type CommunityTemplate struct {
-	Name          string `json:"name"`
-	URL           string `json:"url"`
-	Documentation string `json:"documentation"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	URL           string   `json:"url"`
+	Documentation string   `json:"documentation"`
+	Description   string   `json:"description"`
+	Categories    []string `json:"categories"`
+	Source        string   `json:"source"`
+	Collection    string   `json:"collection,omitempty"`
+	Unavailable   string   `json:"unavailable,omitempty"`
 }
 
 type TemplateLibrary struct {
-	client  *http.Client
-	mu      sync.Mutex
-	items   []CommunityTemplate
-	updated time.Time
+	client      *http.Client
+	mu          sync.Mutex
+	items       []CommunityTemplate
+	updated     time.Time
+	collections map[string]templateCollection
 }
 
 func NewTemplateLibrary() *TemplateLibrary {
@@ -58,6 +65,10 @@ func publicComposeURL(raw string) (string, error) {
 }
 
 func (s *TemplateLibrary) fetch(ctx context.Context, address string) ([]byte, error) {
+	return s.fetchLimit(ctx, address, 2*1024*1024)
+}
+
+func (s *TemplateLibrary) fetchLimit(ctx context.Context, address string, limit int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", address, nil)
 	if err != nil {
 		return nil, err
@@ -72,9 +83,9 @@ func (s *TemplateLibrary) fetch(ctx context.Context, address string) ([]byte, er
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub returned HTTP %d; check the public file URL or try again after its rate limit resets", resp.StatusCode)
 	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024+1))
-	if len(raw) > 2*1024*1024 {
-		return nil, fmt.Errorf("template response exceeds 2 MiB")
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if int64(len(raw)) > limit {
+		return nil, fmt.Errorf("template response exceeds %d MiB", limit/(1024*1024))
 	}
 	return raw, err
 }
@@ -140,7 +151,8 @@ func (s *TemplateLibrary) Catalog(ctx context.Context) ([]CommunityTemplate, err
 		if parts[1] != "compose.yaml" && parts[1] != "compose.yml" && parts[1] != "docker-compose.yml" && parts[1] != "docker-compose.yaml" {
 			continue
 		}
-		items = append(items, CommunityTemplate{Name: strings.ToLower(strings.ReplaceAll(parts[0], "-", " ")), URL: "https://raw.githubusercontent.com/docker/awesome-compose/" + revision + "/" + entry.Path, Documentation: "https://github.com/docker/awesome-compose/tree/" + revision + "/" + parts[0]})
+		name := strings.ReplaceAll(parts[0], "-", " ")
+		items = append(items, CommunityTemplate{ID: entry.Path, Name: name, Description: "Docker's development example combining " + name + ". May require source files from the repository; review its instructions before deploying.", Categories: []string{"Development"}, Source: "Docker Awesome Compose", URL: "https://raw.githubusercontent.com/docker/awesome-compose/" + revision + "/" + entry.Path, Documentation: "https://github.com/docker/awesome-compose/tree/" + revision + "/" + parts[0]})
 	}
 	s.items, s.updated = items, time.Now()
 	return items, nil
