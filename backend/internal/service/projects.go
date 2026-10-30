@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -145,22 +144,24 @@ func (s *Projects) Create(name, path, repoURL, gitUsername, gitToken string) (Pr
 		return Project{}, fmt.Errorf("cannot add DockTun itself as a project")
 	}
 
-	// New-stack creation must never silently rename a saved project, change
-	// its source folder or erase its Git credentials. Existing stacks use Update.
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var existing Project
-	err = s.db.QueryRow("SELECT id, name, path FROM projects WHERE path = ? OR lower(name) = lower(?) ORDER BY id LIMIT 1", path, name).
-		Scan(&existing.ID, &existing.Name, &existing.Path)
-	if err == nil {
-		return Project{}, fmt.Errorf("%w: %q at %s already exists; manage that stack or choose a different name and folder", ErrProjectConflict, existing.Name, existing.Path)
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return Project{}, err
-	}
-	res, err := s.db.Exec("INSERT INTO projects (name, path, repo_url, git_username, git_token) VALUES (?, ?, ?, ?, ?)", name, path, repoURL, gitUsername, gitToken)
+	// Check and insert atomically without waiting for the long-running Compose
+	// action mutex. Creation never renames a saved stack or erases credentials.
+	res, err := s.db.Exec(`INSERT INTO projects (name,path,repo_url,git_username,git_token)
+		SELECT ?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM projects WHERE path=? OR lower(name)=lower(?))`,
+		name, path, repoURL, gitUsername, gitToken, path, name)
 	if err != nil {
 		return Project{}, err
+	}
+	count, err := res.RowsAffected()
+	if err != nil {
+		return Project{}, err
+	}
+	if count == 0 {
+		var existing Project
+		if err := s.db.QueryRow("SELECT id,name,path FROM projects WHERE path=? OR lower(name)=lower(?) ORDER BY id LIMIT 1", path, name).Scan(&existing.ID, &existing.Name, &existing.Path); err != nil {
+			return Project{}, ErrProjectConflict
+		}
+		return Project{}, fmt.Errorf("%w: %q at %s already exists; manage that stack or choose a different name and folder", ErrProjectConflict, existing.Name, existing.Path)
 	}
 
 	id, _ := res.LastInsertId()
