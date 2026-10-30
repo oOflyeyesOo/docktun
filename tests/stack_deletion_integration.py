@@ -94,7 +94,7 @@ try:
     inner('compose', '-p', 'unmapped-external', '-f', '/volume2/docker/Unmapped/compose.yml', 'up', '-d')
     inner('network', 'create', 'docktun')
     inner('run', '-d', '--name', 'docktun', '--network', 'docktun', '-p', '3001:3001',
-          '--label', 'com.docker.compose.project=docktun-core', '-v', 'test-app:/app/data', '-v', 'test-projects:/opt/projects', '-v', 'scoped-cloudflare:/etc/cloudflared',
+          '--label', 'com.docker.compose.project=docktun-core', '--label', 'com.docker.compose.project.working_dir=/opt/core', '-v', 'test-app:/app/data', '-v', 'test-projects:/opt/projects', '-v', 'scoped-cloudflare:/etc/cloudflared',
           '-v', '/volume1/docker:/mounted-stacks',
           '-v', '/var/run/docker.sock:/var/run/docker.sock', '-e', 'DOCKER_NETWORK=docktun', image)
     base = 'http://' + docker('port', engine, '3001/tcp')

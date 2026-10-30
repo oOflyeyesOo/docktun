@@ -21,6 +21,14 @@ func composeProjectCommand(projectName, directory string, args ...string) (*exec
 }
 
 func composeProjectCommandWithFile(projectName, directory, source string, args ...string) (*exec.Cmd, error) {
+	var sources []string
+	if source != "" {
+		sources = []string{source}
+	}
+	return composeProjectCommandWithFiles(projectName, directory, sources, args...)
+}
+
+func composeProjectCommandWithFiles(projectName, directory string, sources []string, args ...string) (*exec.Cmd, error) {
 	absolute, err := filepath.Abs(directory)
 	if err != nil {
 		return nil, err
@@ -29,21 +37,28 @@ func composeProjectCommandWithFile(projectName, directory, source string, args .
 	if projectName != "" {
 		prefix = append(prefix, "-p", projectName)
 	}
-	if source == "" {
+	if len(sources) == 0 {
 		for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
 			candidate := filepath.Join(absolute, name)
 			if fileExists(candidate) {
-				source = candidate
+				sources = []string{candidate}
 				break
 			}
 		}
 	}
-	if source == "" || !fileExists(source) {
+	if len(sources) == 0 {
 		return nil, fmt.Errorf("no Compose file found in %s", absolute)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	renderArgs := append(append([]string{}, prefix...), "-f", source, "config", "--format", "json")
+	renderArgs := append([]string{}, prefix...)
+	for _, source := range sources {
+		if !fileExists(source) {
+			return nil, fmt.Errorf("Compose source %s is unavailable", source)
+		}
+		renderArgs = append(renderArgs, "-f", source)
+	}
+	renderArgs = append(renderArgs, "config", "--format", "json")
 	raw, err := composeDockerOutputInDir(ctx, absolute, renderArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("validate Compose configuration: %w", err)

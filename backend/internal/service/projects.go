@@ -38,12 +38,12 @@ type FileInfo struct {
 
 type Projects struct {
 	requireMountInspection func() bool
-	db        *db.DB
-	selfPath  string
-	mu        sync.Mutex
-	outMu     sync.RWMutex
-	outputs   map[int]*projectOutput
-	runDocker func(context.Context, ...string) ([]byte, error)
+	db                     *db.DB
+	selfPath               string
+	mu                     sync.Mutex
+	outMu                  sync.RWMutex
+	outputs                map[int]*projectOutput
+	runDocker              func(context.Context, ...string) ([]byte, error)
 }
 
 type projectOutput struct {
@@ -132,6 +132,8 @@ func ProjectsRoot() string {
 	return root
 }
 
+var ErrProjectConflict = errors.New("stack name or folder is already registered")
+
 func (s *Projects) Create(name, path, repoURL, gitUsername, gitToken string) (Project, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -142,46 +144,26 @@ func (s *Projects) Create(name, path, repoURL, gitUsername, gitToken string) (Pr
 		return Project{}, fmt.Errorf("cannot add DockTun itself as a project")
 	}
 
-	// Check if a project with the same path or name already exists to prevent UNIQUE constraint errors
-	var existing Project
-	err = s.db.QueryRow("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects WHERE path = ? OR name = ?", path, name).
-		Scan(&existing.ID, &existing.Name, &existing.Path, &existing.RepoURL, &existing.GitUsername, &existing.GitToken, &existing.CreatedAt)
-	if err == nil {
-		// Update existing record
-		_, updateErr := s.db.Exec("UPDATE projects SET name = ?, path = ?, repo_url = ?, git_username = ?, git_token = ? WHERE id = ?",
-			name, path, repoURL, gitUsername, gitToken, existing.ID)
-		if updateErr != nil {
-			return Project{}, updateErr
-		}
-		return Project{
-			ID:          existing.ID,
-			Name:        name,
-			Path:        path,
-			RepoURL:     repoURL,
-			GitUsername: gitUsername,
-			CreatedAt:   existing.CreatedAt,
-		}, nil
-	}
-
-	res, err := s.db.Exec("INSERT INTO projects (name, path, repo_url, git_username, git_token) VALUES (?, ?, ?, ?, ?)",
-		name, path, repoURL, gitUsername, gitToken)
+	// Check and insert atomically without waiting for the long-running Compose
+	// action mutex. Creation never renames a saved stack or erases credentials.
+	res, err := s.db.Exec(`INSERT INTO projects (name,path,repo_url,git_username,git_token)
+		SELECT ?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM projects WHERE path=? OR lower(name)=lower(?))`,
+		name, path, repoURL, gitUsername, gitToken, path, name)
 	if err != nil {
-		// Fallback in case of concurrent insert or edge constraint
-		err2 := s.db.QueryRow("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects WHERE path = ? OR name = ?", path, name).
-			Scan(&existing.ID, &existing.Name, &existing.Path, &existing.RepoURL, &existing.GitUsername, &existing.GitToken, &existing.CreatedAt)
-		if err2 == nil {
-			_ = s.Update(existing.ID, name, path, repoURL, gitUsername, gitToken)
-			return Project{
-				ID:          existing.ID,
-				Name:        name,
-				Path:        path,
-				RepoURL:     repoURL,
-				GitUsername: gitUsername,
-				CreatedAt:   existing.CreatedAt,
-			}, nil
-		}
 		return Project{}, err
 	}
+	count, err := res.RowsAffected()
+	if err != nil {
+		return Project{}, err
+	}
+	if count == 0 {
+		var existing Project
+		if err := s.db.QueryRow("SELECT id,name,path FROM projects WHERE path=? OR lower(name)=lower(?) ORDER BY id LIMIT 1", path, name).Scan(&existing.ID, &existing.Name, &existing.Path); err != nil {
+			return Project{}, ErrProjectConflict
+		}
+		return Project{}, fmt.Errorf("%w: %q at %s already exists; manage that stack or choose a different name and folder", ErrProjectConflict, existing.Name, existing.Path)
+	}
+
 	id, _ := res.LastInsertId()
 	return Project{ID: int(id), Name: name, Path: path, RepoURL: repoURL, GitUsername: gitUsername}, nil
 }
@@ -527,25 +509,38 @@ func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
 		return
 	}
 	defer root.Close()
-	for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
-		f := filepath.Join(path, name)
-		if fileExists(f) {
-			if _, err := readProjectFile(root, name); err != nil {
-				s.appendOutput(id, "[ERROR] cannot read Compose file: "+err.Error())
-				return
+	files, err := storedComposeSources(s.db, id)
+	if err != nil {
+		s.appendOutput(id, "[ERROR] "+err.Error())
+		return
+	}
+	knownSources := len(files) > 0
+	if !knownSources {
+		files = []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
+	}
+	sources := []string{}
+	for _, name := range files {
+		if _, err := readProjectFile(root, name); err != nil {
+			if !knownSources && os.IsNotExist(err) {
+				continue
 			}
-			if !directory.ReadOnly {
-				SanitizeComposeFile(f)
-			}
+			s.appendOutput(id, "[ERROR] cannot read Compose source "+name+": "+err.Error())
+			return
+		}
+		sources = append(sources, filepath.Join(path, name))
+		if !knownSources {
 			break
 		}
+	}
+	if len(sources) > 0 && !directory.ReadOnly {
+		SanitizeComposeFile(sources[0])
 	}
 
 	projectName := ""
 	if p, err := s.GetByID(id); err == nil {
 		projectName = p.Name
 	}
-	cmd, err := composeProjectCommand(projectName, path, args...)
+	cmd, err := composeProjectCommandWithFiles(projectName, path, sources, args...)
 	if err != nil {
 		s.appendOutput(id, "[ERROR] "+err.Error())
 		return
@@ -779,14 +774,23 @@ func (s *Projects) GetComposeFile(id int) (string, string, error) {
 		return "", "", err
 	}
 	defer root.Close()
-	candidates := []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
+	candidates, err := storedComposeSources(s.db, id)
+	if err != nil {
+		return "", "", err
+	}
+	knownSource := len(candidates) > 0
+	if knownSource {
+		candidates = candidates[:1]
+	} else {
+		candidates = []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
+	}
 	for _, candidate := range candidates {
 		fullPath := filepath.Join(p.Path, candidate)
 		content, err := readProjectFile(root, candidate)
 		if err == nil {
 			return candidate, content, nil
 		}
-		if !os.IsNotExist(err) {
+		if knownSource || !os.IsNotExist(err) {
 			return "", "", fmt.Errorf("cannot read Compose file %s: %w", fullPath, err)
 		}
 	}
@@ -810,7 +814,13 @@ func (s *Projects) SaveComposeFile(id int, filename string, content string) erro
 			content = parsed.GenerateComposeYAML()
 		}
 	}
-	return s.SaveFile(id, filename, content)
+	if err := s.SaveFile(id, filename, content); err != nil {
+		return err
+	}
+	if files, err := storedComposeSources(s.db, id); err == nil && len(files) == 0 {
+		rememberComposeSources(s.db, id, "", filename)
+	}
+	return nil
 }
 
 func (s *Projects) GetEnvFile(id int) (string, error) {

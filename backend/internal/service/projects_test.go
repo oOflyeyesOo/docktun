@@ -575,8 +575,8 @@ func TestDeleteOptionsChecksFolderWithoutChangingIt(t *testing.T) {
 	if content, err := os.ReadFile(marker); err != nil || string(content) != "untouched" {
 		t.Fatal("availability check changed files")
 	}
-	for _, path := range []string{filepath.Join(root, "projects", "missing"), root, marker} {
-		other, err := svc.Create("other", path, "", "", "")
+	for index, path := range []string{filepath.Join(root, "projects", "missing"), root, marker} {
+		other, err := svc.Create(fmt.Sprintf("other-%d", index), path, "", "", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -615,7 +615,7 @@ func TestDeleteOptionsChecksFolderWithoutChangingIt(t *testing.T) {
 }
 
 func newNativeTestProjects(database *db.DB, selfPath string) *Projects {
- s := NewProjects(database, selfPath)
- s.requireMountInspection = func() bool { return false }
- return s
+	s := NewProjects(database, selfPath)
+	s.requireMountInspection = func() bool { return false }
+	return s
 }
