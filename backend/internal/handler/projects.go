@@ -37,18 +37,20 @@ func (h *Projects) List(w http.ResponseWriter, r *http.Request) {
 
 func (h *Projects) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name           string `json:"name"`
-		Path           string `json:"path"`
-		RepoURL        string `json:"repo_url"`
-		GitUsername    string `json:"git_username"`
-		GitToken       string `json:"git_token"`
-		ComposeContent string `json:"compose_content"`
-		EnvContent     string `json:"env_content"`
-		AutoStart      bool   `json:"auto_start"`
-		ReviewStorage  bool   `json:"review_storage"`
-		TemplateSource string `json:"template_source"`
+		Name           string                                 `json:"name"`
+		Path           string                                 `json:"path"`
+		RepoURL        string                                 `json:"repo_url"`
+		GitUsername    string                                 `json:"git_username"`
+		GitToken       string                                 `json:"git_token"`
+		ComposeContent string                                 `json:"compose_content"`
+		EnvContent     string                                 `json:"env_content"`
+		AutoStart      bool                                   `json:"auto_start"`
+		ReviewStorage  bool                                   `json:"review_storage"`
+		TemplateSource string                                 `json:"template_source"`
+		Files          map[string]service.TemplateProjectFile `json:"files"`
+		Compatibility  bool                                   `json:"compatibility"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&body); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -78,8 +80,11 @@ func (h *Projects) Create(w http.ResponseWriter, r *http.Request) {
 		body.Path = filepath.Join(service.ProjectsRoot(), body.Name)
 	}
 
+	if len(body.Files) > 0 {
+		body.ReviewStorage = true
+	}
 	if body.ReviewStorage {
-		review, err := service.ReviewCompose(r.Context(), service.ComposeReviewInput{Name: body.Name, Path: body.Path, Compose: body.ComposeContent, Env: body.EnvContent})
+		review, err := service.ReviewCompose(r.Context(), service.ComposeReviewInput{Name: body.Name, Path: body.Path, Compose: body.ComposeContent, Env: body.EnvContent, Files: body.Files, Compatibility: body.Compatibility})
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
@@ -113,11 +118,16 @@ func (h *Projects) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// If direct env content provided, save .env
-	if strings.TrimSpace(body.EnvContent) != "" {
+	if strings.TrimSpace(body.EnvContent) != "" || body.ReviewStorage {
 		if err := h.svc.SaveEnvFile(p.ID, body.EnvContent); err != nil {
 			jsonError(w, "project saved but environment file could not be written: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+	}
+
+	if err := h.svc.SaveTemplateFiles(p.ID, body.Files); err != nil {
+		jsonError(w, "project saved but supporting files need attention: "+err.Error(), http.StatusConflict)
+		return
 	}
 
 	// If auto_start is true and compose file exists, start compose up -d asynchronously

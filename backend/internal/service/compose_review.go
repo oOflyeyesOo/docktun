@@ -37,10 +37,12 @@ func reviewedProject(database *db.DB, id int) bool {
 }
 
 type ComposeReviewInput struct {
-	Name    string `json:"name"`
-	Path    string `json:"path"`
-	Compose string `json:"compose_content"`
-	Env     string `json:"env_content"`
+	Files         map[string]TemplateProjectFile `json:"files,omitempty"`
+	Compatibility bool                           `json:"compatibility"`
+	Name          string                         `json:"name"`
+	Path          string                         `json:"path"`
+	Compose       string                         `json:"compose_content"`
+	Env           string                         `json:"env_content"`
 }
 type ReviewedMount struct {
 	Service string `json:"service"`
@@ -51,10 +53,12 @@ type ReviewedMount struct {
 	Status  string `json:"status"`
 }
 type ComposeReview struct {
-	Ready     bool            `json:"ready"`
-	Directory string          `json:"directory"`
-	Mounts    []ReviewedMount `json:"mounts"`
-	Problems  []string        `json:"problems"`
+	Checks    []TemplateCompatibilityCheck `json:"checks"`
+	Warnings  []string                     `json:"warnings"`
+	Ready     bool                         `json:"ready"`
+	Directory string                       `json:"directory"`
+	Mounts    []ReviewedMount              `json:"mounts"`
+	Problems  []string                     `json:"problems"`
 }
 
 // App credentials must never become interpolation values for imported stacks.
@@ -74,7 +78,7 @@ var placeholderMount = regexp.MustCompile(`(?i)(/path/(to|on/host)(/|$)|/your/(p
 func ReviewCompose(ctx context.Context, input ComposeReviewInput) (ComposeReview, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	result := ComposeReview{Mounts: []ReviewedMount{}, Problems: []string{}}
+	result := ComposeReview{Mounts: []ReviewedMount{}, Problems: []string{}, Checks: []TemplateCompatibilityCheck{}, Warnings: []string{}}
 	input.Name, input.Path = strings.TrimSpace(input.Name), strings.TrimSpace(input.Path)
 	if input.Name == "" || len(input.Compose) > 1024*1024 || len(input.Env) > 128*1024 {
 		return result, fmt.Errorf("provide a stack name and Compose file up to 1 MiB; .env is limited to 128 KiB")
@@ -136,7 +140,11 @@ func ReviewCompose(ctx context.Context, input ComposeReviewInput) (ComposeReview
 		return result, err
 	}
 	defer os.RemoveAll(temporary)
-	for name, content := range map[string]string{"compose.yml": input.Compose, ".env": input.Env} {
+	renderCompose, stagedFiles, err := prepareTemplateFileReview(input, result.Directory, temporary, document)
+	if err != nil {
+		return result, err
+	}
+	for name, content := range map[string]string{"compose.yml": renderCompose, ".env": input.Env} {
 		if err = os.WriteFile(filepath.Join(temporary, name), []byte(content), 0600); err != nil {
 			return result, err
 		}
@@ -267,7 +275,7 @@ func ReviewCompose(ctx context.Context, input ComposeReviewInput) (ComposeReview
 			for _, entry := range envFiles {
 				file, _ := entry.(map[string]any)
 				source, _ := file["path"].(string)
-				if source == filepath.Join(result.Directory, ".env") && input.Env != "" {
+				if source == filepath.Join(result.Directory, ".env") {
 					continue
 				}
 				if _, err := os.Stat(source); err != nil {
@@ -293,6 +301,17 @@ func ReviewCompose(ctx context.Context, input ComposeReviewInput) (ComposeReview
 				row.Access = "read-only"
 			}
 			if kind == "bind" {
+				if relative, provided := stagedFiles[filepath.Clean(source)]; provided {
+					actual := filepath.Join(result.Directory, relative)
+					host, mapErr := composeHostSource(actual, own, filepath.ToSlash(result.Directory))
+					if mapErr != nil {
+						return result, mapErr
+					}
+					row.Source = host
+					row.Status = "exists: supplied project file; saved on deployment"
+					result.Mounts = append(result.Mounts, row)
+					continue
+				}
 				host, mapErr := composeHostSource(source, own, filepath.ToSlash(result.Directory))
 				if mapErr != nil {
 					row.Status = mapErr.Error()
@@ -345,6 +364,11 @@ func ReviewCompose(ctx context.Context, input ComposeReviewInput) (ComposeReview
 					row.Status = "required file is unavailable inside DockTun"
 					result.Problems = append(result.Problems, kind+" "+name+": "+row.Status+": "+file)
 				}
+				if relative, provided := stagedFiles[filepath.Clean(file)]; provided {
+					file = filepath.Join(result.Directory, relative)
+					row.Source = file
+					row.Status = "supplied project file; saved on deployment"
+				}
 				if host, err := composeHostSource(file, own, filepath.ToSlash(result.Directory)); err == nil {
 					row.Source = host
 				} else {
@@ -354,6 +378,9 @@ func ReviewCompose(ctx context.Context, input ComposeReviewInput) (ComposeReview
 				result.Mounts = append(result.Mounts, row)
 			}
 		}
+	}
+	if input.Compatibility {
+		checkTemplateCompatibility(ctx, document, own, result.Directory, temporary, stagedFiles, input.Files, &result)
 	}
 	result.Ready = len(result.Problems) == 0
 	return result, nil

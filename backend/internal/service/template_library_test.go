@@ -28,10 +28,13 @@ func TestTemplateImportRestrictsPublicSourcesAndNeverForwardsCredentials(t *test
 		if req.Header.Get("Authorization") != "" || req.Header.Get("Cookie") != "" {
 			t.Fatal("credentials forwarded to public template source")
 		}
+		if req.URL.Host == "api.github.com" {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)), Header: http.Header{}}, nil
+		}
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("services:\n  web:\n    image: nginx:alpine\n")), Header: http.Header{}}, nil
 	})
 	content, source, err := library.Import(context.Background(), canonical)
-	if err != nil || !strings.Contains(content, "nginx:alpine") || source != canonical {
+	if err != nil || !strings.Contains(content, "nginx:alpine") || source != strings.Replace(canonical, "/master/", "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/", 1) {
 		t.Fatalf("import failed: %s %v", source, err)
 	}
 	redirectURL, _ := url.Parse("http://127.0.0.1/private")

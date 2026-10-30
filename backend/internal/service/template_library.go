@@ -95,6 +95,10 @@ func (s *TemplateLibrary) Import(ctx context.Context, address string) (string, s
 	if err != nil {
 		return "", "", err
 	}
+	canonical, err = s.pinFile(ctx, canonical)
+	if err != nil {
+		return "", "", err
+	}
 	raw, err := s.fetch(ctx, canonical)
 	if err != nil {
 		return "", "", err
