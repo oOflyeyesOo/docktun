@@ -732,6 +732,12 @@ func (s *Projects) SaveFile(id int, relPath string, content string) error {
 	if err := root.MkdirAll(filepath.Dir(rel), 0755); err != nil {
 		return err
 	}
+	if rel == ".env" {
+		if err := root.WriteFile(rel, []byte(content), 0600); err != nil {
+			return err
+		}
+		return root.Chmod(rel, 0600)
+	}
 	return root.WriteFile(rel, []byte(content), 0644)
 }
 

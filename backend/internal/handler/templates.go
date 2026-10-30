@@ -12,6 +12,22 @@ import (
 type Templates struct{ library *service.TemplateLibrary }
 
 func NewTemplates() *Templates { return &Templates{library: service.NewTemplateLibrary()} }
+
+func (h *Templates) Setup(w http.ResponseWriter, r *http.Request) {
+	var input service.TemplateSetupInput
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&input) != nil {
+		jsonError(w, "invalid template setup request", http.StatusBadRequest)
+		return
+	}
+	result, err := service.ConfigureTemplate(input)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(result)
+}
 func (h *Templates) Catalog(w http.ResponseWriter, r *http.Request) {
 	var items []service.CommunityTemplate
 	var err error

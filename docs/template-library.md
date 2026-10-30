@@ -48,3 +48,35 @@ must be supplied when needed. Review invalidates when the draft changes.
 Sources: https://github.com/Lissy93/portainer-templates,
 https://github.com/docker/awesome-compose,
 https://docs.portainer.io/advanced/app-templates/format.
+
+## Guided setup
+
+Selecting a template opens **Set up this app** before the advanced YAML editor.
+Login details, environment values, fixed host ports, timezone and container names
+are editable as form fields. A shared Compose variable is shown once, so changing
+a database password also updates every reference to that variable. **Generate
+passwords** creates random passwords for password fields; API tokens, encryption
+keys and password hashes still require the app's own setup instructions.
+
+**Automatic storage for new app data** selects persistent Docker volumes for
+suitable writable config/data mounts. Docker creates these at deployment; there
+is no need to SSH into the host to create folders. Matching shared paths use one
+volume and keep their read-only settings. Existing host files are not copied.
+Media/library folders, file mounts, sockets, devices and advanced mount settings
+stay explicit. You can choose existing host paths instead, including Synology
+`/volume1/...` folders. Related parent/child paths need existing host storage to
+preserve their directory layout.
+
+**Apply settings & check app** updates the draft and runs the storage check.
+The check also reports ports used by running Docker containers or duplicated
+between services in the draft. Other host processes and advanced port ranges
+are still checked by Docker during deployment. Changing the form disables
+Deploy until those changes are applied. No app or tunnel starts until Deploy.
+
+Some apps ask you to create the first administrator when you open their web UI.
+DockTun only configures credentials declared by a template; it cannot infer an
+app's private signup API. Upstream setup notes remain available in the form.
+For advanced YAML aliases, expressions or multiline Environment values, the
+advanced editor remains available. New and saved project `.env` files use mode
+600 so generated login details are not written as world-readable Environment
+files.

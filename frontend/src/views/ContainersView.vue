@@ -6,9 +6,10 @@ import { defaultComposeExample } from '../lib/compose-templates.mjs'
 import { getPrimaryPort, cleanContainerName, hasLocalWebLink, localAddress } from '../lib/containerPorts.mjs'
 import { containerStack, stackProjectID } from '../lib/container-stacks.mjs'
 import ContainerExposure from "../components/ContainerExposure.vue"
+import TemplateSetup from '../components/TemplateSetup.vue'
 import ComposeStorageReview from '../components/ComposeStorageReview.vue'
 import CommunityTemplates from '../components/CommunityTemplates.vue'
-import { computed, onMounted, onUnmounted, reactive, ref, toRefs, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, toRefs, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Server,
@@ -365,6 +366,14 @@ const composeDeployForm = ref({
 const composeDeploying = ref(false)
 const composeStorageReady = ref(false)
 const composeTemplateSource = ref('')
+const composeReview = ref<any>(null)
+const composeSetupDirty = ref(false)
+async function applyTemplateSetup(result: any) {
+  composeDeployForm.value.compose_content = result.compose_content
+  composeDeployForm.value.env_content = result.env_content
+  await nextTick()
+  await composeReview.value?.review()
+}
 // Cloudflare Settings Cache for Zero Trust
 const cfSettings = ref<{ has_token: boolean; masked_token?: string; api_token?: string } | null>(null)
 async function fetchCfSettings() {
@@ -399,6 +408,7 @@ function insertComposeSnippet(type: 'network' | 'restart' | 'ports' | 'volumes' 
 }
 
 async function deployComposeStack() {
+  if (composeTemplateSource.value && composeSetupDirty.value) { alert('Apply the app setup settings before deploying'); return }
   if (isPastedDockerRun.value) {
     convertComposeDockerRun()
   }
@@ -3870,6 +3880,9 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <TemplateSetup v-if="composeTemplateSource" :input="{ compose_content: composeDeployForm.compose_content, env_content: composeDeployForm.env_content }" @apply="applyTemplateSetup" @dirty="composeSetupDirty = $event" />
+          <details :open="!composeTemplateSource" class="rounded-xl border border-slate-200 p-3 space-y-3">
+            <summary class="text-xs font-medium text-slate-700 cursor-pointer">Advanced: Compose &amp; Environment</summary>
           <div>
             <!-- Banner when docker run command is pasted in Compose YAML tab -->
             <div v-if="isPastedDockerRun" class="mb-2.5 rounded-lg border border-cyan-500/60 bg-cyan-50/80 p-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
@@ -3951,7 +3964,7 @@ onUnmounted(() => {
             <textarea
               v-model="composeDeployForm.compose_content"
               rows="12"
-              class="cyber-input font-mono text-xs w-full leading-relaxed bg-slate-50 border-slate-200 text-cyan-100"
+              class="cyber-input font-mono text-xs w-full leading-relaxed bg-slate-50 border-slate-200 text-slate-800"
               placeholder="services:&#10;  app:&#10;    image: nginx:alpine&#10;    restart: unless-stopped"
               spellcheck="false"
               @focus="onComposeFocus"
@@ -3984,13 +3997,14 @@ onUnmounted(() => {
             </div>
           </div>
 
+          </details>
           <p v-if="composeTemplateSource" class="text-xs text-slate-500 break-all">Template source: {{ composeTemplateSource }}</p>
-          <ComposeStorageReview :input="{ name: composeDeployForm.name, path: composeDeployForm.path, compose_content: composeDeployForm.compose_content, env_content: composeDeployForm.env_content }" @ready="composeStorageReady = $event" />
+          <ComposeStorageReview ref="composeReview" :input="{ name: composeDeployForm.name, path: composeDeployForm.path, compose_content: composeDeployForm.compose_content, env_content: composeDeployForm.env_content }" @ready="composeStorageReady = $event" />
           <div class="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
             <button @click="showLaunchModal = false" class="cyber-btn-secondary text-xs">Cancel</button>
             <button
               @click="deployComposeStack"
-              :disabled="composeDeploying || !composeStorageReady || !composeDeployForm.name.trim() || !composeDeployForm.compose_content.trim()"
+              :disabled="composeDeploying || (composeTemplateSource && composeSetupDirty) || !composeStorageReady || !composeDeployForm.name.trim() || !composeDeployForm.compose_content.trim()"
               class="cyber-btn flex items-center gap-2 text-xs text-cyan-700 border-cyan-500/80 bg-cyan-50/40 hover:bg-cyan-100/60 font-bold"
             >
               <RotateCcw v-if="composeDeploying" class="h-3.5 w-3.5 animate-spin" />

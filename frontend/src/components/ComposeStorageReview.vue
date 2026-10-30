@@ -21,6 +21,7 @@ async function review() {
   } catch (e: any) { if (request === revision) error.value = e.message }
   finally { checking.value = false }
 }
+defineExpose({ review })
 </script>
 
 <template>

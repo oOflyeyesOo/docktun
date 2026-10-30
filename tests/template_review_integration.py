@@ -153,6 +153,76 @@ volumes:
         assert '# Source: https://raw.githubusercontent.com/' in stack_draft['compose_content'] and 'services:' in stack_draft['compose_content'], stack_draft
         request('/api/templates/catalog?url=https%3A%2F%2F127.0.0.1%2Ftemplates.json', expected=502)
         print(f"PASS: live public Portainer catalog ({len(catalog)} entries), descriptions, pinned container and stack imports, and missing storage rejection", flush=True)
+    if os.environ.get('DOCKTUN_TEST_SETUP') == '1':
+        request('/api/templates/setup', {'compose_content': 'services: {}'}, expected=401, auth=False)
+        setup_compose = """# Configure this test app without editing YAML.
+services:
+  app:
+    image: alpine:3.23
+    container_name: guided-app
+    command: [sleep, '300']
+    environment:
+      SHARED: ${APP_PASSWORD:?Choose a password}
+      LITERAL_PASSWORD: original-sample
+      TZ: UTC
+    volumes:
+      - /madeup/storage:/data
+  worker:
+    image: alpine:3.23
+    container_name: guided-worker
+    command: [sleep, '300']
+    environment:
+      - SHARED=${APP_PASSWORD:?Choose a password}
+    volumes:
+      - /madeup/storage:/shared:ro
+  database:
+    image: postgres:16-alpine
+    container_name: guided-database
+    environment:
+      POSTGRES_USER: testuser
+      POSTGRES_DB: testdb
+      POSTGRES_PASSWORD: ${APP_PASSWORD:?Choose a password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata:
+"""
+        schema = request('/api/templates/setup', {'compose_content': setup_compose})
+        assert len([f for f in schema['fields'] if f['id'] == 'var:APP_PASSWORD']) == 1, schema
+        password = "p$'\\#word\\"
+        literal_id = next(f['id'] for f in schema['fields'] if f['name'] == 'LITERAL_PASSWORD')
+        configured = request('/api/templates/setup', {'compose_content': setup_compose, 'apply': True,
+            'values': {'var:APP_PASSWORD': password, literal_id: password},
+            'storage': {m['id']: {'mode': 'managed'} for m in schema['storage']}})
+        assert '# Configure this test app' in configured['compose_content'], configured
+        guided_form = {'name': 'guided-setup-fixture', 'compose_content': configured['compose_content'], 'env_content': configured['env_content']}
+        check = request('/api/projects/review', guided_form)
+        assert check['ready'], check
+        collision = request('/api/projects/review', {'name': 'port-collision', 'compose_content': 'services:\n  app:\n    image: alpine:3.23\n    ports: ["3001:80"]\n'})
+        assert not collision['ready'] and any('already used' in p for p in collision['problems']), collision
+        duplicate_ports = request('/api/projects/review', {'name': 'duplicate-ports', 'compose_content': 'services:\n  one:\n    image: alpine:3.23\n    ports: ["12345:80"]\n  two:\n    image: alpine:3.23\n    ports: ["12345:80"]\n'})
+        assert not duplicate_ports['ready'] and any('another service' in p for p in duplicate_ports['problems']), duplicate_ports
+        inner('pull', 'postgres:16-alpine')
+        guided = request('/api/projects', {**guided_form, 'review_storage': True, 'auto_start': True, 'template_source': 'integration:guided-setup'}, expected=201)
+        action_done(guided['id'])
+        assert inner('exec', 'guided-app', 'printenv', 'SHARED') == password
+        assert inner('exec', 'guided-worker', 'printenv', 'SHARED') == password
+        assert inner('exec', 'guided-app', 'printenv', 'LITERAL_PASSWORD') == password
+        inner('exec', 'guided-app', 'touch', '/data/shared-proof')
+        inner('exec', 'guided-worker', 'test', '-f', '/shared/shared-proof')
+        worker = json.loads(inner('inspect', 'guided-worker'))[0]
+        assert not next(m for m in worker['Mounts'] if m['Destination'] == '/shared')['RW'], worker['Mounts']
+        docker('exec', engine, 'sh', '-c', 'test ! -e /madeup/storage')
+        assert inner('exec', 'docktun', 'stat', '-c', '%a', '/opt/projects/guided-setup-fixture/.env') == '600'
+        def sql_login():
+            assert inner('run', '--rm', '--network', 'guided-setup-fixture_default', '-e', 'PGPASSWORD=' + password, 'postgres:16-alpine', 'psql', '-h', 'database', '-U', 'testuser', '-d', 'testdb', '-tAc', 'SELECT 1') == '1'
+        eventually(sql_login)
+        try:
+            inner('run', '--rm', '--network', 'guided-setup-fixture_default', '-e', 'PGPASSWORD=wrong-password', 'postgres:16-alpine', 'psql', '-h', 'database', '-U', 'testuser', '-d', 'testdb', '-tAc', 'SELECT 1')
+            raise AssertionError('Postgres accepted an incorrect password')
+        except subprocess.CalledProcessError as error:
+            assert 'password authentication failed' in error.output, error.output
+        print('PASS: guided setup deployed PostgreSQL with working password authentication; shared and literal special-character passwords preserved; named storage created automatically and shared read-only; no fake host path created; Environment mode 600; occupied/duplicate host ports rejected', flush=True)
     passed = True
     print('PASS: authenticated template review; real host directories/files checked read-only; placeholder/missing bind sources and external volumes blocked without creation; core-only paths mapped to host sources; stack .env respected and dashboard credentials excluded; strict bind sources preserved after deployment; probe helpers cleaned', flush=True)
     if os.environ.get('DOCKTUN_KEEP_TEST_ENGINE') == '1':

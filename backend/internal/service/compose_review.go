@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -179,8 +180,52 @@ func ReviewCompose(ctx context.Context, input ComposeReviewInput) (ComposeReview
 		return result, nil
 	}
 	probes := map[string]string{}
+	var running []struct {
+		Names []string `json:"Names"`
+		Ports []struct {
+			IP         string
+			PublicPort int
+			Type       string
+		} `json:"Ports"`
+	}
+	if err := dockerJSON(ctx, "GET", "/containers/json", nil, &running); err != nil {
+		return result, fmt.Errorf("cannot check published ports: %w", err)
+	}
+	chosenPorts := map[string][]string{}
 	for name, value := range services {
 		service, _ := value.(map[string]any)
+		ports, _ := service["ports"].([]any)
+		for _, value := range ports {
+			port, _ := value.(map[string]any)
+			published, _ := port["published"].(string)
+			number, err := strconv.Atoi(published)
+			if err != nil || number == 0 {
+				continue
+			} // Advanced ranges are validated by Docker.
+			protocol, _ := port["protocol"].(string)
+			if protocol == "" {
+				protocol = "tcp"
+			}
+			ip, _ := port["host_ip"].(string)
+			conflicts := func(other string) bool {
+				return ip == "" || ip == "0.0.0.0" || ip == "::" || other == "" || other == "0.0.0.0" || other == "::" || other == ip
+			}
+			for _, container := range running {
+				for _, existing := range container.Ports {
+					if existing.PublicPort == number && existing.Type == protocol && conflicts(existing.IP) {
+						result.Problems = append(result.Problems, fmt.Sprintf("%s: host port %d/%s is already used by %s; choose another host port in app setup", name, number, protocol, strings.Join(container.Names, ", ")))
+					}
+				}
+			}
+			key := strconv.Itoa(number) + "/" + protocol
+			for _, previous := range chosenPorts[key] {
+				if conflicts(previous) {
+					result.Problems = append(result.Problems, fmt.Sprintf("%s: host port %s is also published by another service; choose different host ports", name, key))
+					break
+				}
+			}
+			chosenPorts[key] = append(chosenPorts[key], ip)
+		}
 		if explicitName, ok := service["container_name"].(string); ok && explicitName != "" {
 			if _, err := inspectUpdateContainer(ctx, explicitName); err == nil {
 				result.Problems = append(result.Problems, name+": container name "+explicitName+" is already in use; change container_name in the editor")
