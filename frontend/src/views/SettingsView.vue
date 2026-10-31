@@ -3,6 +3,7 @@ import { ref, reactive } from 'vue'
 import { RotateCcw, ShieldCheck, KeyRound, Globe, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
 import ManagedServices from '../components/ManagedServices.vue'
 import SystemDiagnostics from '../components/SystemDiagnostics.vue'
+import LocalProxy from '../components/LocalProxy.vue'
 import { useApi } from '../composables/useApi'
 
 const { apiFetch } = useApi()
@@ -43,6 +44,7 @@ async function changePassword() {
 
     <ManagedServices />
     <SystemDiagnostics />
+    <LocalProxy />
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 

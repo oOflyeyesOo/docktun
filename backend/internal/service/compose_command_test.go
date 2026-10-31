@@ -2,6 +2,9 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -101,6 +104,7 @@ func TestComposeHostPathsPreserveLiteralDollarSigns(t *testing.T) {
 	if err := remapComposeBindSources(document, own, "/opt/projects/example"); err != nil {
 		t.Fatal(err)
 	}
+
 	app := document["services"].(map[string]any)["app"].(map[string]any)
 	source := app["volumes"].([]any)[0].(map[string]any)["source"]
 	if source != "/volume1/$$shared/projects/example/$$folder" {
@@ -108,5 +112,126 @@ func TestComposeHostPathsPreserveLiteralDollarSigns(t *testing.T) {
 	}
 	if app["environment"].(map[string]any)["LITERAL"] != "$$HOME" {
 		t.Fatal("literal environment value changed")
+	}
+}
+
+func TestValidateComposeReferencedPathsCreatesMissingFiles(t *testing.T) {
+	root := t.TempDir()
+	document := map[string]any{
+		"services": map[string]any{
+			"caddy": map[string]any{
+				"volumes": []any{
+					map[string]any{"type": "bind", "source": filepath.ToSlash(filepath.Join(root, "Caddyfile")), "target": "/etc/caddy/Caddyfile"},
+				},
+			},
+		},
+	}
+	if err := validateComposeReferencedPaths(document, filepath.ToSlash(root)); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "Caddyfile"))
+	if err != nil || !strings.Contains(string(content), "DockTun app is running") {
+		t.Fatalf("expected generated Caddyfile, read error=%v content=%q", err, content)
+	}
+}
+
+func TestValidateComposeReferencedPathsAcceptsExistingFilesAndDirectories(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "config"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	file := filepath.Join(root, "config", "app.env")
+	if err := os.WriteFile(file, []byte("KEY=value\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	document := map[string]any{
+		"services": map[string]any{
+			"app": map[string]any{
+				"volumes": []any{
+					map[string]any{"type": "bind", "source": filepath.ToSlash(filepath.Join(root, "config")), "target": "/etc/app/"},
+				},
+				"env_file": []any{filepath.ToSlash(file)},
+				"build":    map[string]any{"context": filepath.ToSlash(root)},
+			},
+		},
+	}
+	if err := validateComposeReferencedPaths(document, filepath.ToSlash(root)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateComposeReferencedPathsCreatesMissingDirectories(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "prometheus")
+	document := map[string]any{
+		"services": map[string]any{
+			"prometheus": map[string]any{
+				"volumes": []any{
+					map[string]any{"type": "bind", "source": filepath.ToSlash(directory), "target": "/etc/prometheus/"},
+				},
+			},
+		},
+	}
+
+	if err := validateComposeReferencedPaths(document, filepath.ToSlash(root)); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(directory)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("expected missing directory to be created, stat=%v", err)
+	}
+}
+
+func TestComposePathLooksLikeFile(t *testing.T) {
+	for _, path := range []string{"./Caddyfile", "./Dockerfile", "./config/app.yml"} {
+		if !composePathLooksLikeFile(path, "/etc/app/config") {
+			t.Fatalf("expected file path: %s", path)
+		}
+	}
+	if composePathLooksLikeFile("./prometheus", "/etc/prometheus") {
+		t.Fatal("directory path classified as file")
+	}
+}
+
+func TestComposePortainerHostSourceUsesProjectStorage(t *testing.T) {
+	var own updateContainer
+	root := t.TempDir()
+	project := filepath.ToSlash(filepath.Join(root, "project"))
+	raw := fmt.Sprintf(`{"Mounts":[{"Type":"bind","Source":%q,"Destination":%q}]}`, filepath.ToSlash(root), project)
+	if err := json.Unmarshal([]byte(raw), &own); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("mounts=%+v", own.Mounts)
+	source, ok := composePortainerHostSource("/srv/lsio/bazarr/config", own, project)
+	if !ok || !strings.Contains(source, "/.docktun/portainer/bazarr/config") {
+		t.Fatalf("unexpected Portainer source: %q, mapped=%v", source, ok)
+	}
+	if info, err := os.Stat(filepath.Join(root, "project", ".docktun", "portainer", "bazarr", "config")); err != nil || !info.IsDir() {
+		t.Fatalf("expected Portainer directory scaffold, stat=%v", err)
+	}
+}
+
+func TestComposeEnvironmentWithDefaultsFillsRequiredVariables(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "compose.yml")
+	if err := os.WriteFile(source, []byte("services:\n  app:\n    image: example\n    environment:\n      URL: ${APP_URL:?required}\n      NAME: ${APP_NAME?required}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	env := composeEnvironmentWithDefaults(source)
+	values := strings.Join(env, "\n")
+	if !strings.Contains(values, "APP_URL=http://localhost") || !strings.Contains(values, "APP_NAME=docktun-generated") {
+		t.Fatalf("required defaults missing: %s", values)
+	}
+}
+
+func TestComposeEnvironmentWithDefaultsFillsBareVariables(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "compose.yml")
+	if err := os.WriteFile(source, []byte("services:\n  app:\n    image: example\n    command: $SERVICE\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(composeEnvironmentWithDefaults(source), "\n"), "SERVICE=app") {
+		t.Fatal("bare Compose variable was not given a default")
 	}
 }

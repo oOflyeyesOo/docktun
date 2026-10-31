@@ -40,8 +40,9 @@ async function inspect() {
 const formSnapshot = computed(() => JSON.stringify({ values: values.value, storage: storage.value, linked: linked.value, connect: connect.value }))
 watch(() => formSnapshot.value, current => { emit('dirty', current !== appliedForm.value) }, { flush: 'sync' })
 const unapplied = computed(() => formSnapshot.value !== appliedForm.value)
-const credentials = computed(() => (schema.value?.fields || []).filter((f: any) => f.secret || /user|email|login/i.test(f.name)))
-const settings = computed(() => (schema.value?.fields || []).filter((f: any) => !credentials.value.includes(f)))
+const variables = computed(() => (schema.value?.fields || []).filter((f: any) => f.id.startsWith('var:')))
+const credentials = computed(() => (schema.value?.fields || []).filter((f: any) => !f.id.startsWith('var:') && (f.secret || /user|email|login/i.test(f.name))))
+const settings = computed(() => (schema.value?.fields || []).filter((f: any) => !f.id.startsWith('var:') && !credentials.value.includes(f)))
 const storageGroups = computed(() => groupStorage(schema.value?.storage || []))
 const missingHostSources = computed(() => storageGroups.value.some((group: any) => storage.value[group.id]?.mode === 'host' && !storage.value[group.id]?.source?.trim()))
 const passwords = computed(() => (schema.value?.fields || []).filter((f: any) => f.password))
@@ -110,6 +111,22 @@ async function apply() {
         </div>
       </div>
       <p v-else class="text-xs text-slate-600">Named storage volumes in this template are created automatically by Docker. Any extra file requirements are checked before deployment.</p>
+      <div v-if="variables.length" class="space-y-2 rounded-xl border border-indigo-200 bg-indigo-50/40 p-3">
+        <div>
+          <h4 class="text-sm font-semibold text-slate-800">Template variables</h4>
+          <p class="text-xs text-slate-600">These values come from the imported template and remain editable before deployment.</p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div v-for="field in variables" :key="field.id" class="space-y-1">
+            <label :for="`setup-${field.id}`" class="block text-xs font-medium text-slate-700">{{ field.name }} <span class="text-[10px] text-slate-500">{{ field.service }}{{ field.required ? ' · required' : ' · optional' }}</span></label>
+            <div class="flex gap-1">
+              <input :id="`setup-${field.id}`" v-model="values[field.id]" :type="field.secret && !showSecrets ? 'password' : 'text'" class="cyber-input text-xs min-w-0" :disabled="busy" @input="syncLinked(field.id)" autocomplete="off">
+              <button v-if="field.password" type="button" class="cyber-btn-secondary text-[10px]" :disabled="busy" @click="generate(field.id)">Generate</button>
+            </div>
+            <p class="text-[10px] text-slate-500">{{ field.hint }}</p>
+          </div>
+        </div>
+      </div>
       <div v-for="group in [{name:'Login & credentials', fields:credentials}, {name:'Ports & other settings', fields:settings}]" :key="group.name" class="space-y-2">
         <template v-if="group.fields.length">
           <div class="flex flex-wrap items-center justify-between gap-2"><h4 class="text-sm font-semibold text-slate-800">{{ group.name }}</h4><button v-if="group.name === 'Login & credentials' && passwords.length" type="button" class="cyber-btn-secondary text-xs" :disabled="busy" @click="generatePasswords">Generate passwords</button><button v-if="group.name === 'Ports & other settings' && schema.fields.some(f => f.port_uses?.length)" type="button" class="cyber-btn-secondary text-xs" :disabled="busy" @click="freePorts">Find free host ports</button></div>
@@ -121,7 +138,7 @@ async function apply() {
           <p v-if="group.name === 'Ports & other settings'" v-for="note in portNotes" :key="note" class="text-xs text-slate-500">{{ note }}</p>
         </template>
       </div>
-      <label v-if="credentials.some(f => f.secret)" class="flex items-center gap-2 text-xs text-slate-600"><input v-model="showSecrets" type="checkbox">Show credentials</label>
+      <label v-if="credentials.some(f => f.secret) || variables.some(f => f.secret)" class="flex items-center gap-2 text-xs text-slate-600"><input v-model="showSecrets" type="checkbox">Show credentials and template secrets</label>
       <p v-if="samplePasswords.length" role="alert" class="text-xs text-amber-800">Replace sample passwords or use Generate passwords before applying.</p>
       <details v-if="schema.notes.length" class="text-xs text-slate-600"><summary class="cursor-pointer font-medium">App setup instructions</summary><p v-for="(note,index) in schema.notes" :key="index" class="mt-2 whitespace-pre-wrap break-words">{{ note }}</p><p class="mt-2">Generated passwords are for new accounts. API tokens, encryption keys and password hashes must follow the app's instructions.</p></details>
       <p v-if="unapplied && !busy" class="text-xs text-indigo-700">Setup changes need to be applied and checked before deployment.</p>

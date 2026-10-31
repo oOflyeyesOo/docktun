@@ -18,6 +18,7 @@ Modern, self-hosted web dashboard for managing Docker containers and Compose sta
   - **Tailscale**: Connect each container as its own isolated Tailscale device (userspace mode, no host TUN or root privileges required).
   - **WireGuard**: Mesh connectivity via companion container or existing host VPN.
   - **Local mDNS**: Automatic local `.local` domain routing on your LAN.
+- **Optional local reverse proxy**: Choose Caddy, Traefik, or Nginx under **Settings → Local Reverse Proxy**, add manual hostname-to-container routes, and apply. DockTun creates and uses the dedicated `docktun-proxy` network, connects selected containers, and manages one active proxy companion. Routes use container names and internal ports; no public DNS or Cloudflare credentials are required.
 - 💻 **Web Terminal & Logs** — In-browser interactive `docker exec` terminal and real-time streaming WebSocket logs with filtering.
 - 📁 **File & Volume Explorer** — Browse container filesystems, view and edit configuration files in-place, and upload or download files.
 - 🔄 **Self-Healing & 1-Click Updates** — Automatic database companion network relinking, continuous health reconciliation, and 1-click self-updating with automated health-check rollback.
@@ -202,6 +203,10 @@ DockTun does not enforce a single global networking mode. Every container starts
 - **Tailscale**: Connect any container with 1-click in the container's **Access** tab. DockTun spawns a dedicated userspace Tailscale helper for that app, creating a separate device identity and MagicDNS hostname on your tailnet without touching the host's networking stack.
 - **WireGuard**: Configure an existing WireGuard VPN address or use the companion container.
 - **Internal / mDNS**: Keeps containers internal, accessible via LAN or local `.local` addresses.
+
+### Local Reverse Proxy
+
+The local proxy is disabled by default. When enabled, the selected engine listens on the configured HTTP/HTTPS host ports and routes only the enabled entries configured in **Settings → Local Reverse Proxy**. Use a hostname resolvable on your LAN (for example through local DNS or a hosts entry), and use the container/service name plus its internal listening port. DockTun validates target containers, creates `docktun-proxy`, connects targets to it, and writes the selected engine's generated configuration. Disable the feature to stop and remove the managed proxy companion.
 
 ---
 
