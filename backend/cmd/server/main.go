@@ -73,6 +73,7 @@ func main() {
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
+	r.Use(middleware.SecurityHeaders)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000", "http://localhost:8080"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE"},
@@ -139,9 +140,10 @@ func main() {
 	r.Get("/healthz", handler.Readiness(database))
 	r.Get("/api/setup/status", setupHandler.Status)
 	authLimiter := middleware.NewRateLimiter(10, time.Minute)
+	refreshLimiter := middleware.NewRateLimiter(30, time.Minute)
 	r.With(authLimiter.Limit).Post("/api/setup/complete", setupHandler.Complete)
 	r.With(authLimiter.Limit).Post("/auth/login", authHandler.Login)
-	r.Post("/auth/refresh", authHandler.Refresh)
+	r.With(refreshLimiter.Limit).Post("/auth/refresh", authHandler.Refresh)
 	r.Get("/api/logs/ws", logsHandler.Stream)
 
 	r.Group(func(r chi.Router) {

@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"docktun/internal/config"
 	"docktun/internal/db"
 	"docktun/internal/service"
+	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -43,7 +43,7 @@ type tokenResponse struct {
 
 func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
 		return
 	}
@@ -82,7 +82,10 @@ type refreshRequest struct {
 
 func (h *Auth) Refresh(w http.ResponseWriter, r *http.Request) {
 	var req refreshRequest
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil && r.ContentLength > 0 {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
 
 	tokenStr := strings.TrimSpace(req.RefreshToken)
 	if tokenStr == "" {
