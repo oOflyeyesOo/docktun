@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import CloudflareIngressEditor from '../components/CloudflareIngressEditor.vue'
+import { readIngressYaml, originHost } from '../lib/cloudflare-ingress.mjs'
 import ProviderSetupGuide from '../components/ProviderSetupGuide.vue'
 import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -48,13 +50,6 @@ function focusApiCredentials() {
   }, 100)
 }
 
-interface IngressRule {
-  hostname: string
-  service: string
-  noTLSVerify: boolean
-  httpHostHeader?: string
-}
-
 interface BackupItem {
   id: number
   created_at: string
@@ -75,15 +70,15 @@ interface HealthItem {
 }
 
 // Active Tab
+const configurationReady = ref(false)
+const ingressVersion = ref(0)
 const activeTab = ref<'overview' | 'ingress' | 'tcp' | 'api' | 'backups'>('overview')
 
 // Config & Rules State
-const rules = ref<IngressRule[]>([])
+const rules = ref<any[]>([])
 const tunnelId = ref('')
-const credentialsFile = ref('/etc/cloudflared/credentials.json')
 const protocol = ref('http2')
 const rawYaml = ref('')
-const isRawEditor = ref(false)
 const saving = ref(false)
 const message = ref<{ type: 'success' | 'error'; text: string; action?: string } | null>(null)
 
@@ -104,7 +99,7 @@ const connectorPresent = ref(false)
 const connectorTunnelId = ref('')
 const remoteConfiguration = ref<any>(null)
 const remoteConfigurationError = ref('')
-const remoteRules = computed(() => (remoteConfiguration.value?.ingress || []).filter((rule: any) => rule.hostname))
+const remoteRules = computed(() => (remoteConfiguration.value?.ingress || []).filter((rule: any) => rule.hostname || rule.path))
 async function fetchRemoteConfiguration() {
   remoteConfigurationError.value = ''
   try {
@@ -203,57 +198,15 @@ function copyText(key: string, text: string) {
   }, 2000)
 }
 
-function isDocktunRule(rule: IngressRule) {
-  return rule.service.includes('docktun-frontend') || rule.service.includes('docktun:3001') || rule.service.includes('docktun:')
-}
-
+const knownContainers = ref<any[]>([])
 function extractTargetHost(service: string): string {
-  if (!service) return ''
-  try {
-    let s = service.trim()
-    if (!s.includes('://')) {
-      s = 'http://' + s
-    }
-    const u = new URL(s)
-    return u.hostname
-  } catch {
-    return service.replace(/^https?:\/\//, '').split(':')[0]
-  }
+  const host = originHost(service)
+  return knownContainers.value.some(item => item.name?.replace(/^\//, '') === host) ? host : ''
 }
-
-// Origin Probe & Maintenance State
-const probingHost = ref<string | null>(null)
-const probeResults = ref<Record<string, { reachable: boolean; status_code: number; latency_ms: number; error: string }>>({})
-const pausedServices = ref<Record<string, string>>({})
-
-async function probeOriginRule(rule: IngressRule) {
-  if (!rule.service || rule.service.startsWith('http_status:')) return
-  probingHost.value = rule.hostname
-  try {
-    const res: any = await apiFetch('/api/docker/probe', {
-      method: 'POST',
-      body: JSON.stringify({ service: rule.service }),
-    })
-    probeResults.value[rule.hostname] = res
-  } catch (err: any) {
-    probeResults.value[rule.hostname] = {
-      reachable: false,
-      status_code: 0,
-      latency_ms: 0,
-      error: err.message || 'Probe error',
-    }
-  } finally {
-    probingHost.value = null
-  }
-}
-
-function toggleRulePause(rule: IngressRule) {
-  if (rule.service.startsWith('http_status:')) {
-    rule.service = pausedServices.value[rule.hostname] || `http://${rule.hostname.split('.')[0]}:80`
-  } else {
-    pausedServices.value[rule.hostname] = rule.service
-    rule.service = 'http_status:503'
-  }
+function onIngressSaved(result: any) {
+  if (connectorPresent.value) remoteConfiguration.value = result.config
+  else { rawYaml.value = result.content; parseYaml(result.content) }
+  void fetchStatus(); void loadBackups(); void fetchHealth()
 }
 
 // Load YAML Config
@@ -268,152 +221,11 @@ async function loadConfig() {
   }
 }
 
-function cleanYamlVal(val?: string): string {
-  if (!val) return ''
-  return val.trim().replace(/^["']|["']$/g, '').trim()
-}
-
 function parseYaml(content: string) {
-  const lines = content.split('\n')
-  rules.value = []
-  for (const line of lines) {
-    const m = line.match(/^tunnel:\s*(.+)/)
-    if (m) tunnelId.value = cleanYamlVal(m[1])
-    const cm = line.match(/^credentials-file:\s*(.+)/)
-    if (cm) credentialsFile.value = cleanYamlVal(cm[1])
-    const pm = line.match(/^protocol:\s*(.+)/)
-    if (pm) protocol.value = cleanYamlVal(pm[1])
-  }
-
-  let inIngress = false
-  let cur: Partial<IngressRule> = {}
-  for (const line of lines) {
-    if (line.match(/^ingress:/)) {
-      inIngress = true
-      continue
-    }
-    if (!inIngress) continue
-
-    const isStandaloneService = line.match(/^\s*-\s*service:\s*["']?([^"'\s]+)["']?/)
-    const hm = line.match(/^\s*-\s*hostname:\s*["']?([^"'\s]+)["']?/)
-    const sm = line.match(/^\s*service:\s*["']?([^"'\s]+)["']?/)
-    const tm = line.match(/noTLSVerify:\s*true/)
-    const hhm = line.match(/httpHostHeader:\s*["']?([^"'\s]+)["']?/)
-
-    if (isStandaloneService) {
-      if (cur.hostname) {
-        rules.value.push({
-          hostname: cur.hostname,
-          service: cur.service || '',
-          noTLSVerify: cur.noTLSVerify || false,
-          httpHostHeader: cur.httpHostHeader || '',
-        })
-        cur = {}
-      }
-      // If standalone service is not http_status:404, we could preserve it, but http_status:404 is the default catchall
-      continue
-    }
-
-    if (hm) {
-      if (cur.hostname) {
-        rules.value.push({
-          hostname: cur.hostname,
-          service: cur.service || '',
-          noTLSVerify: cur.noTLSVerify || false,
-          httpHostHeader: cur.httpHostHeader || '',
-        })
-      }
-      cur = { hostname: cleanYamlVal(hm[1]) }
-    } else if (sm && cur.hostname) {
-      cur.service = cleanYamlVal(sm[1])
-    } else if (tm) {
-      cur.noTLSVerify = true
-    } else if (hhm) {
-      cur.httpHostHeader = cleanYamlVal(hhm[1])
-    }
-  }
-
-  if (cur.hostname) {
-    rules.value.push({
-      hostname: cur.hostname,
-      service: cur.service || '',
-      noTLSVerify: cur.noTLSVerify || false,
-      httpHostHeader: cur.httpHostHeader || '',
-    })
-  }
-}
-
-function generateYaml(): string {
-  const tid = cleanYamlVal(tunnelId.value)
-  const creds = cleanYamlVal(credentialsFile.value) || '/etc/cloudflared/credentials.json'
-  const proto = cleanYamlVal(protocol.value) || 'http2'
-
-  let y = `tunnel: ${tid}\ncredentials-file: ${creds}\nprotocol: ${proto}\n\ningress:\n`
-  for (const r of rules.value) {
-    if (!r.hostname || !r.service) continue
-    // Clean hostname: remove https:// and trailing slashes
-    let cleanH = cleanYamlVal(r.hostname).replace(/^https?:\/\//i, '').replace(/\/+$/, '').replace(/:[0-9]+$/, '')
-    let target = cleanYamlVal(r.service)
-    // Normalize .local to direct container name:
-    if (target.includes('.local')) {
-      target = target.replace('.local', '')
-    }
-    // Normalize localhost / 127.0.0.1 to host.docker.internal:
-    if (target.includes('localhost') || target.includes('127.0.0.1')) {
-      target = target.replace('localhost', 'host.docker.internal').replace('127.0.0.1', 'host.docker.internal')
-    }
-    y += `  - hostname: ${cleanH}\n    service: ${target}\n`
-    if (r.noTLSVerify || r.httpHostHeader || target.startsWith('https://')) {
-      y += `    originRequest:\n`
-      if (r.noTLSVerify || target.startsWith('https://')) {
-        y += `      noTLSVerify: true\n`
-      }
-      if (r.httpHostHeader) {
-        y += `      httpHostHeader: "${cleanYamlVal(r.httpHostHeader)}"\n`
-      }
-    }
-  }
-  return y + `  - service: "http_status:404"\n`
-}
-
-function addRule() {
-  rules.value.push({ hostname: '', service: '', noTLSVerify: false })
-}
-
-function removeRule(i: number) {
-  if (isDocktunRule(rules.value[i])) {
-    if (!confirm('Are you sure you want to remove public tunnel access for DockTun? DockTun will no longer be accessible from the public internet, and will only be accessible locally on your LAN (port 8080 or http://docktun.local).')) {
-      return
-    }
-  }
-  rules.value.splice(i, 1)
-}
-
-async function save(restart = true) {
-  saving.value = true
-  message.value = null
-  const contentToSave = isRawEditor.value ? rawYaml.value : generateYaml()
-  try {
-    await apiFetch('/api/config', {
-      method: 'PUT',
-      body: JSON.stringify({ content: contentToSave }),
-    })
-    rawYaml.value = contentToSave
-    parseYaml(contentToSave)
-
-    if (restart) {
-      await apiFetch('/api/control/restart', { method: 'POST' })
-      message.value = { type: 'success', text: 'Config saved and Cloudflare start requested. Check connection status and logs.' }
-    } else {
-      message.value = { type: 'success', text: 'Ingress configuration saved successfully!' }
-    }
-    setTimeout(() => (message.value = null), 6000)
-    loadBackups()
-  } catch (e: any) {
-    message.value = { type: 'error', text: e.message }
-  } finally {
-    saving.value = false
-  }
+  const { config } = readIngressYaml(content)
+  tunnelId.value = config.tunnel || ''
+  protocol.value = config.protocol || 'auto'
+  rules.value = (config.ingress || []).filter((rule: any) => rule.hostname || rule.path)
 }
 
 async function restartTunnel() {
@@ -475,9 +287,17 @@ async function createManualBackup() {
 async function restoreBackup(b: BackupItem) {
   if (connectorPresent.value) { message.value = { type: 'error', text: 'These snapshots belong to local YAML. Switch to local YAML credentials before restoring one.' }; return }
   if (!confirm(`Restore backup from ${b.created_at}? This will overwrite the current ingress config.`)) return
-  rawYaml.value = b.content
-  parseYaml(b.content)
-  await save(true)
+  saving.value = true
+  try {
+    const latest = await apiFetch<any>('/api/config')
+    await apiFetch('/api/config', { method: 'PUT', body: JSON.stringify({ content: b.content, expected_content: latest.content, sync_dns: false }) })
+    rawYaml.value = b.content
+    parseYaml(b.content)
+    ingressVersion.value++
+    await loadBackups()
+    message.value = { type: 'success', text: 'Backup restored exactly. Restart the connector to apply the local configuration.' }
+  } catch (e: any) { message.value = { type: 'error', text: e.message } }
+  finally { saving.value = false }
 }
 
 // Generate TCP Command
@@ -750,7 +570,9 @@ watch(
 )
 
 onMounted(async () => {
+  apiFetch<any[]>('/api/docker/containers').then(items => { knownContainers.value = items || [] }).catch(() => {})
   await fetchConnector()
+  configurationReady.value = true
   const sub = route.query.sub as string
   if (sub && ['overview', 'ingress', 'tcp', 'api', 'backups', 'health'].includes(sub)) {
     if (sub === 'health') activeTab.value = 'overview'
@@ -871,7 +693,7 @@ onUnmounted(() => {
         :class="activeTab === 'ingress' ? 'bg-slate-100 text-cyan-600 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
       >
         <Layers class="h-3.5 w-3.5" />
-        <span>Ingress Routes ({{ rules.length }})</span>
+        <span>Ingress Routes ({{ connectorPresent ? remoteRules.length : rules.length }})</span>
       </button>
 
       <button
@@ -1000,7 +822,7 @@ onUnmounted(() => {
             <Layers class="h-4 w-4 text-amber-600" />
           </div>
           <div class="text-2xl font-bold font-mono text-amber-700">
-            {{ rules.length }}
+            {{ connectorPresent ? remoteRules.length : rules.length }}
           </div>
           <p class="text-[11px] text-slate-500">Active ingress mappings</p>
         </div>
@@ -1043,7 +865,7 @@ onUnmounted(() => {
           </button>
         </div>
         <p class="text-sm text-slate-600">
-          Use a tunnel connector token for a remotely managed tunnel, or keep a local YAML configuration and credentials file. Token-based tunnels use public-hostname rules managed in Cloudflare. The local ingress editor applies to locally managed tunnels. The Cloudflare API token in Tab 4 is a separate credential for DNS and account operations.
+          Use a tunnel connector token for a remotely managed tunnel, or keep a local YAML configuration and credentials file. Token-based tunnels use public-hostname rules managed in Cloudflare. Ingress Routes edits either tunnel mode and supports Docker, LAN and VM origins. The Cloudflare API token in Tab 4 is a separate credential for DNS and account operations.
         </p>
         <label class="block text-sm space-y-1">
           <span>Tunnel connector token</span>
@@ -1181,275 +1003,18 @@ onUnmounted(() => {
     </div>
 
     <!-- ======================================================== -->
-    <!-- TAB 2: INGRESS ROUTING RULES                             -->
-    <!-- ======================================================== -->
-    <div v-if="activeTab === 'ingress'" class="space-y-4">
-      <section v-if="connectorPresent" class="cyber-card p-5 space-y-3" aria-label="Cloudflare-managed routes">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div class="flex items-center gap-2">
-            <Layers class="h-4 w-4 text-cyan-600" />
-            <h2 class="font-semibold text-slate-900">Cloudflare-managed tunnel routes</h2>
-          </div>
-          <button class="cyber-btn-secondary text-xs flex items-center gap-1.5" @click="fetchRemoteConfiguration(); fetchRemoteTunnelInfo()">
-            <RefreshCw class="h-3 w-3" />
-            <span>Refresh Cloudflare routes</span>
-          </button>
-        </div>
-        <p class="text-sm text-slate-600">Tunnel: <span class="font-mono font-medium text-slate-800">{{ connectorTunnelId || 'Unable to read connector identity' }}</span>. These routes come from Cloudflare, not a local YAML file. Expose selected apps in <router-link to="/containers" class="text-cyan-700 underline font-medium">Containers → Access</router-link>, or manage routes in the Cloudflare dashboard.</p>
-        <p v-if="cfRemoteTunnel" class="text-sm text-slate-700">Cloudflare edge status: <strong class="text-emerald-700">{{ cfRemoteTunnel.status || 'Unknown' }}</strong> · {{ cfRemoteTunnel.connections?.length ?? '—' }} connectors reported</p>
-        <p v-if="remoteConfigurationError" role="alert" class="text-sm text-red-700 bg-red-50 p-2.5 rounded border border-red-200">{{ remoteConfigurationError }}</p>
-        <p v-else-if="!remoteConfiguration" class="text-sm text-slate-600">Routes have not been queried.</p>
-        <p v-else-if="remoteRules.length === 0" class="text-sm text-slate-600">Cloudflare reports no public hostname routes.</p>
-        <div v-else class="overflow-x-auto rounded-lg border border-slate-200">
-          <table class="w-full text-left text-xs">
-            <thead class="bg-slate-50 border-b border-slate-200 text-slate-600">
-              <tr>
-                <th class="p-2.5 font-semibold">Hostname / path</th>
-                <th class="p-2.5 font-semibold">Origin service</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100">
-              <tr v-for="(rule, index) in remoteRules" :key="index" class="hover:bg-slate-50/60">
-                <td class="p-2.5 font-medium text-slate-800">{{ rule.hostname }}{{ rule.path || '' }}</td>
-                <td class="p-2.5 font-mono text-slate-600">{{ rule.service }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+    <!-- Ingress routes for local and Cloudflare-managed tunnels -->
+    <CloudflareIngressEditor
+      v-if="configurationReady"
+      v-show="activeTab === 'ingress'"
+      :key="String(connectorPresent) + connectorTunnelId + ingressVersion"
+      :remote="connectorPresent"
+      :tunnel-id="tunnelId"
+      :containers="knownContainers"
+      @saved="onIngressSaved"
+      @credentials="focusApiCredentials"
+    />
 
-      <!-- Local YAML Rules (collapsible if connectorPresent, visible if !connectorPresent) -->
-      <component
-        :is="connectorPresent ? 'details' : 'div'"
-        :class="connectorPresent ? 'cyber-card space-y-4' : 'space-y-4'"
-      >
-        <summary v-if="connectorPresent" class="cursor-pointer text-xs font-semibold text-slate-600 hover:text-slate-900 select-none">
-          Show local YAML configuration rules (for local credentials tunnels)
-        </summary>
-        <div :class="{ 'pt-3 space-y-4 border-t border-slate-200': connectorPresent }">
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
-        <div>
-          <h2 class="text-base font-bold text-slate-900 flex items-center gap-2">
-            <Layers class="h-4 w-4 text-cyan-600" />
-            <span>Cloudflare Ingress Rules</span>
-          </h2>
-          <p class="text-xs text-slate-600">
-            Maps public domain hostnames to local Docker containers or internal network targets.
-          </p>
-        </div>
-
-        <div class="flex items-center gap-2">
-          <button
-            @click="isRawEditor = !isRawEditor"
-            class="cyber-btn-secondary text-xs flex items-center gap-1.5"
-          >
-            <Code v-if="!isRawEditor" class="h-3.5 w-3.5" />
-            <Eye v-else class="h-3.5 w-3.5" />
-            <span>{{ isRawEditor ? 'Visual View' : 'Raw YAML' }}</span>
-          </button>
-          <button
-            v-if="!isRawEditor"
-            @click="addRule"
-            class="cyber-btn text-xs flex items-center gap-1.5"
-          >
-            <Plus class="h-3.5 w-3.5" />
-            <span>Add Rule</span>
-          </button>
-          <button
-            @click="syncAllDnsRoutes(false)"
-            :disabled="syncLoading"
-            class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-800 bg-cyan-50/30 hover:bg-cyan-100/50"
-            title="Automatically create or verify DNS CNAME records in Cloudflare for all hostnames above"
-          >
-            <RefreshCw class="h-3.5 w-3.5" :class="syncLoading ? 'animate-spin' : ''" />
-            <span>{{ syncLoading ? 'Syncing DNS…' : 'Sync to Cloudflare DNS' }}</span>
-          </button>
-          <button
-            @click="syncAllDnsRoutes(true)"
-            :disabled="syncLoading"
-            class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-amber-700 border-amber-300 bg-amber-50/40 hover:bg-amber-100/60"
-            title="Force overwrite and delete any conflicting old DNS records in Cloudflare"
-          >
-            <RotateCcw class="h-3.5 w-3.5 text-amber-600" :class="syncLoading ? 'animate-spin' : ''" />
-            <span>Force Overwrite DNS</span>
-          </button>
-          <button
-            @click="save(true)"
-            :disabled="saving"
-            class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-700 border-emerald-600 bg-emerald-50/40 hover:bg-emerald-100/50 font-medium"
-            title="Save config and restart tunnel container so changes are active immediately"
-          >
-            <RotateCcw class="h-3.5 w-3.5" :class="saving ? 'animate-spin' : ''" />
-            <span>{{ saving ? 'Saving & Applying...' : 'Save & Apply to Tunnel' }}</span>
-          </button>
-          <button
-            @click="save(false)"
-            :disabled="saving"
-            class="cyber-btn-secondary text-xs flex items-center gap-1.5 text-slate-600"
-            title="Save YAML config without restarting the tunnel"
-          >
-            <span>Save Only</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Raw YAML Editor View -->
-      <div v-if="isRawEditor" class="space-y-3">
-        <textarea
-          v-model="rawYaml"
-          rows="18"
-          spellcheck="false"
-          class="w-full rounded-xl border border-slate-200 bg-slate-50 p-4 font-mono text-xs text-slate-800 focus:border-cyan-500 focus:outline-none leading-relaxed"
-        ></textarea>
-      </div>
-
-      <!-- Visual Rules Cards View -->
-      <div v-else class="space-y-3">
-        <!-- Security & Cloudflare Access Advice -->
-        <div class="rounded-xl border border-cyan-800/40 bg-slate-50 p-4 flex flex-col sm:flex-row items-start gap-3.5">
-          <ShieldCheck class="h-5 w-5 text-cyan-600 mt-0.5 flex-shrink-0" />
-          <div class="space-y-1 text-xs">
-            <div class="font-bold text-slate-800">Exposing Admin Panels & Security Hardening</div>
-            <p class="text-slate-600 leading-relaxed">
-              If you expose the DockTun management dashboard publicly, we strongly recommend placing it behind
-              <strong class="text-cyan-700">Cloudflare Zero Trust (Access)</strong> in your Cloudflare dashboard (Applications &rarr; Add an Application).
-              Access requires One-Time PIN email verification or Google/GitHub SSO at the Cloudflare edge before any traffic reaches your server.
-              Alternatively, you can safely <strong class="text-amber-700">delete the DockTun rule below</strong> to keep DockTun internal-only and access it via your local network (<code class="text-slate-700 font-mono">http://&lt;lan-ip&gt;:8080</code> or <code class="text-slate-700 font-mono">http://docktun.local</code>).
-            </p>
-          </div>
-        </div>
-        <div
-          v-for="(rule, i) in rules"
-          :key="i"
-          class="cyber-card p-4 flex flex-col md:flex-row md:items-center justify-between gap-4"
-          :class="isDocktunRule(rule) ? 'border-cyan-500/30 bg-slate-50/90' : ''"
-        >
-          <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <!-- Hostname Input -->
-            <div>
-              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                Public Hostname (FQDN)
-              </label>
-              <div class="flex items-center gap-2">
-                <input
-                  v-model="rule.hostname"
-                  type="text"
-                  placeholder="app.example.com"
-                  class="cyber-input text-xs font-mono"
-                />
-                <a
-                  v-if="rule.hostname"
-                  :href="`https://${rule.hostname}`"
-                  target="_blank"
-                  rel="noopener"
-                  class="rounded-lg p-2 text-slate-600 hover:text-cyan-700 hover:bg-slate-100 transition"
-                  title="Open site in new tab"
-                >
-                  <ExternalLink class="h-4 w-4" />
-                </a>
-              </div>
-            </div>
-
-            <!-- Service Target Input -->
-            <div>
-              <div class="flex items-center justify-between mb-1">
-                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                  Local Service Target
-                </label>
-                <router-link
-                  v-if="extractTargetHost(rule.service)"
-                  :to="'/containers?name=' + encodeURIComponent(extractTargetHost(rule.service))"
-                  class="text-[10px] text-cyan-600 hover:underline font-mono flex items-center gap-1"
-                  :title="`Inspect container '${extractTargetHost(rule.service)}'`"
-                >
-                  <Server class="w-3 h-3 text-cyan-600" />
-                  <span>Inspect Container &rarr;</span>
-                </router-link>
-              </div>
-              <input
-                v-model="rule.service"
-                type="text"
-                placeholder="http://container-name:80"
-                class="cyber-input text-xs font-mono"
-              />
-            </div>
-
-            <!-- Options Row -->
-            <div class="col-span-full flex flex-wrap items-center justify-between text-xs text-slate-600 pt-1 gap-2">
-              <div class="flex flex-wrap items-center gap-3">
-                <label class="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    v-model="rule.noTLSVerify"
-                    class="rounded bg-slate-50"
-                  />
-                  <span class="text-[11px] font-mono">noTLSVerify (Disable TLS origin check)</span>
-                </label>
-
-                <!-- Test Origin Button -->
-                <button
-                  v-if="!rule.service.startsWith('http_status:')"
-                  type="button"
-                  @click="probeOriginRule(rule)"
-                  :disabled="probingHost === rule.hostname"
-                  class="cyber-btn-secondary text-[11px] font-mono py-0.5 px-2 flex items-center gap-1.5 hover:text-cyan-700"
-                  title="Test HTTP connectivity to origin container"
-                >
-                  <RotateCcw v-if="probingHost === rule.hostname" class="h-3 w-3 animate-spin text-cyan-600" />
-                  <Activity v-else class="h-3 w-3 text-cyan-600" />
-                  <span>{{ probingHost === rule.hostname ? 'Testing...' : 'Test Origin' }}</span>
-                </button>
-
-                <!-- Probe feedback badge -->
-                <span
-                  v-if="probeResults[rule.hostname]"
-                  class="rounded px-2 py-0.5 text-[10px] font-mono font-bold"
-                  :class="probeResults[rule.hostname].reachable ? 'bg-emerald-50/80 text-emerald-600 border border-emerald-800/50' : 'bg-red-50/80 text-red-600 border border-red-800/50'"
-                >
-                  {{ probeResults[rule.hostname].reachable ? `UP ${probeResults[rule.hostname].latency_ms}ms • HTTP ${probeResults[rule.hostname].status_code}` : (probeResults[rule.hostname].error || 'TIMEOUT') }}
-                </span>
-              </div>
-
-              <div class="flex items-center gap-2">
-                <!-- Maintenance / Pause Toggle -->
-                <button
-                  type="button"
-                  @click="toggleRulePause(rule)"
-                  class="rounded px-2 py-0.5 text-[10px] font-mono font-semibold transition"
-                  :class="rule.service.startsWith('http_status:') ? 'bg-amber-50 text-amber-700 border border-amber-800 hover:bg-amber-100/60' : 'bg-white text-slate-600 border border-slate-200 hover:text-slate-800'"
-                  :title="rule.service.startsWith('http_status:') ? 'Resume routing to container' : 'Temporarily pause rule with HTTP 503 maintenance mode'"
-                >
-                  {{ rule.service.startsWith('http_status:') ? '⚠ MAINTENANCE (503) • CLICK TO RESUME' : 'Pause (503 Mode)' }}
-                </button>
-
-                <span
-                  v-if="isDocktunRule(rule)"
-                  class="inline-flex items-center gap-1 rounded bg-cyan-50/60 border border-cyan-800/40 px-2 py-0.5 text-[10px] font-mono text-cyan-700 font-semibold"
-                >
-                  <Sliders class="h-3 w-3" />
-                  DockTun Dashboard
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Delete Rule Button -->
-          <div class="flex md:flex-col justify-end pt-2 md:pt-0">
-            <button
-              @click="removeRule(i)"
-              class="cyber-btn-danger !px-2.5 !py-2 text-xs"
-              title="Delete rule"
-            >
-              <Trash2 class="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-        </div>
-      </component>
-    </div>
-
-    <!-- ======================================================== -->
     <!-- TAB 3: TCP CLIENT ACCESS HELPER                          -->
     <!-- ======================================================== -->
     <div v-if="activeTab === 'tcp'" class="space-y-5">

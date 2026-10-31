@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -38,7 +39,9 @@ func (h *Config) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *Config) Update(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Content string `json:"content"`
+		Content         string  `json:"content"`
+		ExpectedContent *string `json:"expected_content"`
+		SyncDNS         *bool   `json:"sync_dns"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
@@ -53,7 +56,11 @@ func (h *Config) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID, _ := r.Context().Value("user_id").(int)
-	if err := h.mgr.Write(req.Content, userID); err != nil {
+	if err := h.mgr.WriteIfUnchanged(req.Content, userID, req.ExpectedContent); err != nil {
+		if errors.Is(err, service.ErrLocalConfigurationChanged) {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
 		http.Error(w, `{"error":"failed to write config"}`, http.StatusInternalServerError)
 		return
 	}
@@ -61,7 +68,7 @@ func (h *Config) Update(w http.ResponseWriter, r *http.Request) {
 	h.audit.Log(userID, "config_edit", "", r.RemoteAddr)
 
 	// Automatically sync all ingress routes with Cloudflare DNS
-	if h.cfAPI != nil {
+	if h.cfAPI != nil && (req.SyncDNS == nil || *req.SyncDNS) {
 		go h.cfAPI.AutoSyncIngressDNS(h.mgr)
 	}
 

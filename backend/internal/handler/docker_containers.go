@@ -246,14 +246,15 @@ func (h *DockerContainers) SystemPrune(w http.ResponseWriter, r *http.Request) {
 
 func (h *DockerContainers) ProbeTarget(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Service string `json:"service"`
+		Service       string                     `json:"service"`
+		OriginRequest service.OriginProbeOptions `json:"origin_request"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Service == "" {
 		jsonError(w, "service is required", http.StatusBadRequest)
 		return
 	}
 
-	res, err := h.svc.ProbeTarget(req.Service)
+	res, err := h.svc.ProbeTargetWithOptions(req.Service, req.OriginRequest)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -328,4 +329,3 @@ func (h *DockerContainers) RelinkDatabase(w http.ResponseWriter, r *http.Request
 		"message": "database links and network aliases successfully verified",
 	})
 }
-

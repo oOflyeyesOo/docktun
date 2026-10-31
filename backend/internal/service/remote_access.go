@@ -255,6 +255,7 @@ func (s *RemoteAccessService) GetOverview() (*RemoteAccessOverview, error) {
 				Protocol string `yaml:"protocol"`
 				Ingress  []struct {
 					Hostname string `yaml:"hostname"`
+					Path     string `yaml:"path"`
 					Service  string `yaml:"service"`
 				} `yaml:"ingress"`
 			}
@@ -265,7 +266,7 @@ func (s *RemoteAccessService) GetOverview() (*RemoteAccessOverview, error) {
 				}
 				rulesCount := 0
 				for _, r := range parsed.Ingress {
-					if r.Service != "http_status:404" {
+					if r.Hostname != "" || r.Path != "" {
 						rulesCount++
 					}
 				}
@@ -293,7 +294,7 @@ func (s *RemoteAccessService) GetOverview() (*RemoteAccessOverview, error) {
 					overview.Cloudflare.RoutesKnown = true
 					if rules, ok := configuration["ingress"].([]any); ok {
 						for _, item := range rules {
-							if rule, ok := item.(map[string]any); ok && rule["hostname"] != nil && rule["hostname"] != "" {
+							if rule, ok := item.(map[string]any); ok && ((rule["hostname"] != nil && rule["hostname"] != "") || (rule["path"] != nil && rule["path"] != "")) {
 								overview.Cloudflare.IngressCount++
 							}
 						}
@@ -770,8 +771,8 @@ func (s *RemoteAccessService) ZeroconfControl(action string) error {
 		// Other existing local-proxy containers retain their configuration.
 		if out, err := exec.Command("docker", "inspect", "docktun-zeroconf").Output(); err == nil {
 			var existing []struct {
-				Path string
-				Args []string
+				Path   string
+				Args   []string
 				Config struct{ Image string }
 			}
 			if json.Unmarshal(out, &existing) == nil && len(existing) == 1 {

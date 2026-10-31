@@ -530,6 +530,47 @@ try:
     summary=request('/api/remote-access/overview')['cloudflare']
     assert summary['routes_known'] and summary['ingress_count']==3 and summary['tunnel_id']=='fixture-token-tunnel',summary
     print('Cloudflare token integration passed: token identity, missing/DNS-only token failures and corrected-token recovery, healthy remote status, API route/DNS writes, connector-to-app HTTP reachability, preserved unrelated settings, running/stopped/missing legacy and owned Tailscale switching, persistent identity without stale Serve rules, permission failures and local-YAML compatibility',flush=True)
+    # Generic ingress editing must support origins outside any managed app stack.
+    # Publish an isolated origin through the nested Docker host, modelling a VM IP.
+    inner('network','create','external-origin')
+    inner('run','-d','--name','vm-origin','--network','external-origin','-p','18080:18080','python:3.13-alpine','python','-m','http.server','18080')
+    networks=json.loads(inner('inspect','docktun'))[0]['NetworkSettings']['Networks']
+    gateway=next(network['Gateway'] for network in networks.values() if network['Gateway'])
+    target='http://'+gateway+':18080'
+    for _ in range(30):
+        probe=request('/api/docker/probe',{'service':target,'origin_request':{'httpHostHeader':'vm.internal'}})
+        if probe['reachable']: break
+        time.sleep(1)
+    assert probe['reachable'] and probe['status_code']==200,probe
+    initial=request('/api/cloudflare/configuration')
+    edited=json.loads(json.dumps(initial['config']))
+    edited['ingress'].insert(0,{'hostname':'vm.example.com','path':'/api/.*','service':target,'originRequest':{'httpHostHeader':'vm.internal','noTLSVerify':False,'connectTimeout':12}})
+    dns_before=[item for item in api_writes() if '/dns_records' in item['path']]
+    accepted=request('/api/cloudflare/configuration',{'config':edited,'expected_revision':initial['revision']},method='PUT')
+    assert accepted['config']==edited and accepted['revision']!=initial['revision'],accepted
+    current=request('/api/cloudflare/configuration')
+    assert current['config']==edited,current
+    assert [item for item in api_writes() if '/dns_records' in item['path']]==dns_before, 'saving routes unexpectedly edited DNS'
+    stale=request('/api/cloudflare/configuration',{'config':initial['config'],'expected_revision':initial['revision']},method='PUT',expected=409)
+    assert 'changed' in stale['error'],stale
+    assert request('/api/cloudflare/configuration')['config']==edited, 'stale form erased the VM route'
+    inner('exec','api-fixture','touch','/certs/reject-put')
+    rejected=request('/api/cloudflare/configuration',{'config':initial['config'],'expected_revision':current['revision']},method='PUT',expected=400)
+    assert 'permissions' in rejected['error'],rejected
+    assert request('/api/cloudflare/configuration')['config']==edited, 'rejected write erased the VM route'
+    inner('exec','api-fixture','rm','/certs/reject-put')
+    request('/api/cloudflare/configuration',{'config':initial['config'],'expected_revision':current['revision']},method='PUT')
+    assert inner('inspect','--format','{{.State.Status}}','docktun-cloudflared')=='exited', 'route edit started a stopped connector'
+    request('/api/provider/cloudflare/credentials',{'token':''},method='PUT')
+    original=request('/api/config')['content']
+    local_external=local.replace('http_status:404','http_status:503')
+    local_external=local_external.replace('ingress:', 'ingress:\n  - hostname: vm.example.com\n    path: /api/.*\n    service: '+target+'\n    originRequest:\n      noTLSVerify: false')
+    request('/api/config',{'content':local_external,'expected_content':original,'sync_dns':False},method='PUT')
+    assert request('/api/config')['content']==local_external, 'local origin or options changed'
+    request('/api/config',{'content':original,'expected_content':original,'sync_dns':False},method='PUT',expected=409)
+    assert request('/api/config')['content']==local_external
+    assert request('/api/config/backups'), 'local edit omitted backup'
+    print('PASS: generic remote and local VM routes, real HTTP reachability, preserved advanced fields, stale-form conflicts, permission rejection, separate DNS, backups and stopped connector state',flush=True)
     passed = True
     if os.environ.get('DOCKTUN_KEEP_TEST_ENGINE')=='1':
         Path('../../outputs/cloudflare-test-preview.json').write_text(json.dumps({'engine':engine,'url':base,'username':'owner','password':'fixture-password-123'},indent=2))

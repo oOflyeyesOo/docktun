@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -1719,7 +1720,17 @@ func (s *DockerContainers) SystemPrune() (string, error) {
 	return b.String(), nil
 }
 
+type OriginProbeOptions struct {
+	NoTLSVerify      bool   `json:"noTLSVerify"`
+	HTTPHostHeader   string `json:"httpHostHeader"`
+	OriginServerName string `json:"originServerName"`
+}
+
 func (s *DockerContainers) ProbeTarget(targetURL string) (map[string]interface{}, error) {
+	return s.ProbeTargetWithOptions(targetURL, OriginProbeOptions{})
+}
+
+func (s *DockerContainers) ProbeTargetWithOptions(targetURL string, options OriginProbeOptions) (map[string]interface{}, error) {
 	result := map[string]interface{}{
 		"reachable":   false,
 		"status_code": 0,
@@ -1736,20 +1747,32 @@ func (s *DockerContainers) ProbeTarget(targetURL string) (map[string]interface{}
 		raw = "http://" + raw
 	}
 	parsed, err := url.Parse(raw)
-	if err != nil {
-		result["error"] = fmt.Sprintf("Invalid target URL: %v", err)
+	if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		result["error"] = "Use an HTTP or HTTPS origin URL with a hostname"
 		return result, nil
 	}
 
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: options.NoTLSVerify, ServerName: options.OriginServerName} // Only disabled by an explicit origin option.
+	defer transport.CloseIdleConnections()
+	request, err := http.NewRequest(http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		result["error"] = err.Error()
+		return result, nil
+	}
+	if options.HTTPHostHeader != "" {
+		request.Host = options.HTTPHostHeader
+	}
 	start := time.Now()
 	client := &http.Client{
-		Timeout: 4 * time.Second,
+		Timeout:   4 * time.Second,
+		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
 
-	resp, err := client.Get(parsed.String())
+	resp, err := client.Do(request)
 	latency := time.Since(start).Milliseconds()
 	result["latency_ms"] = latency
 
