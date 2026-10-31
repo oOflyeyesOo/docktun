@@ -3814,7 +3814,11 @@ onUnmounted(() => {
       @click="onBackdropClick($event, onLaunchModalBackdropClick)"
     >
       <div
-        class="w-full max-w-4xl rounded-xl border border-slate-300 bg-white p-6 shadow-sm space-y-4 max-h-[92vh] flex flex-col"
+        class="w-full rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-xl space-y-4 max-h-[94vh] flex flex-col"
+        :class="launchTab === 'templates' ? 'max-w-6xl' : 'max-w-4xl'"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Deploy an app or stack"
         @mousedown.stop
         @mouseup.stop
         @click.stop
@@ -3870,7 +3874,7 @@ onUnmounted(() => {
 
         <!-- TAB 1: Docker Compose YAML Editor -->
         <div v-if="launchTab === 'compose'" class="space-y-4 overflow-y-auto pr-1 flex-1">
-          <div class="grid gap-3 sm:grid-cols-2 text-xs">
+          <div class="grid gap-3 text-xs" :class="{ 'sm:grid-cols-2': !composeTemplateSource }">
             <div>
               <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
                 Stack / Project Name <span class="text-rose-600">*</span>
@@ -3881,7 +3885,7 @@ onUnmounted(() => {
                 placeholder="e.g. my-stack"
               />
             </div>
-            <div>
+            <div v-if="!composeTemplateSource">
               <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
                 Host Working Directory Path (Optional)
               </label>
@@ -3896,6 +3900,7 @@ onUnmounted(() => {
           <TemplateSetup v-if="composeTemplateSource" :input="{ compose_content: composeDeployForm.compose_content, env_content: composeDeployForm.env_content }" @apply="applyTemplateSetup" @dirty="composeSetupDirty = $event" />
           <details :open="!composeTemplateSource" class="rounded-xl border border-slate-200 p-3 space-y-3">
             <summary class="text-xs font-medium text-slate-700 cursor-pointer">Advanced: Compose &amp; Environment</summary>
+            <div v-if="composeTemplateSource" class="space-y-1"><label class="block text-xs text-slate-600">Project folder (optional)</label><input v-model="composeDeployForm.path" class="cyber-input text-xs font-mono" placeholder="Leave empty to create the project in DockTun's projects storage"><p class="text-[11px] text-slate-500">Override only if you want the project files in another mounted folder.</p></div>
           <div>
             <!-- Banner when docker run command is pasted in Compose YAML tab -->
             <div v-if="isPastedDockerRun" class="mb-2.5 rounded-lg border border-cyan-500/60 bg-cyan-50/80 p-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { useApi } from '../composables/useApi'
+import { defaultStorageChoices, storageGroups as groupStorage } from '../lib/template-library.mjs'
 const props = defineProps<{ input: { compose_content: string; env_content: string } }>()
 const emit = defineEmits<{ apply: [any]; dirty: [boolean] }>()
 const { apiFetch } = useApi()
@@ -31,7 +32,7 @@ async function inspect() {
     sourceDraft = { ...props.input }; appliedForm.value = ''
     schema.value = response
     values.value = Object.fromEntries(response.fields.map((field: any) => [field.id, field.value]))
-    storage.value = Object.fromEntries(response.storage.map((mount: any) => [mount.id, { mode: 'host', source: mount.source }]))
+    storage.value = defaultStorageChoices(response.storage)
     linked.value = Object.fromEntries((response.credential_links || []).map((link: any) => [link.id, true]))
     connect.value = true; portNotes.value = []
   } catch (e: any) { if (request === version) { error.value = e.message; if (!schema.value) emit('dirty', false) } } finally { if (request === version) busy.value = false }
@@ -41,6 +42,8 @@ watch(() => formSnapshot.value, current => { emit('dirty', current !== appliedFo
 const unapplied = computed(() => formSnapshot.value !== appliedForm.value)
 const credentials = computed(() => (schema.value?.fields || []).filter((f: any) => f.secret || /user|email|login/i.test(f.name)))
 const settings = computed(() => (schema.value?.fields || []).filter((f: any) => !credentials.value.includes(f)))
+const storageGroups = computed(() => groupStorage(schema.value?.storage || []))
+const missingHostSources = computed(() => storageGroups.value.some((group: any) => storage.value[group.id]?.mode === 'host' && !storage.value[group.id]?.source?.trim()))
 const passwords = computed(() => (schema.value?.fields || []).filter((f: any) => f.password))
 const samplePasswords = computed(() => passwords.value.filter((f: any) => /^(change[_-]?me|adminpassword|replace[_-]?me|your[_-])|^(password[0-9!]*|secret|admin)$/i.test(values.value[f.id] || '')))
 function generate(id: string) {
@@ -69,11 +72,6 @@ async function freePorts() {
 function sharedStorage(mount: any) {
   for (const other of schema.value.storage) if (other.source === mount.source && (storage.value[mount.id].mode !== 'managed' || other.can_manage)) storage.value[other.id] = { ...storage.value[mount.id] }
 }
-function automaticStorage() {
-  for (const mount of schema.value.storage) if (mount.can_manage && !mount.read_only && /^\/(config|data|app\/data|var\/lib|opt)(\/|$)/.test(mount.target) && schema.value.storage.filter((other: any) => other.source === mount.source).every((other: any) => other.can_manage)) {
-    storage.value[mount.id].mode = 'managed'; sharedStorage(mount)
-  }
-}
 async function apply() {
   const request = ++version; busy.value = true; error.value = ''
   const edits = Object.fromEntries(schema.value.fields.filter((f: any) => !f.id.startsWith('var:') || values.value[f.id] !== '' || f.value !== '').map((f: any) => [f.id, values.value[f.id]]))
@@ -89,45 +87,46 @@ async function apply() {
 }
 </script>
 <template>
-  <section class="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 space-y-4">
-    <div><h3 class="font-semibold text-sm text-slate-900">Set up this app</h3><p class="text-xs text-slate-600 mt-1">Choose storage, login details and ports here. Apply your choices to check the app before deploying.</p></div>
+  <section class="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 space-y-5">
+    <div><p class="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Make it yours</p><h3 class="mt-1 font-semibold text-base text-slate-900">App setup</h3><p class="text-xs text-slate-500 mt-1">App data storage is created on deployment. Review the login and connection settings, then check your app.</p></div>
     <p v-if="error" role="alert" class="text-xs text-red-700">{{ error }}. The advanced editor is still available below.</p>
     <p v-if="busy && !schema" class="text-xs text-slate-500">Reading template settings…</p>
     <template v-if="schema">
-      <div v-if="schema.dependencies?.length || schema.credential_links?.length" class="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
-        <h4 class="text-xs font-semibold text-slate-800">App dependencies</h4>
+      <details v-if="schema.dependencies?.length || schema.credential_links?.length" class="rounded-xl border border-slate-200 bg-slate-50/60 p-3 space-y-2">
+        <summary class="cursor-pointer text-xs font-semibold text-slate-800">Connected services &amp; linked credentials</summary>
         <p v-for="dependency in schema.dependencies" :key="`${dependency.service}:${dependency.target}`" class="text-xs text-slate-600">{{ dependency.service }} → {{ dependency.target }} · {{ dependency.role }} · {{ dependency.healthy ? 'waits for health check' : 'starts before the app' }}</p>
         <label v-if="schema.dependencies?.some(d => d.suggested)" class="flex gap-2 text-xs text-slate-700"><input v-model="connect" type="checkbox" :disabled="busy">Connect detected database/cache startup dependencies</label>
         <label v-for="link in schema.credential_links" :key="link.id" class="flex items-start gap-2 text-xs text-slate-700"><input v-model="linked[link.id]" type="checkbox" :disabled="busy" @change="syncLinked(link.fields[0])"><span>Keep matching {{ link.kind }} linked: {{ link.uses.join(' ↔ ') }}</span></label>
-      </div>
-      <button v-if="schema.fields.some(f => f.port_uses?.length)" type="button" class="cyber-btn-secondary text-xs" :disabled="busy" @click="freePorts">Find free host ports</button>
-      <p v-for="note in portNotes" :key="note" class="text-xs text-slate-600">{{ note }}</p>
+      </details>
       <div v-if="schema.storage.length" class="space-y-3">
-        <div class="flex flex-wrap justify-between gap-2 items-center"><h4 class="text-xs font-semibold text-slate-800">Storage</h4><button type="button" class="cyber-btn-secondary text-xs" :disabled="busy" @click="automaticStorage">Automatic storage for new app data</button></div>
-        <p class="text-xs text-slate-600">Automatic storage uses persistent Docker volumes created on deployment. Existing files are not copied. For your media, downloads or existing configuration, choose its folder on the Docker host.</p>
-        <div v-for="mount in schema.storage" :key="mount.id" class="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
-          <p class="text-xs font-medium text-slate-800">{{ mount.service }} → {{ mount.target }} <span class="text-slate-500">({{ mount.read_only ? 'read only' : 'read/write' }})</span></p>
-          <select v-model="storage[mount.id].mode" :aria-label="`Storage for ${mount.service} ${mount.target}`" class="cyber-input text-xs" :disabled="busy" @change="sharedStorage(mount)"><option value="host">Use a folder or file on my Docker host</option><option v-if="mount.can_manage" value="managed">Create persistent storage automatically</option></select>
-          <input v-if="storage[mount.id].mode === 'host'" v-model="storage[mount.id].source" :aria-label="`Host source for ${mount.service} ${mount.target}`" class="cyber-input text-xs font-mono" placeholder="For example /volume1/docker/my-app/config" :disabled="busy" @input="sharedStorage(mount)">
-          <p class="text-[11px] text-slate-500">{{ storage[mount.id].mode === 'managed' ? 'Docker will create a new persistent volume for this app. No host folder needs to be created.' : mount.hint }}</p>
+        <h4 class="text-sm font-semibold text-slate-800">Storage</h4>
+        <p class="text-xs text-slate-500">New data uses persistent Docker storage. Choose an existing folder only when you want to bring your own files.</p>
+        <div v-for="group in storageGroups" :key="group.id" class="rounded-xl border p-3 space-y-2" :class="storage[group.id].mode === 'managed' ? 'border-emerald-200 bg-emerald-50/40' : 'border-slate-200 bg-slate-50/50'">
+          <div class="flex flex-wrap items-center justify-between gap-2"><p class="text-xs font-semibold text-slate-800">{{ storage[group.id].mode === 'managed' ? 'App data · created automatically' : group.automatic ? 'Your existing files' : 'Required file or host connection' }}</p><span v-if="group.members.length > 1" class="text-[10px] text-slate-500">Shared by {{ group.members.length }} mounts</span></div>
+          <div class="flex flex-wrap gap-1.5"><span v-for="mount in group.members" :key="mount.id" class="rounded-md border border-slate-200/70 bg-white px-2 py-1 text-[10px] text-slate-500">{{ mount.service }} <span class="font-mono text-slate-700">{{ mount.target }}</span> · {{ mount.read_only ? 'read only' : 'read/write' }}</span></div>
+          <select v-if="group.automatic" v-model="storage[group.id].mode" :aria-label="`Storage for ${group.members[0].service} ${group.members[0].target}`" class="cyber-input text-xs" :disabled="busy" @change="sharedStorage(group.members[0])"><option value="managed">Create automatically (recommended)</option><option value="host">Use my existing folder</option></select>
+          <input v-if="storage[group.id].mode === 'host'" v-model="storage[group.id].source" :aria-label="`Host source for ${group.members[0].service} ${group.members[0].target}`" class="cyber-input text-xs font-mono" placeholder="Choose an existing folder or file on the Docker host" :disabled="busy" @input="sharedStorage(group.members[0])">
+          <p class="text-[11px] leading-relaxed text-slate-500">{{ storage[group.id].mode === 'managed' ? 'Docker creates this persistent data volume when you deploy. You do not need to make a folder first. Existing host files are not copied.' : group.related ? 'These mounts share a directory layout. Choose the real host paths to preserve that layout.' : group.automatic ? 'Choose a real folder on your Docker host. App checks confirm that it exists before deployment.' : 'This mount needs a real file, socket, device or advanced configuration. Supporting files below can help with project configuration files.' }}</p>
         </div>
       </div>
       <p v-else class="text-xs text-slate-600">Named storage volumes in this template are created automatically by Docker. Any extra file requirements are checked before deployment.</p>
       <div v-for="group in [{name:'Login & credentials', fields:credentials}, {name:'Ports & other settings', fields:settings}]" :key="group.name" class="space-y-2">
         <template v-if="group.fields.length">
-          <div class="flex flex-wrap items-center justify-between gap-2"><h4 class="text-xs font-semibold text-slate-800">{{ group.name }}</h4><button v-if="group.name === 'Login & credentials' && passwords.length" type="button" class="cyber-btn-secondary text-xs" :disabled="busy" @click="generatePasswords">Generate passwords</button></div>
+          <div class="flex flex-wrap items-center justify-between gap-2"><h4 class="text-sm font-semibold text-slate-800">{{ group.name }}</h4><button v-if="group.name === 'Login & credentials' && passwords.length" type="button" class="cyber-btn-secondary text-xs" :disabled="busy" @click="generatePasswords">Generate passwords</button><button v-if="group.name === 'Ports & other settings' && schema.fields.some(f => f.port_uses?.length)" type="button" class="cyber-btn-secondary text-xs" :disabled="busy" @click="freePorts">Find free host ports</button></div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3"><div v-for="field in group.fields" :key="field.id" class="space-y-1">
             <label :for="`setup-${field.id}`" class="block text-xs font-medium text-slate-700">{{ field.name }} <span class="text-[10px] text-slate-500">{{ field.service }}{{ field.required ? ' · needs a value' : '' }}</span></label>
             <div class="flex gap-1"><input :id="`setup-${field.id}`" v-model="values[field.id]" :type="field.secret && !showSecrets ? 'password' : 'text'" class="cyber-input text-xs min-w-0" :inputmode="field.kind === 'port' ? 'numeric' : undefined" :disabled="busy" @input="syncLinked(field.id)" autocomplete="off" :min="field.kind === 'port' ? 1 : undefined" :max="field.kind === 'port' ? 65535 : undefined"><button v-if="field.password" type="button" class="cyber-btn-secondary text-[10px]" :disabled="busy" @click="generate(field.id)">Generate</button><button v-if="field.name === 'TZ'" type="button" class="cyber-btn-secondary text-[10px]" :disabled="busy" @click="values[field.id] = Intl.DateTimeFormat().resolvedOptions().timeZone">Use mine</button></div>
-            <p class="text-[10px] text-slate-500">{{ field.hint }}</p>
+            <p v-if="!field.hint.startsWith('Container setting')" class="text-[10px] text-slate-500">{{ field.hint }}</p>
           </div></div>
+          <p v-if="group.name === 'Ports & other settings'" v-for="note in portNotes" :key="note" class="text-xs text-slate-500">{{ note }}</p>
         </template>
       </div>
       <label v-if="credentials.some(f => f.secret)" class="flex items-center gap-2 text-xs text-slate-600"><input v-model="showSecrets" type="checkbox">Show credentials</label>
       <p v-if="samplePasswords.length" role="alert" class="text-xs text-amber-800">Replace sample passwords or use Generate passwords before applying.</p>
       <details v-if="schema.notes.length" class="text-xs text-slate-600"><summary class="cursor-pointer font-medium">App setup instructions</summary><p v-for="(note,index) in schema.notes" :key="index" class="mt-2 whitespace-pre-wrap break-words">{{ note }}</p><p class="mt-2">Generated passwords are for new accounts. API tokens, encryption keys and password hashes must follow the app's instructions.</p></details>
       <p v-if="unapplied && !busy" class="text-xs text-indigo-700">Setup changes need to be applied and checked before deployment.</p>
-      <button type="button" class="cyber-btn text-xs w-full" :disabled="busy || !!samplePasswords.length" @click="apply">{{ busy ? 'Applying settings…' : 'Apply settings & check app' }}</button>
+      <p v-if="missingHostSources" role="alert" class="text-xs text-amber-800">Choose a host folder or switch back to automatic storage before applying.</p>
+      <button type="button" class="cyber-btn text-xs w-full" :disabled="busy || !!samplePasswords.length || missingHostSources" @click="apply">{{ busy ? 'Applying settings…' : 'Apply settings & check app' }}</button>
     </template>
   </section>
 </template>
