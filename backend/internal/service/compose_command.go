@@ -461,8 +461,12 @@ func composePortainerHostSource(source string, own updateContainer, projectDirec
 		return "", false
 	}
 	localPath := path.Join(projectDirectory, ".docktun", "portainer", relative)
-	if err := os.MkdirAll(filepath.FromSlash(localPath), 0755); err != nil {
+	targetDir := filepath.FromSlash(localPath)
+	if err := os.MkdirAll(targetDir, 0777); err != nil {
 		return "", false
+	}
+	for dir := targetDir; strings.Contains(filepath.ToSlash(dir), "/.docktun/portainer"); dir = filepath.Dir(dir) {
+		_ = os.Chmod(dir, 0777)
 	}
 	return path.Join(projectHost, ".docktun", "portainer", relative), true
 }

@@ -426,6 +426,23 @@ func checkTemplateCompatibility(ctx context.Context, document map[string]any, ow
 			if err != nil {
 				continue
 			}
+			if user != "" && (strings.Contains(source, "/srv/lsio") || strings.Contains(source, "/portainer")) {
+				for _, prefix := range []string{"/srv/lsio", "/portainer"} {
+					if source == prefix || strings.HasPrefix(source, prefix+"/") {
+						rel := strings.TrimPrefix(strings.TrimPrefix(source, prefix), "/")
+						lp := filepath.Join(directory, ".docktun", "portainer", filepath.FromSlash(rel))
+						if pair := strings.Split(user, ":"); len(pair) == 2 {
+							if uid, uerr := strconv.Atoi(pair[0]); uerr == nil {
+								if gid, gerr := strconv.Atoi(pair[1]); gerr == nil {
+									_ = os.Chown(lp, uid, gid)
+									_ = os.Chmod(lp, 0775)
+								}
+							}
+						}
+						break
+					}
+				}
+			}
 			raw, err := runTemplateProbe(ctx, own.Image, "filesystem", nil, hostSource, user, write, groups)
 			var fs templateFilesystem
 			if err != nil || json.Unmarshal(raw, &fs) != nil {

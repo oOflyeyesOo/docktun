@@ -35,6 +35,21 @@ async function inspect() {
     storage.value = defaultStorageChoices(response.storage)
     linked.value = Object.fromEntries((response.credential_links || []).map((link: any) => [link.id, true]))
     connect.value = true; portNotes.value = []
+
+    // Automatically apply recommended storage and defaults on initial load
+    const hasSamplePasswords = (response.fields || []).some((f: any) => f.password && /^(change[_-]?me|adminpassword|replace[_-]?me|your[_-])|^(password[0-9!]*|secret|admin)$/i.test(f.value || ''))
+    const hasMissingRequired = (response.fields || []).some((f: any) => f.required && !String(f.value || '').trim())
+    const hasMissingHostSources = (response.storage || []).some((mount: any) => storage.value[mount.id]?.mode === 'host' && !storage.value[mount.id]?.source?.trim())
+    if (!hasSamplePasswords && !hasMissingRequired && !hasMissingHostSources && response.storage?.some((mount: any) => storage.value[mount.id]?.mode === 'managed')) {
+      const edits = Object.fromEntries(response.fields.filter((f: any) => !f.id.startsWith('var:') || values.value[f.id] !== '' || f.value !== '').map((f: any) => [f.id, values.value[f.id]]))
+      const applyRes = await apiFetch<any>('/api/templates/setup', { method: 'POST', body: JSON.stringify({ ...sourceDraft, apply: true, values: edits, storage: storage.value, connect_dependencies: connect.value, credential_links: Object.fromEntries((response.credential_links || []).filter((link: any) => linked.value[link.id]).map((link: any) => [link.id, values.value[link.fields[0]]])) }) })
+      if (request === version && applyRes.compose_content) {
+        appliedForm.value = JSON.stringify({ values: values.value, storage: storage.value, linked: linked.value, connect: connect.value })
+        appliedKey = JSON.stringify({ compose_content: applyRes.compose_content, env_content: applyRes.env_content })
+        emit('dirty', false)
+        emit('apply', applyRes)
+      }
+    }
   } catch (e: any) { if (request === version) { error.value = e.message; if (!schema.value) emit('dirty', false) } } finally { if (request === version) busy.value = false }
 }
 const formSnapshot = computed(() => JSON.stringify({ values: values.value, storage: storage.value, linked: linked.value, connect: connect.value }))
