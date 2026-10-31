@@ -17,21 +17,24 @@ import (
 const serviceImageLabel = "io.docktun.update-image"
 
 type ManagedService struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	Kind             string `json:"kind"`
-	App              string `json:"app,omitempty"`
-	Image            string `json:"image"`
-	ImageID          string `json:"image_id"`
-	Running          bool   `json:"running"`
-	Health           string `json:"health,omitempty"`
-	Version          string `json:"version,omitempty"`
-	Available        bool   `json:"available"`
-	Checked          bool   `json:"checked"`
-	Result           string `json:"result,omitempty"`
-	Message          string `json:"message,omitempty"`
-	Candidate        string `json:"candidate,omitempty"`
-	CandidateVersion string `json:"candidate_version,omitempty"`
+	ID                string    `json:"id"`
+	Name              string    `json:"name"`
+	Kind              string    `json:"kind"`
+	App               string    `json:"app,omitempty"`
+	Image             string    `json:"image"`
+	ImageID           string    `json:"image_id"`
+	Running           bool      `json:"running"`
+	Health            string    `json:"health,omitempty"`
+	Version           string    `json:"version,omitempty"`
+	Available         bool      `json:"available"`
+	Checked           bool      `json:"checked"`
+	Result            string    `json:"result,omitempty"`
+	Message           string    `json:"message,omitempty"`
+	Candidate         string    `json:"candidate,omitempty"`
+	CandidateVersion  string    `json:"candidate_version,omitempty"`
+	Revision          string    `json:"revision,omitempty"`
+	CandidateRevision string    `json:"candidate_revision,omitempty"`
+	CheckedAt         time.Time `json:"checked_at,omitempty"`
 }
 
 type ServiceUpdateJob struct {
@@ -164,7 +167,11 @@ func managedInventory(ctx context.Context, core updateContainer) ([]ManagedServi
 		return nil, err
 	}
 	services := []ManagedService{}
-	metadata := map[string]string{}
+	type imageMetadata struct {
+		version  string
+		revision string
+	}
+	metadata := map[string]imageMetadata{}
 	for _, summary := range summaries {
 		labels := summary.Labels
 		ownLabels := containerLabels(core)
@@ -188,18 +195,19 @@ func managedInventory(ctx context.Context, core updateContainer) ([]ManagedServi
 		if kind == "" {
 			continue
 		}
-		version, known := metadata[c.Image]
+		meta, known := metadata[c.Image]
 		if !known {
 			var img struct {
 				Config struct{ Labels map[string]string }
 			}
 			if dockerJSON(ctx, "GET", "/images/"+url.PathEscape(c.Image)+"/json", nil, &img) == nil {
-				version = managedImageVersion(img.Config.Labels)
+				meta = imageMetadata{version: managedImageVersion(img.Config.Labels), revision: imageRevision(img.Config.Labels)}
 			}
-			metadata[c.Image] = version
+			metadata[c.Image] = meta
 		}
-		services = append(services, ManagedService{ID: c.ID, Name: strings.TrimPrefix(c.Name, "/"), Kind: kind, App: containerLabels(c)[tailscaleOwnerLabel], Image: serviceImage(c, core, kind), ImageID: c.Image, Version: version, Running: c.State.Running, Health: c.State.Health.Status})
+		services = append(services, ManagedService{ID: c.ID, Name: strings.TrimPrefix(c.Name, "/"), Kind: kind, App: containerLabels(c)[tailscaleOwnerLabel], Image: serviceImage(c, core, kind), ImageID: c.Image, Version: meta.version, Revision: meta.revision, Running: c.State.Running, Health: c.State.Health.Status})
 	}
+
 	sort.Slice(services, func(i, j int) bool {
 		if services[i].Kind == "core" && services[j].Kind != "core" {
 			return true
@@ -210,6 +218,14 @@ func managedInventory(ctx context.Context, core updateContainer) ([]ManagedServi
 		return services[i].Name < services[j].Name
 	})
 	return services, nil
+}
+
+func imageRevision(labels map[string]string) string {
+	revision := strings.TrimSpace(labels["org.opencontainers.image.revision"])
+	if len(revision) > 40 {
+		revision = revision[:40]
+	}
+	return revision
 }
 
 func (s *ManagedServices) read() ServiceUpdateJob {
@@ -395,6 +411,7 @@ func RunManagedServiceWorker(target, path string) error {
 	}
 	images := map[string]string{}
 	versions := map[string]string{}
+	revisions := map[string]string{}
 	for i := range job.Services {
 		row := &job.Services[i]
 		actual, ok := live[row.ID]
@@ -436,9 +453,12 @@ func RunManagedServiceWorker(target, path string) error {
 			candidate = image.ID
 			images[row.Image] = candidate
 			versions[row.Image] = managedImageVersion(image.Config.Labels)
+			revisions[row.Image] = imageRevision(image.Config.Labels)
 		}
 		row.Candidate = candidate
 		row.CandidateVersion = versions[row.Image]
+		row.CandidateRevision = revisions[row.Image]
+		row.CheckedAt = time.Now().UTC()
 		row.Checked = true
 		row.Available = candidate != row.ImageID
 		row.Result = "current"
