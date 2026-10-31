@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os/exec"
 	"strconv"
@@ -15,6 +16,43 @@ import (
 	"docktun/internal/templateprobe"
 	"gopkg.in/yaml.v3"
 )
+
+// Keep field creation and probe metadata on the same parser. Advanced ranges
+// remain intact in Compose rather than borrowing the next editable field.
+func setupPortBinding(entry *yaml.Node) (published, ip, protocol, target string, editable bool) {
+	protocol = "tcp"
+	if entry.Kind == yaml.MappingNode {
+		published = setupString(setupGet(entry, "published"))
+		target = setupString(setupGet(entry, "target"))
+		ip = setupString(setupGet(entry, "host_ip"))
+		if value := setupString(setupGet(entry, "protocol")); value != "" {
+			protocol = value
+		}
+	} else if entry.Kind == yaml.ScalarNode {
+		parts := setupMountParts(entry.Value)
+		if len(parts) < 2 || len(parts) > 3 {
+			return
+		}
+		published = parts[len(parts)-2]
+		target = parts[len(parts)-1]
+		if len(parts) == 3 {
+			ip = strings.Trim(parts[0], "[]")
+		}
+		if value, tail, ok := strings.Cut(target, "/"); ok {
+			target, protocol = value, tail
+		}
+	}
+	port, err := strconv.Atoi(target)
+	if err != nil || port < 1 || port > 65535 || (protocol != "tcp" && protocol != "udp") {
+		return
+	}
+	if port, err = strconv.Atoi(published); err == nil {
+		editable = port >= 0 && port <= 65535
+	} else if match := setupInterpolation.FindStringSubmatch(published); match != nil {
+		editable = match[0] == published && published != "$$"
+	}
+	return
+}
 
 func setupPortMetadata(root *yaml.Node, result *TemplateSetup) {
 	services := setupGet(root, "services")
@@ -32,29 +70,8 @@ func setupPortMetadata(root *yaml.Node, result *TemplateSetup) {
 		}
 		next := 0
 		for _, entry := range ports.Content {
-			published, ip, protocol, target := "", "", "tcp", ""
-			if entry.Kind == yaml.MappingNode {
-				published = setupString(setupGet(entry, "published"))
-				target = setupString(setupGet(entry, "target"))
-				ip = setupString(setupGet(entry, "host_ip"))
-				if value := setupString(setupGet(entry, "protocol")); value != "" {
-					protocol = value
-				}
-			} else {
-				parts := setupMountParts(entry.Value)
-				if len(parts) < 2 || len(parts) > 3 {
-					continue
-				}
-				published = parts[len(parts)-2]
-				target = strings.Split(parts[len(parts)-1], "/")[0]
-				if len(parts) == 3 {
-					ip = strings.Trim(parts[0], "[]")
-				}
-				if _, tail, ok := strings.Cut(parts[len(parts)-1], "/"); ok {
-					protocol = tail
-				}
-			}
-			if _, err := strconv.Atoi(target); err != nil || (protocol != "tcp" && protocol != "udp") {
+			published, ip, protocol, _, editable := setupPortBinding(entry)
+			if !editable {
 				result.Notes = append(result.Notes, service+": advanced port ranges/protocols stay in the Compose editor")
 				continue
 			}
@@ -153,6 +170,16 @@ func FindTemplatePorts(ctx context.Context, input TemplateSetupInput) (TemplateP
 		return result, err
 	}
 	request := templateprobe.Request{}
+	environment := map[string]string{}
+	for _, field := range schema.Fields {
+		if strings.HasPrefix(field.ID, "var:") {
+			value := field.Value
+			if edit, ok := input.Values[field.ID]; ok {
+				value = edit
+			}
+			environment[strings.TrimPrefix(field.ID, "var:")] = value
+		}
+	}
 	for _, container := range containers {
 		for _, port := range container.Ports {
 			if port.PublicPort > 0 {
@@ -169,7 +196,23 @@ func FindTemplatePorts(ctx context.Context, input TemplateSetupInput) (TemplateP
 			value = edit
 		}
 		preferred, _ := strconv.Atoi(value)
-		request.Groups = append(request.Groups, templateprobe.Group{ID: field.ID, Preferred: preferred, Uses: field.PortUses})
+		uses := append([]templateprobe.Use{}, field.PortUses...)
+		for i := range uses {
+			ip, resolveErr := resolveTemplatePath(uses[i].IP, environment)
+			if resolveErr != nil {
+				return result, fmt.Errorf("host bind address: %w", resolveErr)
+			}
+			ip = strings.Trim(ip, "[]")
+			if ip != "" && net.ParseIP(ip) == nil {
+				return result, fmt.Errorf("host bind address must be an IPv4 or IPv6 address")
+			}
+			uses[i].IP = ip
+		}
+		request.Groups = append(request.Groups, templateprobe.Group{ID: field.ID, Preferred: preferred, Uses: uses})
+	}
+	if len(request.Groups) == 0 {
+		result.Notes = append(result.Notes, "No individually editable host ports were found. Docker can assign automatic host ports; advanced ranges stay in the Compose editor.")
+		return result, nil
 	}
 	raw, err := runTemplateProbe(ctx, own.Image, "ports", request, "", "", false, nil)
 	if err != nil {
