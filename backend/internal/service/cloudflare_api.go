@@ -23,6 +23,7 @@ type CloudflareAPI struct {
 	client        *http.Client
 	tunnelCacheMu sync.Mutex
 	tunnelCache   map[string]*tunnelIngressSnapshot
+	tunnelWriteMu sync.Mutex
 }
 
 type CloudflareCredentials struct {

@@ -1,9 +1,11 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"docktun/internal/config"
 	"docktun/internal/db"
@@ -18,9 +20,12 @@ type ConfigBackup struct {
 }
 
 type ConfigManager struct {
-	cfg *config.Config
-	db  *db.DB
+	cfg     *config.Config
+	db      *db.DB
+	writeMu sync.Mutex
 }
+
+var ErrLocalConfigurationChanged = errors.New("local configuration changed since it was loaded; reload before saving")
 
 func NewConfigManager(cfg *config.Config, db *db.DB) *ConfigManager {
 	return &ConfigManager{cfg: cfg, db: db}
@@ -82,6 +87,12 @@ func (m *ConfigManager) DeleteBackup(id int) error {
 }
 
 func (m *ConfigManager) Write(content string, userID int) error {
+	return m.WriteIfUnchanged(content, userID, nil)
+}
+
+func (m *ConfigManager) WriteIfUnchanged(content string, userID int, expected *string) error {
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
 	// Normalize CRLF / CR to pure UNIX LF
 	content = strings.ReplaceAll(content, "\r\n", "\n")
 	content = strings.ReplaceAll(content, "\r", "\n")
@@ -94,6 +105,14 @@ func (m *ConfigManager) Write(content string, userID int) error {
 	}
 
 	current, err := m.Read()
+	if expected != nil {
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if current != *expected {
+			return ErrLocalConfigurationChanged
+		}
+	}
 	if err == nil && current != "" {
 		_ = m.CreateBackup(current, userID)
 	}
@@ -127,6 +146,22 @@ func (m *ConfigManager) Validate(content string) error {
 		}
 		if host, hasHost := lastRule["hostname"]; hasHost && host != "" && host != nil {
 			return fmt.Errorf("the final ingress rule must be a catch-all rule without a hostname (e.g. - service: http_status:404)")
+		}
+		if path, exists := lastRule["path"]; exists && path != "" && path != nil {
+			return fmt.Errorf("the final ingress rule must not have a path matcher")
+		}
+		for index, item := range ingressList {
+			rule, ok := item.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("ingress rule %d must be a mapping", index+1)
+			}
+			service, ok := rule["service"].(string)
+			if !ok || strings.TrimSpace(service) == "" {
+				return fmt.Errorf("ingress rule %d needs a service", index+1)
+			}
+			if index < len(ingressList)-1 && (rule["hostname"] == nil || rule["hostname"] == "") && (rule["path"] == nil || rule["path"] == "") {
+				return fmt.Errorf("unconditional fallback rule %d must be last", index+1)
+			}
 		}
 	}
 

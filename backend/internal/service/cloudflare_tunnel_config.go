@@ -3,8 +3,11 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +24,59 @@ type TunnelIdentity struct {
 	ID        string `json:"tunnel_id"`
 	AccountID string `json:"account_id,omitempty"`
 	Remote    bool   `json:"remote_managed"`
+}
+
+var ErrTunnelConfigurationChanged = errors.New("tunnel configuration changed since it was loaded; reload the routes before saving")
+
+func TunnelConfigurationRevision(configuration map[string]any) string {
+	raw, _ := json.Marshal(configuration)
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
+}
+
+// Edit any origin, including LAN/VM addresses. No Docker container lookup or
+// provider start is required. Re-read before writing so stale forms cannot
+// erase newer dashboard edits; unknown fields and origin options are retained.
+func (s *CloudflareAPI) UpdateTunnelConfiguration(identity TunnelIdentity, configuration map[string]any, expected string) (map[string]any, error) {
+	if !identity.Remote {
+		return nil, fmt.Errorf("this tunnel uses local YAML; save its local configuration instead")
+	}
+	if expected == "" {
+		return nil, fmt.Errorf("load the Cloudflare configuration before saving")
+	}
+	if _, ok := configuration["ingress"]; !ok {
+		return nil, fmt.Errorf("configuration needs ingress rules and a final fallback")
+	}
+	raw, err := yaml.Marshal(configuration)
+	if err != nil {
+		return nil, err
+	}
+	if err = (&ConfigManager{}).Validate(string(raw)); err != nil {
+		return nil, err
+	}
+	s.tunnelWriteMu.Lock()
+	defer s.tunnelWriteMu.Unlock()
+	current, err := s.TunnelConfiguration(identity)
+	if err != nil {
+		return nil, err
+	}
+	if TunnelConfigurationRevision(current) != expected {
+		return nil, ErrTunnelConfigurationChanged
+	}
+	accepted, err := s.tunnelRequest(identity, http.MethodPut, "/configurations", map[string]any{"config": configuration})
+	if err != nil {
+		return nil, err
+	}
+	// Cloudflare can normalize defaults. Base the next revision on its accepted
+	// configuration so a second save does not conflict with our own first save.
+	var result struct {
+		Config map[string]any `json:"config"`
+	}
+	if json.Unmarshal(accepted, &result) == nil && result.Config != nil {
+		configuration = result.Config
+	}
+	s.rememberTunnelIngress(identity, configuration, nil)
+	return configuration, nil
 }
 
 type cloudflareDNSPartialError struct{ cause error }
@@ -158,6 +214,8 @@ func (s *DockerContainers) syncRemoteCloudflareIngress(app string, next Exposure
 	if s.cfAPI == nil {
 		return fmt.Errorf("Cloudflare API service is unavailable")
 	}
+	s.cfAPI.tunnelWriteMu.Lock()
+	defer s.cfAPI.tunnelWriteMu.Unlock()
 	config, err := s.cfAPI.TunnelConfiguration(identity)
 	if err != nil {
 		return err

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -13,12 +14,14 @@ import (
 type CloudflareHandler struct {
 	cfAPI     *service.CloudflareAPI
 	configMgr *service.ConfigManager
+	audit     *service.AuditLogger
 }
 
-func NewCloudflareHandler(cfAPI *service.CloudflareAPI, configMgr *service.ConfigManager) *CloudflareHandler {
+func NewCloudflareHandler(cfAPI *service.CloudflareAPI, configMgr *service.ConfigManager, audit *service.AuditLogger) *CloudflareHandler {
 	return &CloudflareHandler{
 		cfAPI:     cfAPI,
 		configMgr: configMgr,
+		audit:     audit,
 	}
 }
 
@@ -132,6 +135,11 @@ func (h *CloudflareHandler) SyncAllRoutes(w http.ResponseWriter, r *http.Request
 		} else {
 			results = append(results, syncResult{Hostname: host, Success: true})
 		}
+	}
+
+	if h.audit != nil {
+		userID, _ := r.Context().Value("user_id").(int)
+		h.audit.Log(userID, "cloudflare_dns_sync", doc.Tunnel, r.RemoteAddr)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -264,7 +272,38 @@ func (h *CloudflareHandler) GetTunnelConfiguration(w http.ResponseWriter, r *htt
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"identity": identity, "config": configuration})
+	json.NewEncoder(w).Encode(map[string]any{"identity": identity, "config": configuration, "revision": service.TunnelConfigurationRevision(configuration)})
+}
+
+func (h *CloudflareHandler) UpdateTunnelConfiguration(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Config   map[string]any `json:"config"`
+		Revision string         `json:"expected_revision"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&input) != nil {
+		jsonError(w, "invalid tunnel configuration", 400)
+		return
+	}
+	identity, err := h.configMgr.TunnelIdentity()
+	if err != nil {
+		jsonError(w, err.Error(), 400)
+		return
+	}
+	accepted, err := h.cfAPI.UpdateTunnelConfiguration(identity, input.Config, input.Revision)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, service.ErrTunnelConfigurationChanged) {
+			status = http.StatusConflict
+		}
+		jsonError(w, err.Error(), status)
+		return
+	}
+	userID, _ := r.Context().Value("user_id").(int)
+	if h.audit != nil {
+		h.audit.Log(userID, "cloudflare_routes_edit", identity.ID, r.RemoteAddr)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"config": accepted, "revision": service.TunnelConfigurationRevision(accepted)})
 }
 
 func (h *CloudflareHandler) ListAccessApps(w http.ResponseWriter, r *http.Request) {
