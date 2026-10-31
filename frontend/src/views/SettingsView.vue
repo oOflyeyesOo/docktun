@@ -4,6 +4,7 @@ import { RotateCcw, ShieldCheck, KeyRound, Globe, CheckCircle2, AlertCircle, Spa
 import ManagedServices from '../components/ManagedServices.vue'
 import SystemDiagnostics from '../components/SystemDiagnostics.vue'
 import LocalProxy from '../components/LocalProxy.vue'
+import ProjectBackups from '../components/ProjectBackups.vue'
 import { useApi } from '../composables/useApi'
 
 const { apiFetch } = useApi()
@@ -45,6 +46,7 @@ async function changePassword() {
     <ManagedServices />
     <SystemDiagnostics />
     <LocalProxy />
+    <ProjectBackups />
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 

@@ -217,6 +217,8 @@ func main() {
 
 		r.Get("/api/projects", projectsHandler.List)
 		r.Post("/api/projects", projectsHandler.Create)
+		r.Get("/api/projects/{id}/backup", projectsHandler.Backup)
+		r.Post("/api/projects/restore", projectsHandler.Restore)
 		r.Post("/api/projects/prune", projectsHandler.Prune)
 		r.Put("/api/projects/{id}", projectsHandler.Update)
 		r.Delete("/api/projects/{id}", projectsHandler.Delete)

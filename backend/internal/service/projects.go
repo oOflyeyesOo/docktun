@@ -1,6 +1,8 @@
 package service
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +19,8 @@ import (
 
 	"docktun/internal/db"
 )
+
+const projectBackupLimit int64 = 512 << 20
 
 type Project struct {
 	ID          int    `json:"id"`
@@ -89,12 +93,132 @@ func (s *Projects) markDone(id int) {
 	s.outMu.Unlock()
 }
 
+func (s *Projects) Backup(id int, out io.Writer) (string, error) {
+	var project Project
+	if err := s.db.QueryRow("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects WHERE id=?", id).Scan(&project.ID, &project.Name, &project.Path, &project.RepoURL, &project.GitUsername, &project.GitToken, &project.CreatedAt); err != nil {
+		return "", err
+	}
+	gz := gzip.NewWriter(out)
+	tw := tar.NewWriter(gz)
+	defer gz.Close()
+	defer tw.Close()
+	if err := writeBackupFile(tw, "project.json", mustProjectJSON(project)); err != nil {
+		return "", err
+	}
+	var total int64
+	err := filepath.Walk(project.Path, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		relative, err := filepath.Rel(project.Path, path)
+		if err != nil || relative == "." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+			return fmt.Errorf("project contains an invalid backup path")
+		}
+		if total+info.Size() > projectBackupLimit {
+			return fmt.Errorf("project backup exceeds the %d MiB limit", projectBackupLimit>>20)
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.ToSlash(filepath.Join("files", relative))
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+		if _, err := io.Copy(tw, file); err != nil {
+			return err
+		}
+		total += info.Size()
+		return nil
+	})
+	return project.Name, err
+}
+
+func (s *Projects) Restore(name, path string, input io.Reader) (*Project, error) {
+	name = strings.TrimSpace(name)
+	path = strings.TrimSpace(path)
+	if name == "" || path == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return nil, fmt.Errorf("provide a safe project name and path")
+	}
+	project, err := s.Create(name, path, "", "", "")
+	if err != nil {
+		return nil, err
+	}
+	gz, err := gzip.NewReader(input)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project backup: %w", err)
+	}
+	defer gz.Close()
+	tr := tar.NewReader(io.LimitReader(gz, projectBackupLimit+1<<20))
+	var total int64
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("invalid project backup: %w", err)
+		}
+		if header.Typeflag != tar.TypeReg || !strings.HasPrefix(header.Name, "files/") {
+			continue
+		}
+		relative := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(header.Name, "files/")))
+		if relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+			return nil, fmt.Errorf("project backup contains an unsafe path")
+		}
+		if header.Size < 0 || total+header.Size > projectBackupLimit {
+			return nil, fmt.Errorf("project backup exceeds the %d MiB limit", projectBackupLimit>>20)
+		}
+		target := filepath.Join(project.Path, relative)
+		if err := os.MkdirAll(filepath.Dir(target), 0750); err != nil {
+			return nil, err
+		}
+		file, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+		if err != nil {
+			return nil, err
+		}
+		_, copyErr := io.CopyN(file, tr, header.Size)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return nil, copyErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		total += header.Size
+	}
+	return &project, nil
+}
+
+func mustProjectJSON(project Project) []byte {
+	project.GitToken = ""
+	raw, _ := json.Marshal(project)
+	return append(raw, '\n')
+}
+
+func writeBackupFile(tw *tar.Writer, name string, content []byte) error {
+	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0600, Size: int64(len(content))}); err != nil {
+		return err
+	}
+	_, err := tw.Write(content)
+	return err
+}
+
 func (s *Projects) List() ([]Project, error) {
 
 	rows, err := s.db.Query("SELECT id, name, path, repo_url, git_username, git_token, created_at FROM projects ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
+
 	defer rows.Close()
 
 	var projects []Project

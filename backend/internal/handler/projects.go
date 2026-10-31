@@ -35,6 +35,44 @@ func (h *Projects) List(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(projects)
 }
 
+func (h *Projects) Backup(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(chi.URLParam(r, "id"))
+	if err != nil {
+		jsonError(w, "invalid project id", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", `attachment; filename="docktun-project-backup.tar.gz"`)
+	_, err = h.svc.Backup(id, w)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+}
+
+func (h *Projects) Restore(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(512 << 20); err != nil {
+		jsonError(w, "invalid project backup upload", http.StatusBadRequest)
+		return
+	}
+	name := r.FormValue("name")
+	path := r.FormValue("path")
+	file, _, err := r.FormFile("backup")
+	if err != nil {
+		jsonError(w, "choose a project backup archive", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	project, err := h.svc.Restore(name, path, file)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(project)
+}
+
 func (h *Projects) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name           string                                 `json:"name"`
