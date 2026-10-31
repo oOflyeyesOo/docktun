@@ -10,6 +10,7 @@ import (
 	"docktun/internal/db"
 	"docktun/internal/service"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -56,8 +57,8 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	access, _ := h.GenerateToken(id, req.Username, 24*time.Hour)
-	refresh, _ := h.GenerateToken(id, req.Username, 30*24*time.Hour)
+	access, _ := h.generateToken(id, req.Username, 24*time.Hour, "access")
+	refresh, _ := h.generateToken(id, req.Username, 30*24*time.Hour, "refresh")
 
 	h.audit.Log(id, "login", "", r.RemoteAddr)
 
@@ -71,6 +72,7 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 
 func (h *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("user_id").(int)
+	h.revokeBearerToken(r)
 	h.audit.Log(userID, "logout", "", r.RemoteAddr)
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"ok":true}`))
@@ -101,7 +103,7 @@ func (h *Auth) Refresh(w http.ResponseWriter, r *http.Request) {
 		token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
 			return []byte(h.cfg.JWTSecret), nil
 		}, jwt.WithValidMethods([]string{"HS256"}))
-		if err == nil && token.Valid {
+		if err == nil && token.Valid && !h.isRevoked(token) {
 			if claims, ok := token.Claims.(jwt.MapClaims); ok {
 				if sub, ok := claims["sub"].(float64); ok && sub > 0 {
 					userID = int(sub)
@@ -127,8 +129,11 @@ func (h *Auth) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	access, _ := h.GenerateToken(userID, username, 24*time.Hour)
-	refresh, _ := h.GenerateToken(userID, username, 30*24*time.Hour)
+	if tokenStr != "" {
+		h.revokeTokenString(tokenStr)
+	}
+	access, _ := h.generateToken(userID, username, 24*time.Hour, "access")
+	refresh, _ := h.generateToken(userID, username, 30*24*time.Hour, "refresh")
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(tokenResponse{
@@ -139,12 +144,56 @@ func (h *Auth) Refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Auth) GenerateToken(userID int, username string, duration time.Duration) (string, error) {
+	return h.generateToken(userID, username, duration, "")
+}
+
+func (h *Auth) generateToken(userID int, username string, duration time.Duration, kind string) (string, error) {
 	claims := jwt.MapClaims{
 		"sub":      userID,
 		"username": username,
 		"exp":      time.Now().Add(duration).Unix(),
 		"iat":      time.Now().Unix(),
+		"jti":      uuid.NewString(),
+	}
+	if kind != "" {
+		claims["kind"] = kind
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(h.cfg.JWTSecret))
+}
+
+func (h *Auth) revokeBearerToken(r *http.Request) {
+	header := r.Header.Get("Authorization")
+	if strings.HasPrefix(header, "Bearer ") {
+		h.revokeTokenString(strings.TrimPrefix(header, "Bearer "))
+	}
+}
+
+func (h *Auth) revokeTokenString(tokenString string) {
+	_, _ = h.db.Exec(`DELETE FROM token_revocations WHERE expires_at <= CURRENT_TIMESTAMP`)
+	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
+		return []byte(h.cfg.JWTSecret), nil
+	}, jwt.WithValidMethods([]string{"HS256"}))
+	if err != nil || token == nil {
+		return
+	}
+	if jti, ok := token.Claims.(jwt.MapClaims)["jti"].(string); ok && jti != "" {
+		if exp, ok := token.Claims.(jwt.MapClaims)["exp"].(float64); ok {
+			_, _ = h.db.Exec(`INSERT OR REPLACE INTO token_revocations (jti, expires_at) VALUES (?, datetime(?, 'unixepoch'))`, jti, int64(exp))
+		}
+	}
+}
+
+func (h *Auth) isRevoked(token *jwt.Token) bool {
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return false
+	}
+	jti, ok := claims["jti"].(string)
+	if !ok || jti == "" {
+		return false
+	}
+	var exists int
+	err := h.db.QueryRow(`SELECT 1 FROM token_revocations WHERE jti=? AND expires_at > CURRENT_TIMESTAMP`, jti).Scan(&exists)
+	return err == nil
 }

@@ -65,6 +65,13 @@ func (d *DB) migrate() error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
+		CREATE TABLE IF NOT EXISTS token_revocations (
+			jti TEXT PRIMARY KEY,
+			expires_at DATETIME NOT NULL,
+			revoked_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_token_revocations_expiry ON token_revocations(expires_at);
+
 		CREATE TABLE IF NOT EXISTS audit_logs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			user_id INTEGER NOT NULL,

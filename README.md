@@ -21,6 +21,7 @@ Modern, self-hosted web dashboard for managing Docker containers and Compose sta
 - **Optional local reverse proxy**: Choose Caddy, Traefik, or Nginx under **Settings → Local Reverse Proxy**, add manual hostname-to-container routes, and apply. DockTun creates and uses the dedicated `docktun-proxy` network, connects selected containers, and manages one active proxy companion. Routes use container names and internal ports; no public DNS or Cloudflare credentials are required.
 - **Project backup and restore**: Export registered projects as portable `.tar.gz` archives from Settings and restore them into a new project name and folder. Archives include Compose, `.env`, and supporting files; protect them because `.env` may contain credentials.
 - **Web security protections**: The API applies browser hardening headers, limits login and token-refresh attempts by client address, and rejects oversized authentication request bodies.
+- **Session revocation**: Logout revokes the presented access or refresh token, and refresh-token rotation invalidates the previous token so copied refresh credentials cannot be reused.
 - 💻 **Web Terminal & Logs** — In-browser interactive `docker exec` terminal and real-time streaming WebSocket logs with filtering.
 - 📁 **File & Volume Explorer** — Browse container filesystems, view and edit configuration files in-place, and upload or download files.
 - 🔄 **Self-Healing & 1-Click Updates** — Automatic database companion network relinking, continuous health reconciliation, and 1-click self-updating with automated health-check rollback.
