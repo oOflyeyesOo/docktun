@@ -206,7 +206,44 @@ DockTun does not enforce a single global networking mode. Every container starts
 
 ### Local Reverse Proxy
 
-The local proxy is disabled by default. When enabled, the selected engine listens on the configured HTTP/HTTPS host ports and routes only the enabled entries configured in **Settings → Local Reverse Proxy**. Use a hostname resolvable on your LAN (for example through local DNS or a hosts entry), and use the container/service name plus its internal listening port. DockTun validates target containers, creates `docktun-proxy`, connects targets to it, and writes the selected engine's generated configuration. Disable the feature to stop and remove the managed proxy companion.
+The local proxy is disabled by default. It is intended for simple LAN-friendly hostnames such as `jellyfin.home`, not as a replacement for Cloudflare Tunnel or public DNS.
+
+#### Engine choices
+
+- **Caddy** is the easiest starting point. It uses a compact generated configuration and can manage HTTPS certificates when the hostname and DNS setup support it.
+- **Traefik** is useful when you have many Docker services or expect to move toward label- or provider-driven routing. DockTun currently generates explicit file-based routes for it.
+- **Nginx** is the traditional option for users who prefer familiar, explicit server configuration and broad Nginx documentation.
+
+Only one engine runs at a time. Switching engines preserves the route list and recreates the managed proxy companion with the selected image.
+
+#### How a route works
+
+Each enabled route has three important values:
+
+1. **Hostname** — the name a browser requests, such as `jellyfin.home`. Your LAN DNS server or each client's hosts file must resolve it to the Docker host.
+2. **Container/service** — the Docker container name on the proxy network, such as `jellyfin`. Do not enter `localhost`, a public URL, or the host's published port.
+3. **Internal port** — the port the application listens on inside its container, such as `8096` for Jellyfin. This is not necessarily the host port shown in a Compose `ports:` mapping.
+
+Example:
+
+```text
+jellyfin.home  ->  jellyfin  ->  8096
+```
+
+With HTTP port `80`, clients open `http://jellyfin.home`. If you choose HTTP port `8080`, they open `http://jellyfin.home:8080`.
+
+DockTun creates the dedicated `docktun-proxy` bridge network, connects each enabled target container to it, and generates the selected engine's configuration. The proxy container and targets communicate through Docker's internal network; target application ports do not need to be published to the host. DockTun validates that each target container exists before applying changes.
+
+#### Common setup checklist
+
+1. Make sure the application is running and note its internal listening port.
+2. Add a hostname that resolves to the Docker host.
+3. Add the container name and internal port to a route.
+4. Choose an available host HTTP/HTTPS port.
+5. Enable the proxy and click **Apply Local Proxy**.
+6. Test the hostname from a client on the same LAN.
+
+Port conflicts, missing containers, invalid hostnames, and containers that cannot be attached to the dedicated network are reported during apply. Disable the feature to stop and remove the managed proxy companion.
 
 ---
 
