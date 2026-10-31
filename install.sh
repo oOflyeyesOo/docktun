@@ -32,12 +32,16 @@ while [ $# -gt 0 ]; do
             ;;
         -h|--help)
             echo "DockTun Automated Installer"
-            echo "Usage: sudo bash install.sh [OPTIONS]"
+            echo "Usage: sudo ./install.sh [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  -p, --port <port>   Web dashboard port (default: 8080)"
             echo "  -d, --dir <path>    Installation directory (default: /opt/docktun)"
             echo "  -h, --help          Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  sudo ./install.sh --port 8080"
+            echo "  sudo ./install.sh -p 9000 -d /srv/docktun"
             exit 0
             ;;
         *)
@@ -135,7 +139,7 @@ if [[ ! "$PORT" =~ ^[0-9]{1,5}$ ]] || [ "$((10#$PORT))" -lt 1 ] || [ "$((10#$POR
     error "PORT must be a number between 1 and 65535."
 fi
 
-info "Preparing installation in ${C_BOLD}${INSTALL_DIR}${C_RESET}..."
+info "Preparing installation in ${C_BOLD}${INSTALL_DIR}${C_RESET} on port ${C_BOLD}${PORT}${C_RESET}..."
 mkdir -p "${INSTALL_DIR}/projects"
 cd "${INSTALL_DIR}"
 

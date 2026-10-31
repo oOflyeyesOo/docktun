@@ -95,34 +95,41 @@ DockTun compiles the Vue 3 frontend directly into a single, high-performance Go 
 
 ## Quick Start
 
-### Option 1: Automated One-Line Install from GitHub (Recommended)
+### Option 1: Download & Run with Custom Port (Recommended)
 
-Run the installer directly from GitHub with root privileges. It will automatically detect your distribution, install Docker and Compose if needed, configure DockTun, and start the container:
+Download the installer script, choose your desired web dashboard port, and launch:
 
 ```bash
+# 1. Download installer
+curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh -o install.sh
+chmod +x install.sh
+
+# 2. Run with your custom port (default is 8080)
+sudo ./install.sh --port 8080
+```
+
+> [!TIP]
+> Need a different port or directory? Pass `-p / --port` and `-d / --dir`:
+> ```bash
+> sudo ./install.sh --port 9000 --dir /opt/docktun
+> ```
+
+---
+
+### Option 2: Instant One-Liner from GitHub
+
+```bash
+# Default port (8080)
 curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo bash
+
+# Custom port (e.g. 9000)
+curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo bash -s -- --port 9000
 ```
 
 *Or with `wget`:*
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo bash
-```
-
-Custom port or installation directory:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo PORT=9000 DOCKTUN_DIR=/srv/docktun bash
-```
-
----
-
-### Option 2: Download Script, Inspect, and Run
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh -o install.sh
-chmod +x install.sh
-sudo ./install.sh --port 8080 --dir /opt/docktun
+wget -qO- https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo bash -s -- --port 9000
 ```
 
 ---

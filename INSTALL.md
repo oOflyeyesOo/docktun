@@ -14,47 +14,43 @@ DockTun is deployed as a Docker container with access to the Docker daemon socke
 
 ## Quick Installation
 
-### Option 1: One-Line Install from GitHub (Recommended)
+### Option 1: Download & Run with Custom Port (Recommended)
 
-Run the automated installer directly from GitHub with a single command. It will detect your distribution, install Docker and Compose if needed, and start DockTun:
+Download the installer script, choose your desired web dashboard port, and launch:
 
 ```bash
+# 1. Download installer
+curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh -o install.sh
+chmod +x install.sh
+
+# 2. Run with your custom port (default is 8080)
+sudo ./install.sh --port 8080
+```
+
+> [!TIP]
+> Need a different port or directory? Pass `-p / --port` and `-d / --dir`:
+> ```bash
+> sudo ./install.sh --port 9000 --dir /opt/docktun
+> ```
+
+---
+
+### Option 2: Instant One-Liner from GitHub
+
+If you prefer an instant one-line installation without saving the script first:
+
+```bash
+# Default port (8080)
 curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo bash
+
+# Custom port (e.g. 9000)
+curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo bash -s -- --port 9000
 ```
 
 *Or with `wget`:*
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo bash
-```
-
-#### Custom Port or Installation Directory
-
-You can specify a custom port or installation directory using environment variables:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo PORT=9000 DOCKTUN_DIR=/srv/docktun bash
-```
-
----
-
-### Option 2: Download Script, Inspect, and Run
-
-If you prefer to inspect scripts before executing them:
-
-```bash
-# 1. Download installer
-curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh -o install.sh
-
-# 2. Make executable and run
-chmod +x install.sh
-sudo ./install.sh
-```
-
-You can pass command-line flags:
-
-```bash
-sudo ./install.sh --port 8080 --dir /opt/docktun
+wget -qO- https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo bash -s -- --port 9000
 ```
 
 ---
