@@ -612,9 +612,9 @@ onUnmounted(() => {
       <div>
         <div class="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-600">
           <Globe class="h-3.5 w-3.5 text-cyan-600" />
-          <span>Cloudflare Tunnel Hub</span>
+          <span>Cloudflare Tunnel Hub (Argo Tunnel)</span>
         </div>
-        <h1 class="text-2xl font-bold tracking-tight text-slate-900">Cloudflare Tunnel</h1>
+        <h1 class="text-2xl font-bold tracking-tight text-slate-900">Cloudflare Tunnel (Argo Tunnel)</h1>
         <p class="text-xs text-slate-600">
           Manage remote edge routing, ingress hostnames, live edge traffic, and client TCP access.
         </p>
@@ -644,7 +644,7 @@ onUnmounted(() => {
       <div class="flex items-center gap-2 text-xs text-slate-600">
         <span class="inline-flex items-center gap-1.5 font-medium" :class="tunnelStatus?.running ? 'text-emerald-700' : 'text-slate-500'">
           <span class="h-2 w-2 rounded-full" :class="tunnelStatus?.running ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'"></span>
-          {{ tunnelStatus?.running ? 'Cloudflare Tunnel Running' : 'Cloudflare Tunnel Stopped' }}
+          {{ tunnelStatus?.running ? 'Cloudflare (Argo) Tunnel Running' : 'Cloudflare (Argo) Tunnel Stopped' }}
         </span>
         <span v-if="connectorPresent" class="text-slate-300">·</span>
         <span v-if="connectorPresent" class="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-medium">✓ Connector token active</span>
@@ -770,7 +770,7 @@ onUnmounted(() => {
         <!-- Tunnel Status -->
         <div class="cyber-card p-4 space-y-2">
           <div class="flex items-center justify-between text-xs text-slate-600">
-            <span class="uppercase tracking-wider font-semibold text-[10px]">Tunnel Identity</span>
+            <span class="uppercase tracking-wider font-semibold text-[10px]">Tunnel Identity (Argo Tunnel)</span>
             <Globe class="h-4 w-4 text-cyan-600" />
           </div>
           <div class="font-mono text-sm font-bold text-slate-900 truncate" :title="tunnelId">
@@ -1172,7 +1172,7 @@ onUnmounted(() => {
         <!-- Cloudflare API Credentials -->
         <div class="space-y-4">
           <p class="text-xs text-slate-600">
-            The connector token runs the tunnel daemon. Publishing Cloudflare-managed routes from DockTun requires a separate API token with account <strong>Cloudflare Tunnel Edit/Write</strong> and zone <strong>DNS Edit</strong> permissions; a DNS-only zone token cannot publish routes. Tunnel Read allows status and route queries. Account ID is detected from a connector token when available.
+            The connector token runs the cloudflared daemon (Argo Tunnel). Publishing Cloudflare-managed routes from DockTun requires a separate API token with account <strong>Cloudflare Tunnel Edit/Write</strong> and zone <strong>DNS Edit</strong> permissions; a DNS-only zone token cannot publish routes. Zone Read is <strong>not required</strong> if you enter the Zone ID below. Account ID is detected from a connector token when available.
           </p>
           <div class="grid gap-4 md:grid-cols-2">
             <div class="col-span-full">
@@ -1218,7 +1218,7 @@ onUnmounted(() => {
                 placeholder="Domain Overview → API → Zone ID"
                 class="cyber-input text-xs font-mono"
               />
-            <p id="zone-id-help" class="text-xs text-slate-600">Enter the domain’s Zone ID from Cloudflare → your domain → Overview → API. This differs from Account ID. With Zone ID entered, Zone Read is unnecessary; zone DNS Edit/Write is still required. Zone Read is optional only for automatic discovery when this field is blank.</p>
+            <p id="zone-id-help" class="text-xs text-slate-600">Enter the domain’s Zone ID from Cloudflare → your domain → Overview → API. <strong>Entering your Zone ID allows you to safely omit Zone Read permissions from your API token!</strong> DNS Edit/Write is still required to create CNAME records.</p>
             </div>
           </div>
 

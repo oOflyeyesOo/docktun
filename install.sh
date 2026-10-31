@@ -19,9 +19,36 @@ success() { echo -e "${C_GREEN}✔${C_RESET} $1"; }
 warn() { echo -e "${C_YELLOW}⚠${C_RESET} $1"; }
 error() { echo -e "${C_RED}✖${C_RESET} $1"; exit 1; }
 
+# Parse command-line arguments
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -p|--port)
+            PORT="$2"
+            shift 2
+            ;;
+        -d|--dir)
+            DOCKTUN_DIR="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "DockTun Automated Installer"
+            echo "Usage: sudo bash install.sh [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  -p, --port <port>   Web dashboard port (default: 8080)"
+            echo "  -d, --dir <path>    Installation directory (default: /opt/docktun)"
+            echo "  -h, --help          Show this help message"
+            exit 0
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
 # Root privilege check
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
-    error "This installer requires root privileges.\nSave install.sh locally, then run: sudo bash install.sh"
+    error "This installer requires root privileges.\n  Quick run:  curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo bash\n  Local file: sudo bash install.sh"
 fi
 
 echo -e "${C_CYAN}${C_BOLD}"

@@ -42,9 +42,9 @@ withDefaults(
     </div>
 
     <template v-if="provider === 'cloudflare'">
-      <p>A public hostname needs a Cloudflare account, a domain on Cloudflare, and a tunnel. Pick the setup that matches your tunnel.</p>
+      <p>A public hostname needs a Cloudflare account, a domain on Cloudflare, and a tunnel (referred to in Cloudflare menus as <strong>Cloudflare Tunnel</strong> or formerly <strong>Argo Tunnel</strong>). Pick the setup that matches your tunnel.</p>
       <ol class="list-decimal space-y-2 pl-5">
-        <li>Open <a href="https://dash.cloudflare.com/" target="_blank" rel="noopener noreferrer" class="guide-link">Cloudflare</a> → <strong>Networking → Tunnels</strong>. Create a cloudflared tunnel, or select an existing one. Some dashboards put this under Zero Trust → Networks → Connectors.</li>
+        <li>Open <a href="https://dash.cloudflare.com/" target="_blank" rel="noopener noreferrer" class="guide-link">Cloudflare</a> → <strong>Networking → Tunnels</strong> (or <strong>Zero Trust → Networks → Tunnels</strong>, or <strong>Traffic → Argo Tunnel</strong> in legacy dashboards). Create a cloudflared tunnel, or select an existing one.</li>
         <li>On the connector installation screen, copy the <strong>connector token</strong>: the value after <code>--token</code> in the command. Paste only that value into the <strong>Tunnel connector token</strong> field and save it. DockTun runs the connector for you.</li>
         <li>Click <strong>Enable Cloudflare</strong>. Check that the tunnel becomes healthy in Cloudflare. Then add its public-hostname/application route in Cloudflare, such as <code>app.example.com</code> → <code>http://my-app:80</code>.</li>
         <li>The service must be reachable from the connector. Container names work on a shared Docker network. For a published host port, use a reachable host address, such as <code>http://host.docker.internal:8080</code>. <code>localhost</code> inside the connector means the connector itself.</li>
@@ -55,12 +55,20 @@ withDefaults(
         <summary class="guide-summary">API token for publishing routes: permissions, Account ID &amp; Zone ID</summary>
         <div class="guide-body">
           <p>Create a custom token under <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener noreferrer" class="guide-link">My Profile → API Tokens</a>, or use <strong>Manage account → Account API tokens</strong>. Both user and account API tokens support tunnel and DNS management when granted the required permissions. Scope the token to the tunnel’s account and the hostname’s zone:</p>
-          <p class="rounded-lg bg-indigo-50 p-3 text-indigo-900"><strong>Recommended: enter the Zone ID manually to avoid adding Zone Read.</strong> Open the hostname’s domain in Cloudflare → <strong>Overview → API → Zone ID</strong>, copy that value, and paste it into DockTun’s Zone ID field above. This works with user and account API tokens. The Zone ID identifies that domain’s zone; it is different from the Account ID.</p>
-          <div class="overflow-x-auto"><table class="w-full text-left text-xs"><thead><tr class="border-b border-slate-200"><th class="py-2 pr-3">DockTun feature</th><th class="py-2">Token permission</th></tr></thead><tbody>
-            <tr class="border-b border-slate-100"><td class="py-2 pr-3">Read existing tunnel details and routes</td><td>Account → Cloudflare Tunnel → Read</td></tr>
-            <tr class="border-b border-slate-100"><td class="py-2 pr-3">Publish or update Cloudflare-managed app routes</td><td>Account → Cloudflare Tunnel → Edit (Write)</td></tr>
-            <tr class="border-b border-slate-100"><td class="py-2 pr-3">Create or update DNS records</td><td>Zone → DNS → Edit (DNS Write)</td></tr>
-            <tr><td class="py-2 pr-3">Manage optional Access authentication policies</td><td>Account → Access: Apps and Policies → Edit</td></tr>
+          <div class="rounded-lg bg-indigo-50 p-3 text-xs text-indigo-900 space-y-1">
+            <p class="font-semibold text-indigo-950">Do I need Zone permissions in the API Token if I provide the Zone ID?</p>
+            <ul class="list-disc pl-4 space-y-0.5">
+              <li><strong>Zone Read (<code>Zone → Zone → Read</code>) is NOT needed</strong> when you enter your <strong>Zone ID</strong> manually into DockTun. Providing the Zone ID allows you to safely omit Zone Read for least-privilege security.</li>
+              <li><strong>DNS Edit (<code>Zone → DNS → Edit</code>) IS required</strong> if you want DockTun to automatically create or update CNAME records (pointing to <code>&lt;tunnel-id&gt;.cfargotunnel.com</code>). Even when the Zone ID is explicitly known, Cloudflare requires DNS Write permissions to modify records in that zone.</li>
+              <li><strong>No API token needed for manual DNS:</strong> If you manage your DNS records manually in the Cloudflare dashboard, you do not need an API token or any Zone permissions at all! DockTun only needs the connector token to run the tunnel.</li>
+            </ul>
+          </div>
+          <div class="overflow-x-auto"><table class="w-full text-left text-xs"><thead><tr class="border-b border-slate-200"><th class="py-2 pr-3">DockTun feature</th><th class="py-2 pr-3">Token permission</th><th class="py-2">Required?</th></tr></thead><tbody>
+            <tr class="border-b border-slate-100"><td class="py-2 pr-3">Read existing tunnel details and routes</td><td class="py-2 pr-3">Account → Cloudflare Tunnel → Read</td><td>For query &amp; status</td></tr>
+            <tr class="border-b border-slate-100"><td class="py-2 pr-3">Publish or update Cloudflare-managed app routes</td><td class="py-2 pr-3">Account → Cloudflare Tunnel → Edit (Write)</td><td>For publishing routes</td></tr>
+            <tr class="border-b border-slate-100"><td class="py-2 pr-3">Create or update DNS records (CNAME)</td><td class="py-2 pr-3">Zone → DNS → Edit (DNS Write)</td><td>For automated DNS sync</td></tr>
+            <tr class="border-b border-slate-100"><td class="py-2 pr-3">Discover Zone ID automatically (if Zone ID is blank)</td><td class="py-2 pr-3">Zone → Zone → Read</td><td>Optional (omit by entering Zone ID)</td></tr>
+            <tr><td class="py-2 pr-3">Manage optional Access authentication policies</td><td class="py-2 pr-3">Account → Access: Apps and Policies → Edit</td><td>Optional</td></tr>
           </tbody></table></div>
           <p><strong>Write and Edit are the same permission level</strong> in Cloudflare’s token summaries and builder. Cloudflare Tunnel Write grants tunnel changes; Cloudflare One Connector: cloudflared Write and Cloudflare One Connectors Write are also accepted. Read-only tunnel access cannot publish routes.</p>
           <p class="rounded-lg bg-amber-50 p-3 text-amber-900"><strong>Account DNS Settings Write does not grant DNS record editing.</strong> The token still needs <strong>Zone → DNS → Edit (DNS Write)</strong> for the hostname’s zone, even when its Zone ID is entered manually. Tunnel Write plus account DNS settings permission alone is insufficient for DockTun’s DNS setup.</p>

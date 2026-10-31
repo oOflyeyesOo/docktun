@@ -468,7 +468,7 @@ function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
             <div class="p-1.5 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-600">
               <Globe class="h-4 w-4" />
             </div>
-            <span class="text-xs font-semibold text-slate-800">Cloudflare Tunnel</span>
+            <span class="text-xs font-semibold text-slate-800">Cloudflare Tunnel (Argo Tunnel)</span>
           </div>
           <span
             v-if="overview?.cloudflare?.running"

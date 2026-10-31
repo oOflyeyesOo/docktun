@@ -14,7 +14,7 @@ Modern, self-hosted web dashboard for managing Docker containers and Compose sta
 - 🐳 **Docker Container Management** — Start, stop, restart, pause, inspect, and delete containers. Live CPU, memory, and network I/O stats.
 - 📦 **Docker Compose Projects** — Deploy and manage multi-container stacks with Git clone, branch checkout, pull, and streaming build logs.
 - 🌐 **Independent Per-App Remote Access** — Expose containers individually without exposing your entire network:
-  - **Cloudflare Tunnels**: Public ingress without open ports, visual YAML config editor with auto-backups, and Cloudflare DNS sync.
+  - **Cloudflare Tunnels (Argo Tunnel)**: Public ingress without open ports, visual YAML config editor with auto-backups, and Cloudflare DNS sync.
   - **Tailscale**: Connect each container as its own isolated Tailscale device (userspace mode, no host TUN or root privileges required).
   - **WireGuard**: Mesh connectivity via companion container or existing host VPN.
   - **Local mDNS**: Automatic local `.local` domain routing on your LAN.
@@ -95,17 +95,49 @@ DockTun compiles the Vue 3 frontend directly into a single, high-performance Go 
 
 ## Quick Start
 
-### Option 1: Automated installer
+### Option 1: Automated One-Line Install from GitHub (Recommended)
 
-If your machine doesn't have Docker installed yet, or if you prefer a one-command setup, save the supplied `install.sh` locally and run it. The installer installs Docker Engine on supported Linux hosts if needed and launches DockTun:
+Run the installer directly from GitHub with root privileges. It will automatically detect your distribution, install Docker and Compose if needed, configure DockTun, and start the container:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo bash
+```
+
+*Or with `wget`:*
+
+```bash
+wget -qO- https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo bash
+```
+
+Custom port or installation directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh | sudo PORT=9000 DOCKTUN_DIR=/srv/docktun bash
+```
+
+---
+
+### Option 2: Download Script, Inspect, and Run
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/install.sh -o install.sh
+chmod +x install.sh
+sudo ./install.sh --port 8080 --dir /opt/docktun
+```
+
+---
+
+### Option 3: Clone from GitHub
+
+```bash
+git clone https://github.com/oOflyeyesOo/docktun.git /opt/docktun
+cd /opt/docktun
 sudo bash install.sh
 ```
 
-The repository is private; share the installer file directly with testers. No source checkout or GitHub token is needed to pull the published image. On Synology, install Container Manager from Package Center first. Rerunning the installer keeps the existing Compose file, pulls the current image, and starts only DockTun; optional providers retain their current state.
+---
 
-### Option 2: Docker Compose (If Docker is already installed)
+### Option 4: Docker Compose (If Docker is already installed)
 
 Save the following as `compose.yml` in an empty directory:
 
@@ -167,7 +199,7 @@ Enter this token on the initial screen to set your administrator credentials. Al
 
 ---
 
-### Option 2: Docker Run
+### Option 5: Docker Run
 
 ```bash
 docker network create docktun 2>/dev/null || true
@@ -187,7 +219,7 @@ docker run -d \
 
 ---
 
-### Option 3: Build from Source
+### Option 6: Build from Source
 
 ```bash
 git clone https://github.com/oOflyeyesOo/docktun.git /opt/docktun
@@ -202,7 +234,13 @@ docker compose up -d --build
 
 DockTun does not enforce a single global networking mode. Every container starts internal and isolated; choose remote access per app in **Containers → Access**:
 
-- **Cloudflare Tunnel**: Enter your Cloudflare Tunnel connector token (or mount your existing `config.yml` and credentials) under **Remote Access → Cloudflare**, then click **Enable**. The connector token runs the tunnel. To publish Cloudflare-managed app routes from DockTun, save an API token with account **Cloudflare Tunnel Edit/Write** and zone **DNS Edit/Write** permissions. **Enter the domain's Zone ID under API credentials so the token does not need Zone Read.** Copy it from the domain's **Overview → API → Zone ID**; it is different from Account ID. Zone Read is only needed for automatic discovery when no Zone ID is saved. **Account DNS Settings Write** is a different permission and does not grant access to zone DNS records. Both account-owned and user-owned API tokens can work with the correct scopes; Write on Cloudflare's summary means Edit in its token builder. The Cloudflare page includes the full setup steps. Routes managed directly in Cloudflare do not require an API token in DockTun.
+- **Cloudflare Tunnel (Argo Tunnel)**: Enter your Cloudflare Tunnel connector token (or mount your existing `config.yml` and credentials) under **Remote Access → Cloudflare**, then click **Enable**.
+  - **Terminology in Cloudflare menus**: Cloudflare Tunnel was originally named **Argo Tunnel** and routes edge traffic to `<tunnel-id>.cfargotunnel.com`. In Cloudflare dashboards, look for it under **Zero Trust → Networks → Tunnels** (or **Traffic → Argo Tunnel** in classic views).
+  - **Connector Token vs API Token**: The connector token runs the `cloudflared` daemon without needing API permissions. An API token is only required if you want DockTun to automatically create CNAME records in Cloudflare DNS or manage remote routes.
+  - **Zone Permissions vs Zone ID**:
+    - **Zone Read (`Zone → Zone → Read`) is NOT needed** when you enter your **Zone ID** (*Domain Overview → API → Zone ID*) into DockTun. Providing the Zone ID allows you to safely omit Zone Read for least-privilege security.
+    - **DNS Edit (`Zone → DNS → Edit`) IS required** if you want automated CNAME record creation, because Cloudflare requires DNS write permissions to modify records in a zone even when the Zone ID is known.
+    - **Manual DNS**: If you prefer not to grant DockTun any Zone permissions, simply create the CNAME record manually in Cloudflare pointing to `<tunnel-id>.cfargotunnel.com`. DockTun will route the traffic without ever needing an API token.
 - **Tailscale**: Connect any container with 1-click in the container's **Access** tab. DockTun spawns a dedicated userspace Tailscale helper for that app, creating a separate device identity and MagicDNS hostname on your tailnet without touching the host's networking stack.
 - **WireGuard**: Configure an existing WireGuard VPN address or use the companion container.
 - **Internal / mDNS**: Keeps containers internal, accessible via LAN or local `.local` addresses.

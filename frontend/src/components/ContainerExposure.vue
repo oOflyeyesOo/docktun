@@ -27,7 +27,7 @@ const provider = computed({
       <span>Exposure method</span>
       <select v-model="provider" class="cyber-input w-full">
         <option value="none">None</option>
-        <option value="cloudflare">Cloudflare — public hostname</option>
+        <option value="cloudflare">Cloudflare (Argo Tunnel) — public hostname</option>
         <option value="tailscale">Tailscale — private app device</option>
         <option value="wireguard">WireGuard — existing VPN address</option>
         <option v-if="settings.private_type === 'mesh'" value="mesh">Existing custom mesh</option>
@@ -35,7 +35,7 @@ const provider = computed({
     </label>
     <p v-if="provider === 'none'" class="text-sm text-slate-600">No DockTun-managed remote route. Existing published Docker ports and local networking keep their own access settings.</p>
     <template v-else-if="provider === 'cloudflare'">
-      <p class="text-sm text-slate-600">Requires a configured Cloudflare tunnel and domain. For a connector-token tunnel, publishing here also needs an API token with account tunnel Edit/Write and zone DNS Edit permissions. A connector token or DNS-only zone token cannot publish routes. <router-link to="/access?tab=cloudflare" class="text-indigo-700 underline">Provider settings and token instructions</router-link></p>
+      <p class="text-sm text-slate-600">Requires a configured Cloudflare tunnel (Argo Tunnel) and domain. For a connector-token tunnel, publishing here also needs an API token with account tunnel Edit/Write and zone DNS Edit permissions. A connector token or DNS-only zone token cannot publish routes. <router-link to="/access?tab=cloudflare" class="text-indigo-700 underline">Provider settings and token instructions</router-link></p>
       <label class="block space-y-1 text-sm"><span>Public hostname</span><input v-model="settings.hostname" class="cyber-input w-full" placeholder="app.example.com" /></label>
       <label class="block space-y-1 text-sm"><span>Container target</span><input v-model="settings.target" class="cyber-input w-full" :placeholder="`http://${container.name}:8080`" /></label>
       <details class="rounded-lg border border-slate-200 p-3 space-y-3">
