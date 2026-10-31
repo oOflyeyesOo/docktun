@@ -6,13 +6,13 @@ same layout as included starters, with upstream descriptions and source links.
 
 - **DockTun**: included starters, available offline.
 - **Lissy93 / Portainer templates**: a large community collection of container
-  definitions and Compose stacks. Click **Load community catalogs** to fetch it.
+  definitions and Compose stacks. It loads automatically when the library opens.
   Its upstream catalog aggregates other maintainers; it is not a DockTun app list
   or a guarantee that every image supports every CPU architecture.
 - **Docker Awesome Compose**: development examples. Some require repository
   source code or configuration files in addition to their Compose YAML.
 
-Under **Collections & import from URL**, paste a public GitHub Portainer JSON
+Under **Collections & import**, paste a public GitHub Portainer JSON
 catalog URL to add its apps to the same library. You can also import a public
 GitHub Compose YAML file directly. This does not download a Docker Hub image
 containing templates; it reads the collection's public source JSON. Unraid XML
@@ -36,9 +36,10 @@ selection cannot silently change to another template between browsing and import
 The catalog is cached for ten minutes. Only exact public GitHub hosts are read;
 DockTun credentials are never forwarded to collection maintainers.
 
-Before deployment, **Review storage** checks your edited Compose configuration.
-Choose real Docker-host directories, such as `/volume1/docker/app/config` on a
-Synology host, rather than leaving another maintainer's sample paths. Existing
+Before deployment, **App checks** checks your edited Compose configuration.
+Suitable app-data mounts default to persistent Docker storage created during
+deployment. Choose an existing host folder when bringing your own files, such
+as a media library on a Synology host. Existing
 readable files/directories are checked with read-only probes; missing binds are
 blocked, not automatically created. Review does not prove that the application
 UID has write permission. Named volumes can be created by Docker; external
@@ -51,21 +52,33 @@ https://docs.portainer.io/advanced/app-templates/format.
 
 ## Guided setup
 
-Selecting a template opens **Set up this app** before the advanced YAML editor.
+Selecting a template opens **App setup** before the advanced YAML editor.
 Login details, environment values, fixed host ports, timezone and container names
 are editable as form fields. A shared Compose variable is shown once, so changing
 a database password also updates every reference to that variable. **Generate
 passwords** creates random passwords for password fields; API tokens, encryption
 keys and password hashes still require the app's own setup instructions.
 
-**Automatic storage for new app data** selects persistent Docker volumes for
-suitable writable config/data mounts. Docker creates these at deployment; there
+**Create automatically (recommended)** is selected by default for suitable
+data directory mounts. Docker creates persistent volumes at deployment; there
 is no need to SSH into the host to create folders. Matching shared paths use one
 volume and keep their read-only settings. Existing host files are not copied.
-Media/library folders, file mounts, sockets, devices and advanced mount settings
-stay explicit. You can choose existing host paths instead, including Synology
+Choose **Use my existing folder** to bring existing media or configuration; this
+starts with an empty input, rather than suggesting an upstream sample path.
+File mounts, sockets, host system resources and advanced mount settings stay
+explicit. You can choose existing host paths instead, including Synology
 `/volume1/...` folders. Related parent/child paths need existing host storage to
 preserve their directory layout.
+
+Shared sources have one storage choice, with each service's access shown.
+The project-folder override is under Advanced; new projects use DockTun's
+persistent projects storage automatically. No files are created until deployment.
+
+The library loads community catalogs automatically and retains successful
+results briefly while browsing between setup and the library. Included starters
+remain usable while a catalog loads or is offline. Broad category navigation,
+source filters, search, and sorting organize the same unified cards. Catalog
+refresh and URL imports are available without interrupting the setup flow.
 
 **Apply settings & check app** updates the draft and runs the storage check.
 The check also reports ports used by running Docker containers or duplicated
