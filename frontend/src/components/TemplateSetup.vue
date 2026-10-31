@@ -47,6 +47,17 @@ const storageGroups = computed(() => groupStorage(schema.value?.storage || []))
 const missingHostSources = computed(() => storageGroups.value.some((group: any) => storage.value[group.id]?.mode === 'host' && !storage.value[group.id]?.source?.trim()))
 const passwords = computed(() => (schema.value?.fields || []).filter((f: any) => f.password))
 const samplePasswords = computed(() => passwords.value.filter((f: any) => /^(change[_-]?me|adminpassword|replace[_-]?me|your[_-])|^(password[0-9!]*|secret|admin)$/i.test(values.value[f.id] || '')))
+const compatibility = computed(() => {
+  const compose = sourceDraft.compose_content || ''
+  const required = (schema.value?.fields || []).filter((field: any) => field.required && !String(values.value[field.id] || '').trim())
+  const warnings: string[] = []
+  if (/\bprivileged\s*:\s*true\b/i.test(compose)) warnings.push('Requests privileged mode')
+  if (/\bnetwork_mode\s*:\s*host\b/i.test(compose)) warnings.push('Uses host networking')
+  if (/\bdevices\s*:/i.test(compose)) warnings.push('Requires a host device')
+  if (/\b(cap_add|cap_drop)\s*:/i.test(compose)) warnings.push('Changes container capabilities')
+  if (schema.value?.storage?.some((mount: any) => /^\/|^[A-Za-z]:[\\/]/.test(String(mount.source || '')))) warnings.push('Contains host-path storage')
+  return { required, warnings, score: required.length ? 'review' : warnings.length ? 'caution' : 'ready' }
+})
 function generate(id: string) {
   const bytes = crypto.getRandomValues(new Uint8Array(24))
   values.value[id] = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join(''); syncLinked(id)
@@ -93,6 +104,19 @@ async function apply() {
     <p v-if="error" role="alert" class="text-xs text-red-700">{{ error }}. The advanced editor is still available below.</p>
     <p v-if="busy && !schema" class="text-xs text-slate-500">Reading template settings…</p>
     <template v-if="schema">
+      <div class="rounded-xl border p-3" :class="compatibility.score === 'ready' ? 'border-emerald-200 bg-emerald-50' : compatibility.score === 'caution' ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50'">
+        <div class="flex items-center justify-between gap-3">
+          <h4 class="text-xs font-semibold text-slate-800">Compatibility preflight</h4>
+          <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase" :class="compatibility.score === 'ready' ? 'bg-emerald-100 text-emerald-700' : compatibility.score === 'caution' ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-700'">{{ compatibility.score === 'ready' ? 'Ready' : compatibility.score === 'caution' ? 'Review' : 'Action needed' }}</span>
+        </div>
+        <p v-if="compatibility.score === 'ready'" class="mt-1 text-xs text-slate-600">No required values or elevated host features were detected in this template.</p>
+        <p v-else class="mt-1 text-xs text-slate-600">Review these items before deploying. DockTun can prepare ordinary files and directories, but host devices, privileged access, and host networking need a compatible Docker host.</p>
+        <ul v-if="compatibility.required.length || compatibility.warnings.length" class="mt-2 space-y-1 text-xs text-slate-700">
+          <li v-for="field in compatibility.required" :key="`required-${field.id}`">Required value missing: <strong>{{ field.name }}</strong> ({{ field.service }})</li>
+          <li v-for="warning in compatibility.warnings" :key="warning">{{ warning }}</li>
+        </ul>
+        <p class="mt-2 text-[10px] text-slate-500">The final deployment review still checks image architecture, disk space, ports, storage paths, and Docker permissions.</p>
+      </div>
       <details v-if="schema.dependencies?.length || schema.credential_links?.length" class="rounded-xl border border-slate-200 bg-slate-50/60 p-3 space-y-2">
         <summary class="cursor-pointer text-xs font-semibold text-slate-800">Connected services &amp; linked credentials</summary>
         <p v-for="dependency in schema.dependencies" :key="`${dependency.service}:${dependency.target}`" class="text-xs text-slate-600">{{ dependency.service }} → {{ dependency.target }} · {{ dependency.role }} · {{ dependency.healthy ? 'waits for health check' : 'starts before the app' }}</p>
