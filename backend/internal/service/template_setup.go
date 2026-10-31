@@ -65,7 +65,6 @@ type TemplateSetup struct {
 var setupInterpolation = regexp.MustCompile(`\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:-|-|:\?|\?|:\+|\+)([^{}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
 var setupPassword = regexp.MustCompile(`(?i)(password|passwd|(^|_)pass($|_))`)
 var setupSecret = regexp.MustCompile(`(?i)(password|passwd|secret|token|api_?key|auth_?key|(^|_)pass($|_))`)
-var setupSimplePort = regexp.MustCompile(`^((?:[0-9.]+:|\[[0-9a-fA-F:]+\]:)?)([0-9]+):([0-9]+)(/(?:tcp|udp))?$`)
 
 func setupGet(node *yaml.Node, key string) *yaml.Node {
 	if node == nil || node.Kind != yaml.MappingNode {
@@ -331,18 +330,24 @@ func ConfigureTemplate(input TemplateSetupInput) (TemplateSetup, error) {
 		}
 		if ports := setupGet(service, "ports"); ports != nil && ports.Kind == yaml.SequenceNode {
 			for _, node := range ports.Content {
+				publishedValue, _, protocol, target, editable := setupPortBinding(node)
+				if !editable {
+					continue
+				}
 				if node.Kind == yaml.ScalarNode {
-					match := setupSimplePort.FindStringSubmatch(node.Value)
-					if match == nil {
-						continue
+					parts := setupMountParts(node.Value)
+					copy := &yaml.Node{Kind: yaml.ScalarNode, Value: publishedValue}
+					label := "Host port → " + target
+					if strings.Contains(parts[len(parts)-1], "/") {
+						label += "/" + protocol
 					}
-					copy := &yaml.Node{Kind: yaml.ScalarNode, Value: match[2]}
-					addLiteral(copy, "Host port → "+match[3]+match[4], name, "port", "Choose an unused host port (1–65535).", func(value string) error {
+					addLiteral(copy, label, name, "port", "Choose an unused host port (1–65535).", func(value string) error {
 						port, err := strconv.Atoi(value)
 						if err != nil || port < 0 || port > 65535 {
 							return fmt.Errorf("host port must be 1–65535")
 						}
-						setupSet(node, match[1]+value+":"+match[3]+match[4])
+						parts[len(parts)-2] = value
+						setupSet(node, strings.Join(parts, ":"))
 						return nil
 					})
 				} else if published := setupGet(node, "published"); published != nil {

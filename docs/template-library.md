@@ -149,3 +149,22 @@ HTTP or database responses, and checks stored files and database records after
 restart. Its JSON report records the source revision, image IDs and results.
 This requires downloading upstream images. It does not certify every catalog
 entry, complete app-specific onboarding, or enable any exposure provider.
+
+Credential links require evidence of a shared database/cache account. Equal
+sample passwords in unrelated apps do not create a link. Separate providers,
+root accounts, and app administrator passwords remain independent. Explicit
+Environment references still share their value; a variable reused by multiple
+provider settings is called out for manual review rather than assigned
+conflicting generated values.
+
+Port discovery resolves edited bind-address variables in short and long Compose
+syntax. Advanced ranges and protocols stay in the YAML editor. Imported native
+Portainer `:ro`/`:rw` destination suffixes become explicit mount options; clock
+and config files are not offered as empty data volumes. Automatically added
+dependencies only wait for health when an active check is declared; `NONE`,
+disabled checks, and unknown inherited checks use normal service startup.
+
+`tests/template_edge_cases.py` verifies these draft cases against a retained
+disposable test fixture. Set `DOCKTUN_EDGE_DEPLOY=1` to also deploy two independent
+PostgreSQL accounts and clients, verify real SQL connections with different
+generated passwords, and exercise both active and disabled health checks.

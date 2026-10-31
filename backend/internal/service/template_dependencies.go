@@ -70,6 +70,39 @@ func setupCredentialKind(field SetupField) string {
 	return ""
 }
 
+func setupProviderCredential(field SetupField, role string) bool {
+	name := strings.ToUpper(field.Name)
+	prefixes := []string{}
+	if role == "database" {
+		prefixes = []string{"POSTGRES_", "MYSQL_", "MARIADB_", "MONGO_", "MONGODB_"}
+	} else if role == "cache" {
+		prefixes = []string{"REDIS_", "VALKEY_", "MEMCACHED_"}
+	} else {
+		return false
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return name == "PASSWORD" || name == "USER" || name == "USERNAME" || name == "DATABASE_NAME"
+}
+
+func setupServiceHasHealthcheck(service *yaml.Node) bool {
+	health := setupGet(service, "healthcheck")
+	if health == nil || strings.EqualFold(setupString(setupGet(health, "disable")), "true") {
+		return false
+	}
+	test := setupGet(health, "test")
+	if test == nil {
+		return false // An inherited image check cannot be inferred from YAML.
+	}
+	if test.Kind == yaml.SequenceNode {
+		return len(test.Content) > 0 && test.Content[0].Value != "NONE"
+	}
+	return test.Kind == yaml.ScalarNode && strings.TrimSpace(test.Value) != ""
+}
+
 func setupDependencyPlan(root *yaml.Node, result *TemplateSetup, input *TemplateSetupInput) error {
 	services := setupGet(root, "services")
 	nodes := map[string]*yaml.Node{}
@@ -172,8 +205,7 @@ func setupDependencyPlan(root *yaml.Node, result *TemplateSetup, input *Template
 		}
 		sort.Strings(ordered)
 		for _, target := range ordered {
-			health := setupGet(nodes[target], "healthcheck")
-			healthy := health != nil && setupString(setupGet(health, "disable")) != "true"
+			healthy := setupServiceHasHealthcheck(nodes[target])
 			if edges[service][target] {
 				healthy = setupString(setupGet(setupGet(setupGet(nodes[service], "depends_on"), target), "condition")) == "service_healthy"
 			}
@@ -181,10 +213,83 @@ func setupDependencyPlan(root *yaml.Node, result *TemplateSetup, input *Template
 		}
 	}
 	buckets := map[string][]SetupField{}
+	owned := map[string]bool{}
+	providerFields := append([]SetupField{}, result.Fields...)
+	sharedOwners := map[string][]SetupField{}
+	for provider, node := range nodes {
+		environment := setupGet(node, "environment")
+		if environment == nil {
+			continue
+		}
+		addShared := func(name, value string) {
+			match := setupInterpolation.FindStringSubmatch(value)
+			if match == nil || match[0] != value || value == "$$" {
+				return
+			}
+			variable := match[1]
+			if variable == "" {
+				variable = match[4]
+			}
+			if field, ok := fields["var:"+variable]; ok {
+				field.Name, field.Service = name, provider
+				field.Password = setupPassword.MatchString(name) && !strings.HasSuffix(strings.ToUpper(name), "_FILE") && !strings.Contains(strings.ToUpper(name), "HASH")
+				if setupProviderCredential(field, roles[provider]) && setupCredentialKind(field) != "" {
+					sharedOwners[field.ID] = append(sharedOwners[field.ID], field)
+				}
+			}
+		}
+		if environment.Kind == yaml.MappingNode {
+			for i := 0; i+1 < len(environment.Content); i += 2 {
+				addShared(environment.Content[i].Value, environment.Content[i+1].Value)
+			}
+		} else if environment.Kind == yaml.SequenceNode {
+			for _, item := range environment.Content {
+				if name, value, ok := strings.Cut(item.Value, "="); ok {
+					addShared(name, value)
+				}
+			}
+		}
+	}
+	for id, owners := range sharedOwners {
+		if len(owners) == 1 {
+			providerFields = append(providerFields, owners[0])
+		} else {
+			result.Notes = append(result.Notes, fields[id].Name+": shared by multiple provider settings; use this Environment variable in each client to keep credentials shared")
+		}
+	}
+	for _, field := range providerFields {
+		kind := setupCredentialKind(field)
+		if kind != "" && field.Value != "" && setupProviderCredential(field, roles[field.Service]) {
+			realm := "app"
+			if strings.Contains(strings.ToUpper(field.Name), "ROOT") {
+				realm = "root"
+			}
+			key := strings.Join([]string{field.Service, kind, realm, field.Value}, "\x00")
+			buckets[key] = append(buckets[key], field)
+			owned[field.ID] = true
+		}
+	}
+	// Equal sample strings alone are not evidence that credentials belong to
+	// the same account. Scope them to one directly referenced provider; leave
+	// ambiguous multi-database credentials and app-admin logins independent.
 	for _, field := range result.Fields {
 		kind := setupCredentialKind(field)
-		if kind != "" && field.Value != "" {
-			buckets[kind+"\x00"+field.Value] = append(buckets[kind+"\x00"+field.Value], field)
+		name := strings.ToUpper(field.Name)
+		if owned[field.ID] || kind == "" || field.Value == "" || strings.Contains(name, "ROOT") || strings.Contains(name, "ADMIN") {
+			continue
+		}
+		candidates := []string{}
+		for key := range buckets {
+			parts := strings.SplitN(key, "\x00", 4)
+			provider := parts[0]
+			if parts[1] == kind && parts[2] == "app" && parts[3] == field.Value && (edges[field.Service][provider] || proposed[field.Service][provider]) {
+				candidates = append(candidates, key)
+			}
+		}
+		if len(candidates) == 1 {
+			buckets[candidates[0]] = append(buckets[candidates[0]], field)
+		} else if len(candidates) > 1 {
+			result.Notes = append(result.Notes, field.Service+" · "+field.Name+": multiple providers have matching credentials; review this value separately")
 		}
 	}
 	type uriLink struct {
@@ -200,7 +305,8 @@ func setupDependencyPlan(root *yaml.Node, result *TemplateSetup, input *Template
 	sort.Strings(keys)
 	for _, key := range keys {
 		members := buckets[key]
-		kind, value, _ := strings.Cut(key, "\x00")
+		parts := strings.SplitN(key, "\x00", 4)
+		provider, kind, realm, value := parts[0], parts[1], parts[2], parts[3]
 		ids, uses := []string{}, []string{}
 		suggested := false
 		for _, field := range members {
@@ -209,6 +315,34 @@ func setupDependencyPlan(root *yaml.Node, result *TemplateSetup, input *Template
 		}
 		bindings := []uriLink{}
 		for _, uri := range uris {
+			if uri.target != provider {
+				continue
+			}
+			if kind == "username" || kind == "password" {
+				rootUser := "root"
+				for _, name := range []string{"MONGO_INITDB_ROOT_USERNAME", "MONGODB_ROOT_USER", "MYSQL_ROOT_USER", "MARIADB_ROOT_USER"} {
+					for _, field := range providerFields {
+						if field.Service == provider && field.Name == name {
+							rootUser = field.Value
+						}
+					}
+				}
+				isRootURL := uri.address.User != nil && uri.address.User.Username() == rootUser
+				if realm == "root" && !isRootURL {
+					continue
+				}
+				if realm != "root" && isRootURL {
+					hasRoot := false
+					for _, field := range providerFields {
+						if field.Service == provider && owned[field.ID] && strings.Contains(strings.ToUpper(field.Name), "ROOT") {
+							hasRoot = true
+						}
+					}
+					if hasRoot {
+						continue
+					}
+				}
+			}
 			matches := false
 			if kind == "password" && uri.address.User != nil {
 				password, ok := uri.address.User.Password()
@@ -362,8 +496,7 @@ func setupDependencyPlan(root *yaml.Node, result *TemplateSetup, input *Template
 					continue
 				}
 				condition := "service_started"
-				health := setupGet(nodes[target], "healthcheck")
-				if health != nil && setupString(setupGet(health, "disable")) != "true" {
+				if setupServiceHasHealthcheck(nodes[target]) {
 					condition = "service_healthy"
 				}
 				var value yaml.Node

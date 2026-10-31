@@ -23,8 +23,8 @@ token = ''
 run_id = secrets.token_hex(3)
 
 
-def inner(*args):
-    return subprocess.check_output(['docker', 'exec', engine, 'docker', *args], text=True, stderr=subprocess.STDOUT).strip()
+def inner(*args, input=None):
+    return subprocess.check_output(['docker', 'exec', '-i', engine, 'docker', *args], input=input, text=True, stderr=subprocess.STDOUT).strip()
 
 
 def request(path, body=None, expected=200):
@@ -109,8 +109,6 @@ for category, name in selected:
             if category == 'database':
                 if name.startswith('Redis'):
                     assert inner('exec', cid, 'redis-cli', 'ping') == 'PONG'
-                    inner('exec', cid, 'redis-cli', 'set', 'sample-proof', 'persisted')
-                    inner('exec', cid, 'redis-cli', 'save')
                 else:
                     user = next(v.split('=', 1)[1] for v in info['Config']['Env'] if v.startswith('POSTGRES_USER='))
                     assert inner('exec', cid, 'psql', '-U', user, '-Atc', 'SELECT 1') == '1'
@@ -133,6 +131,15 @@ for category, name in selected:
         if name == 'PostgreSQL':
             user = next(v.split('=', 1)[1] for v in info['Config']['Env'] if v.startswith('POSTGRES_USER='))
             inner('exec', cid, 'psql', '-U', user, '-c', "CREATE TABLE smoke_proof(value text); INSERT INTO smoke_proof VALUES ('persisted');")
+        if name.startswith('Redis'):
+            inner('exec', cid, 'redis-cli', 'set', 'sample-proof', 'persisted')
+            inner('exec', cid, 'redis-cli', 'save')
+        if name == 'Linkding':
+            credentials = {f['name']: values[f['id']] for f in schema['fields'] if f['name'].startswith('LD_SUPERUSER_')}
+            code = 'import json,sys; from django.contrib.auth import authenticate; c=json.load(sys.stdin); assert authenticate(username=c["LD_SUPERUSER_NAME"],password=c["LD_SUPERUSER_PASSWORD"]) is not None; print("credential-check-passed")'
+            check = inner('exec', '-i', cid, 'python', 'manage.py', 'shell', '-c', code, input=json.dumps(credentials))
+            assert 'credential-check-passed' in check, 'generated Linkding credentials did not authenticate'
+            result['generated_login_verified'] = True
         inner('restart', cid)
         wait(responds)
         for mount in info['Mounts']:

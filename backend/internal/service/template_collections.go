@@ -326,16 +326,30 @@ func portainerCompose(raw []byte) (string, error) {
 			return "", fmt.Errorf("invalid container volume path")
 		}
 		target := volume.Container
+		readOnly := volume.Readonly
+		if strings.HasSuffix(target, ":ro") {
+			target, readOnly = strings.TrimSuffix(target, ":ro"), true
+		} else if strings.HasSuffix(target, ":rw") {
+			target = strings.TrimSuffix(target, ":rw")
+		}
+		if strings.Contains(target, ":") {
+			return "", fmt.Errorf("unsupported inline volume options in %s; use a Compose template with explicit mount settings", volume.Container)
+		}
 		// This conversion creates a new editable draft, never migrates an existing
 		// database. The official image changed its default data layout in v18.
 		if modernPostgresTemplate(item.Image) && target == "/var/lib/postgresql/data" && env["PGDATA"] == "" {
 			target = "/var/lib/postgresql"
 			notes = append(notes, "# Storage: PostgreSQL 18+ uses /var/lib/postgresql. Existing databases require a separate major-version migration.")
 		}
-		mount := map[string]any{"target": literalTemplate(target), "read_only": volume.Readonly}
+		mount := map[string]any{"target": literalTemplate(target), "read_only": readOnly}
 		if volume.Bind != "" {
 			mount["type"] = "bind"
-			mount["source"] = literalTemplate(volume.Bind)
+			source := volume.Bind
+			if trimmed := strings.TrimSpace(source); strings.HasPrefix(trimmed, "/") && trimmed != source {
+				source = trimmed
+				notes = append(notes, "# Storage: removed surrounding whitespace from the imported host path for "+target+". Review the mount source before deployment.")
+			}
+			mount["source"] = literalTemplate(source)
 			mount["bind"] = map[string]any{"create_host_path": false}
 		} else {
 			name := fmt.Sprintf("data-%d", index+1)
