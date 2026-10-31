@@ -377,6 +377,14 @@ func (m *mDNSManager) listAllRoutes() []*containerRoute {
 	return list
 }
 
+func newReverseProxy(targetURL *url.URL) *httputil.ReverseProxy {
+	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	proxy.Transport = transport
+	return proxy
+}
+
 // ServeHTTP acts as the HTTP reverse proxy for <name>.local requests on port 80.
 func (m *mDNSManager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := r.Host
@@ -397,7 +405,7 @@ func (m *mDNSManager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 1. Route to DockTun Dashboard
 	if targetName == "docktun" || targetName == "" {
 		docktunURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%s", m.docktunPort))
-		proxy := httputil.NewSingleHostReverseProxy(docktunURL)
+		proxy := newReverseProxy(docktunURL)
 		origDirector := proxy.Director
 		proxy.Director = func(req *http.Request) {
 			origDirector(req)
@@ -420,7 +428,7 @@ func (m *mDNSManager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if target != "" {
 			targetURL, err := url.Parse(target)
 			if err == nil {
-				proxy := httputil.NewSingleHostReverseProxy(targetURL)
+				proxy := newReverseProxy(targetURL)
 				origDirector := proxy.Director
 				proxy.Director = func(req *http.Request) {
 					origDirector(req)

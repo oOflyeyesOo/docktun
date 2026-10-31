@@ -182,7 +182,7 @@ func TestPublishedBindingAndIPv6Targets(t *testing.T) {
 }
 
 func TestProxyReachesSpecificallyBoundPublishedPort(t *testing.T) {
-	listener, err := net.Listen("tcp4", "127.0.0.2:0")
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestProxyReachesSpecificallyBoundPublishedPort(t *testing.T) {
 	defer origin.Close()
 	port := listener.Addr().(*net.TCPAddr).Port
 	mgr := newMDNSManager("local", "8080")
-	mgr.routes["web"] = &containerRoute{Name: "web", PublicIP: "127.0.0.2", PublicPort: port}
+	mgr.routes["web"] = &containerRoute{Name: "web", PublicIP: "127.0.0.1", PublicPort: port}
 	response := httptest.NewRecorder()
 	mgr.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://web.local/", nil))
 	if response.Code != 200 || response.Body.String() != "web.local" {
