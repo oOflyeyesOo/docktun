@@ -301,8 +301,8 @@ volumes:
       - "3000:3000"
     environment:
       - PORT=3000
-      - STREAMING_SERVICE_URL=http://stremio:11470
-      - MEDIA_ALLOWED_HOSTS=stremio:11470
+      - STREAMING_SERVICE_URL=http://media:11470
+      - MEDIA_ALLOWED_HOSTS=media:11470,stremio:11470
       - ALLOW_PRIVATE_NETWORKS=true
       - JELLYFIN_URL=\${JELLYFIN_URL:-}
       - MEDIASTORM_URL=\${MEDIASTORM_URL:-}
@@ -315,20 +315,20 @@ volumes:
     volumes:
       - movie_night_data:/share
     depends_on:
-      - stremio
+      - media
 
-  stremio:
+  media:
     image: stremio/server:latest
-    container_name: movie-night-stremio
+    container_name: movie-night-media
     restart: unless-stopped
     environment:
       - APP_PATH=/data
     volumes:
-      - stremio_data:/data
+      - movie_night_media_data:/data
 
 volumes:
   movie_night_data:
-  stremio_data:
+  movie_night_media_data:
 
 `,
     env: `# Optional Media Backends:
