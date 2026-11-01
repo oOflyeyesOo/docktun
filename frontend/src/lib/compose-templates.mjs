@@ -285,4 +285,62 @@ volumes:
 
 `,
   },
-]
+  {
+    id: 'movie-night',
+    name: 'Movie Night VR Cinema',
+    category: 'media',
+    icon: 'Film',
+    description: 'Multiplayer VR cinema for Meta Quest with hardware transcoding, Stremio, Jellyfin, and Cloudflare tunnel support.',
+    ports: ['3000:3000'],
+    compose: `services:
+  cinema:
+    image: ghcr.io/ooflyeyesoo/media-vr:latest
+    container_name: movie-night
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - STREAMING_SERVICE_URL=http://stremio:11470
+      - MEDIA_ALLOWED_HOSTS=stremio:11470
+      - ALLOW_PRIVATE_NETWORKS=true
+      - JELLYFIN_URL=\${JELLYFIN_URL:-}
+      - MEDIASTORM_URL=\${MEDIASTORM_URL:-}
+      - MEDIASTORM_KEY=\${MEDIASTORM_KEY:-}
+      - SILO_URL=\${SILO_URL:-}
+      - SILO_TOKEN=\${SILO_TOKEN:-}
+      - MEDIA_MAX_HEIGHT=1080
+      - MEDIA_MAX_FPS=60
+      - MEDIA_DISABLE_REMUX=false
+    volumes:
+      - movie_night_data:/share
+    depends_on:
+      - stremio
+
+  stremio:
+    image: stremio/server:latest
+    container_name: movie-night-stremio
+    restart: unless-stopped
+    environment:
+      - APP_PATH=/data
+    volumes:
+      - stremio_data:/data
+
+volumes:
+  movie_night_data:
+  stremio_data:
+
+`,
+    env: `# Optional Media Backends:
+JELLYFIN_URL=
+MEDIASTORM_URL=
+MEDIASTORM_KEY=
+SILO_URL=
+SILO_TOKEN=
+
+# Notifications & Subtitles (Optional):
+DISCORD_WEBHOOK_URL=
+OPENSUBTITLES_API_KEY=
+`,
+  },
+];

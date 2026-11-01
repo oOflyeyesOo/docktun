@@ -13,4 +13,5 @@ test('new-stack examples use Compose networking without requiring an exposure pr
   assert.match(postgres.compose, /postgres_data:/)
   assert.deepEqual(postgres.ports, ['5050:80'])
   assert.deepEqual(composeTemplates.find(template => template.id === 'redis-cache').ports, ['8081:8081'])
+  assert.deepEqual(composeTemplates.find(template => template.id === 'movie-night').ports, ['3000:3000'])
 })

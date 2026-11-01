@@ -4,7 +4,7 @@ Open **Containers → Deploy / Launch → App Templates**. A template fills the
 editable Compose and optional `.env` fields. Nothing starts until you review
 storage and deploy the stack. Exposure is a separate, optional choice.
 
-The nine bundled examples live in `frontend/src/lib/compose-templates.mjs`.
+The ten bundled examples live in `frontend/src/lib/compose-templates.mjs`.
 They were added to DockTun in October 2026 and are maintained in this repository;
 they are not automatically synchronized with an external catalog.
 
