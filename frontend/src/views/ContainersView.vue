@@ -155,6 +155,7 @@ interface FileItem {
 
 const containers = ref<ContainerItem[]>([])
 const managedServices = ref<Array<{id: string; name: string}>>([])
+const registeredProjects = ref<Array<{id: number; name: string; path: string}>>([])
 const serviceInventoryError = ref('')
 let inventoryReady = false
 const loading = ref(false)
@@ -938,6 +939,27 @@ const containerGroups = computed<ContainerGroup[]>(() => {
     })
   })
 
+  // Include registered Compose projects with 0 running/stopped containers so they are visible and manageable
+  registeredProjects.value.forEach((p) => {
+    const existing = groups.find((g) => g.projectId === p.id || (g.isStack && g.name.toLowerCase() === p.name.toLowerCase()))
+    if (!existing) {
+      groups.push({
+        key: `project:${p.id}`,
+        name: p.name,
+        isStack: true,
+        projectId: p.id,
+        projectPath: p.path,
+        containers: [],
+        runningCount: 0,
+        totalCount: 0,
+        totalCpu: '0.0%',
+        hasUpdates: false,
+        hasPublic: false,
+        hasZeroTrust: false,
+      })
+    }
+  })
+
   // Sort stacks alphabetically, with standalone apps at the bottom.
   groups.sort((a, b) => {
     if (a.isStack && !b.isStack) return -1
@@ -950,11 +972,13 @@ const containerGroups = computed<ContainerGroup[]>(() => {
 
 async function fetchContainers() {
   try {
-    const [data, maintenance] = await Promise.all([
+    const [data, maintenance, projectsList] = await Promise.all([
       apiFetch<ContainerItem[]>('/api/docker/containers'),
       apiFetch<any>('/api/services').catch((error: any) => { serviceInventoryError.value = error.message; return null }),
+      apiFetch<any[]>('/api/projects').catch(() => []),
     ])
     if (maintenance) { managedServices.value = maintenance.services || []; serviceInventoryError.value = '' }
+    if (Array.isArray(projectsList)) { registeredProjects.value = projectsList }
     containers.value = applicationContainers(data || [], managedServices.value)
     inventoryReady = true
     containers.value.forEach(refreshExposureDraft)
@@ -1168,6 +1192,24 @@ async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' |
 
   // Load content for active tab
   if (selection === selectionRevision) handleTabChange(selectedTab.value)
+}
+
+function openStackComposeModal(projectId: number, projectName: string, projectPath?: string) {
+  selectionRevision++
+  resetProjectEditors()
+  const dummy: any = {
+    id: `project-${projectId}`,
+    name: projectName,
+    image: 'compose-stack',
+    status: 'stopped',
+    running: false,
+    project_id: projectId,
+    project_name: projectName,
+    project_path: projectPath || `/opt/projects/${projectName}`,
+  }
+  selectedContainer.value = dummy
+  selectedTab.value = 'compose'
+  handleTabChange('compose')
 }
 
 function closeContainerModal() {
@@ -2207,7 +2249,7 @@ onUnmounted(() => {
           <div class="flex flex-wrap items-center gap-1.5 sm:self-center">
             <template v-if="group.projectId">
               <button
-                @click="openContainerModal(group.containers[0], 'compose')"
+                @click="group.containers.length > 0 ? openContainerModal(group.containers[0], 'compose') : openStackComposeModal(group.projectId, group.name, group.projectPath)"
                 class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2.5 text-cyan-700 hover:border-cyan-500/50"
                 title="Edit Compose YAML & environment variables"
               >
@@ -2265,7 +2307,7 @@ onUnmounted(() => {
 
               <button
                 v-if="group.key !== 'docktun'"
-                @click="openDeleteStackPrompt(group.projectId, group.name, group.containers[0]?.project_path)"
+                @click="openDeleteStackPrompt(group.projectId, group.name, group.projectPath || group.containers[0]?.project_path)"
                 :disabled="stackActionLoading[group.projectId]"
                 class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2 text-rose-600 hover:border-rose-400 hover:bg-rose-50/60"
                 title="Delete this stack"
@@ -2292,6 +2334,50 @@ onUnmounted(() => {
           class="space-y-3"
           :class="groupByStack ? 'pl-2 sm:pl-4 border-l-2 border-slate-200/60' : ''"
         >
+          <!-- Empty Stack State (0 running or stopped containers) -->
+          <div
+            v-if="group.containers.length === 0"
+            class="rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-4 text-center"
+          >
+            <p class="text-xs text-slate-700 font-mono font-medium">No active containers found in this stack.</p>
+            <p class="text-[11px] text-slate-500 mt-1">The stack may be stopped or an earlier deployment may have encountered an issue.</p>
+            <div class="mt-3 flex flex-wrap items-center justify-center gap-2">
+              <button
+                v-if="group.projectId"
+                @click="runStackAction(group.projectId, 'up')"
+                :disabled="stackActionLoading[group.projectId]"
+                class="cyber-btn flex items-center gap-1.5 text-xs py-1 px-3 text-emerald-700 border-emerald-500/40 hover:bg-emerald-50/40"
+              >
+                <Play class="h-3 w-3 fill-current" />
+                <span>Start Stack (up -d)</span>
+              </button>
+              <button
+                v-if="group.projectId"
+                @click="openStackHistory(group.projectId, group.name)"
+                class="cyber-btn-secondary flex items-center gap-1.5 text-xs py-1 px-3 text-slate-600"
+              >
+                <History class="h-3 w-3" />
+                <span>View Output / Logs</span>
+              </button>
+              <button
+                v-if="group.projectId"
+                @click="openStackComposeModal(group.projectId, group.name, group.projectPath)"
+                class="cyber-btn-secondary flex items-center gap-1.5 text-xs py-1 px-3 text-cyan-700"
+              >
+                <Code2 class="h-3 w-3" />
+                <span>Edit Compose</span>
+              </button>
+              <button
+                v-if="group.projectId && group.key !== 'docktun'"
+                @click="openDeleteStackPrompt(group.projectId, group.name, group.projectPath)"
+                :disabled="stackActionLoading[group.projectId]"
+                class="cyber-btn-secondary flex items-center gap-1.5 text-xs py-1 px-3 text-rose-600 hover:border-rose-400"
+              >
+                <Trash2 class="h-3 w-3" />
+                <span>Delete Stack</span>
+              </button>
+            </div>
+          </div>
           <div
             v-for="container in group.containers"
             :key="container.id"

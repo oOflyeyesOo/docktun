@@ -294,7 +294,7 @@ volumes:
     ports: ['3000:3000'],
     compose: `services:
   cinema:
-    image: movie-night:latest
+    image: ghcr.io/ooflyeyesoo/media-vr:latest
     container_name: movie-night
     restart: unless-stopped
     ports:

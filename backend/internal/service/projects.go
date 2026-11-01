@@ -287,7 +287,7 @@ func (s *Projects) Create(name, path, repoURL, gitUsername, gitToken string) (Pr
 		if err := s.db.QueryRow("SELECT id,name,path FROM projects WHERE path=? OR lower(name)=lower(?) ORDER BY id LIMIT 1", path, name).Scan(&existing.ID, &existing.Name, &existing.Path); err != nil {
 			return Project{}, ErrProjectConflict
 		}
-		return Project{}, fmt.Errorf("%w: %q at %s already exists; manage that stack or choose a different name and folder", ErrProjectConflict, existing.Name, existing.Path)
+		return Project{}, fmt.Errorf("%w: %q at %s already exists; manage or delete that stack in your Stacks list, or choose a different name and folder", ErrProjectConflict, existing.Name, existing.Path)
 	}
 
 	id, _ := res.LastInsertId()
