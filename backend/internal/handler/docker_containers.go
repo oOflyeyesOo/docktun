@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"docktun/internal/service"
 	"github.com/go-chi/chi/v5"
@@ -289,6 +290,11 @@ func (h *DockerContainers) Update(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("user_id").(int)
 	ip := r.RemoteAddr
 
+	cname := id
+	if detail, err := h.svc.Details(id); err == nil && detail.Name != "" {
+		cname = strings.TrimPrefix(detail.Name, "/")
+	}
+
 	out, err := h.svc.UpdateContainer(id, userID, ip)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -300,10 +306,20 @@ func (h *DockerContainers) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	newID := id
+	if freshDetail, err := h.svc.Details(cname); err == nil && freshDetail.ID != "" {
+		newID = freshDetail.ID
+		if freshDetail.Name != "" {
+			cname = strings.TrimPrefix(freshDetail.Name, "/")
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "ok",
-		"output": out,
+		"status":         "ok",
+		"output":         out,
+		"container_id":   newID,
+		"container_name": cname,
 	})
 }
 

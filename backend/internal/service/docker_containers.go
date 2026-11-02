@@ -47,6 +47,33 @@ type ExposureSettings struct {
 	ZeroTrustAppID           string `json:"zero_trust_app_id,omitempty"`
 }
 
+func (e *ExposureSettings) UnmarshalJSON(data []byte) error {
+	type Alias ExposureSettings
+	aux := struct {
+		PrivatePort interface{} `json:"private_port,omitempty"`
+		*Alias
+	}{
+		Alias: (*Alias)(e),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	switch v := aux.PrivatePort.(type) {
+	case float64:
+		e.PrivatePort = int(v)
+	case int:
+		e.PrivatePort = v
+	case string:
+		v = strings.TrimSpace(v)
+		if v != "" {
+			if p, err := strconv.Atoi(v); err == nil {
+				e.PrivatePort = p
+			}
+		}
+	}
+	return nil
+}
+
 type ContainerMount struct {
 	Type        string `json:"type,omitempty"`
 	Name        string `json:"name,omitempty"`
@@ -2279,7 +2306,11 @@ func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (st
 		appendLog(fmt.Sprintf("[DATABASE] Configured dependency networks checked for %s.", cname))
 	}
 
-	s.setContainerUpToDate(id, cname, image)
+	targetID := id
+	if fresh, err := s.Details(cname); err == nil && fresh.ID != "" {
+		targetID = fresh.ID
+	}
+	s.setContainerUpToDate(targetID, cname, image)
 
 	if s.audit != nil {
 		s.audit.Log(userID, "container_update", fmt.Sprintf("Updated container %s (%s) to latest image", cname, image), ip)
@@ -2530,6 +2561,13 @@ func (s *DockerContainers) setContainerUpToDate(id, name, image string) {
 		}
 	}
 
+	targetID := id
+	if fresh, err := s.Details(name); err == nil && fresh.ID != "" {
+		targetID = fresh.ID
+	}
+
+	_, _ = s.db.Exec(`DELETE FROM container_updates WHERE container_id = ? OR container_id = ? OR container_name = ?`, id, targetID, name)
+
 	_, _ = s.db.Exec(`
 		INSERT INTO container_updates (container_id, container_name, image, current_digest, latest_digest, update_available, checked_at, error)
 		VALUES (?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP, '')
@@ -2541,7 +2579,7 @@ func (s *DockerContainers) setContainerUpToDate(id, name, image string) {
 			update_available = 0,
 			checked_at = CURRENT_TIMESTAMP,
 			error = ''
-	`, id, name, image, newDigest, newDigest)
+	`, targetID, name, image, newDigest, newDigest)
 }
 
 func (s *DockerContainers) loadAllUpdatesFromDB() map[string]UpdateCheckResult {

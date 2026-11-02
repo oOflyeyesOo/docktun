@@ -1064,10 +1064,8 @@ async function checkSingleUpdate(container: ContainerItem) {
   checkingSingleUpdate.value[container.id] = true
   try {
     const res = await apiFetch(`/api/docker/containers/${container.id}/check-update`, { method: 'POST' })
-    const saved = await apiFetch<ExposureSettings>(`/api/docker/containers/${container.id}/exposure`)
-    Object.assign(payload, saved)
     await fetchContainers()
-    if (selectedContainer.value && selectedContainer.value.id === container.id) {
+    if (selectedContainer.value && (selectedContainer.value.id === container.id || sameContainerID(selectedContainer.value.id, container.id))) {
       selectedContainer.value.update_available = res.update_available
       selectedContainer.value.latest_digest = res.latest_digest
       selectedContainer.value.current_digest = res.current_digest
@@ -1100,7 +1098,10 @@ async function performUpdate(container: ContainerItem) {
   showUpdateConfirmModal.value = null
   updatingContainer.value[container.id] = true
   try {
-    const res = await apiFetch(`/api/docker/containers/${container.id}/update`, { method: 'POST' })
+    const res = await apiFetch<{ status?: string; output?: string; container_id?: string; container_name?: string }>(
+      `/api/docker/containers/${container.id}/update`,
+      { method: 'POST' }
+    )
     const isDocktunSelf = res.output && res.output.includes('self-update')
     updateResultModal.value = {
       name: container.name,
@@ -1113,8 +1114,22 @@ async function performUpdate(container: ContainerItem) {
       }, 4500)
     } else {
       await fetchContainers()
-      if (selectedContainer.value && selectedContainer.value.id === container.id) {
-        await openContainerModal(container, selectedTab.value)
+      const isCurrent = selectedContainer.value && (
+        sameContainerID(selectedContainer.value.id, container.id) ||
+        selectedContainer.value.name === container.name ||
+        (res?.container_id && sameContainerID(selectedContainer.value.id, res.container_id))
+      )
+      if (isCurrent) {
+        const fresh = containers.value.find((c) =>
+          (res?.container_id && sameContainerID(c.id, res.container_id)) ||
+          c.name === container.name ||
+          sameContainerID(c.id, container.id)
+        )
+        if (fresh) {
+          await openContainerModal(fresh, selectedTab.value)
+        } else if (res?.container_id) {
+          await openContainerModal({ ...container, id: res.container_id }, selectedTab.value)
+        }
       }
     }
   } catch (error: any) {
@@ -1133,7 +1148,11 @@ const exposeMsg = ref<Record<string, { type: 'success' | 'error'; text: string }
 
 async function saveExposure(container: ContainerItem) {
   exposeSaving.value[container.id] = true
-  const payload = { ...getExpose(container.id) }
+  const rawPayload = { ...getExpose(container.id) }
+  const payload: ExposureSettings = {
+    ...rawPayload,
+    private_port: rawPayload.private_port ? Number(rawPayload.private_port) || 80 : 80,
+  }
   try {
     await apiFetch(`/api/docker/containers/${container.id}/exposure`, {
       method: 'POST',
