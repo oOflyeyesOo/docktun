@@ -303,6 +303,7 @@ volumes:
       - "host.docker.internal:host-gateway"
     environment:
       - PORT=3000
+      - BROWSER_SERVICE_URL=http://browser:9000
       - STREAMING_SERVICE_URL=http://media:11470
       - MEDIA_ALLOWED_HOSTS=media:11470,stremio:11470
       - ALLOW_PRIVATE_NETWORKS=true
@@ -318,6 +319,17 @@ volumes:
       - movie_night_data:/share
     depends_on:
       - media
+      - browser
+
+  browser:
+    image: ghcr.io/ooflyeyesoo/media-vr-browser:latest
+    container_name: movie-night-browser
+    restart: unless-stopped
+    shm_size: 1gb
+    tmpfs:
+      - /tmp:size=2147483648,mode=1777
+    volumes:
+      - movie_night_browser_data:/data
 
   media:
     image: stremio/server:latest
@@ -331,6 +343,7 @@ volumes:
 volumes:
   movie_night_data:
   movie_night_media_data:
+  movie_night_browser_data:
 
 `,
     env: `# Optional Media Backends:
