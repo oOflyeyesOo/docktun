@@ -299,6 +299,8 @@ volumes:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - PORT=3000
       - STREAMING_SERVICE_URL=http://media:11470
