@@ -65,7 +65,29 @@ func (d *DB) migrate() error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
-		CREATE TABLE IF NOT EXISTS auth_sessions (
+		CREATE TABLE IF NOT EXISTS operations (
+ id TEXT PRIMARY KEY, kind TEXT NOT NULL, target TEXT NOT NULL, phase TEXT NOT NULL,
+ message TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+ owner TEXT NOT NULL, snapshot TEXT NOT NULL DEFAULT '{}'
+ );
+ CREATE TABLE IF NOT EXISTS operation_locks (target TEXT PRIMARY KEY, operation_id TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS recovery_backups (
+ id TEXT PRIMARY KEY, operation_id TEXT NOT NULL, phase TEXT NOT NULL, created_at INTEGER NOT NULL,
+ size INTEGER NOT NULL DEFAULT 0, sha256 TEXT NOT NULL DEFAULT '', summary TEXT NOT NULL DEFAULT '{}',
+ integrity_verified_at INTEGER, restored_at INTEGER, remote_uploaded_at INTEGER, last_error TEXT NOT NULL DEFAULT ''
+ );
+ CREATE TABLE IF NOT EXISTS recovery_download_tickets(hash TEXT PRIMARY KEY,archive_id TEXT NOT NULL,user_id INTEGER NOT NULL,expires_at INTEGER NOT NULL);
+ CREATE TABLE IF NOT EXISTS recovery_settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS readiness_checks (container_name TEXT PRIMARY KEY, url TEXT NOT NULL, timeout_seconds INTEGER NOT NULL DEFAULT 5);
+ CREATE TABLE IF NOT EXISTS alert_outbox (
+ id TEXT PRIMARY KEY, event_key TEXT NOT NULL, kind TEXT NOT NULL, message TEXT NOT NULL,
+ phase TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+ next_attempt INTEGER NOT NULL, created_at INTEGER NOT NULL, delivered_at INTEGER,
+ last_error TEXT NOT NULL DEFAULT ''
+ );
+ CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_alert_key ON alert_outbox(event_key) WHERE phase IN ('pending','retry');
+ CREATE TABLE IF NOT EXISTS monitor_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS auth_sessions (
             id TEXT PRIMARY KEY,
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             refresh_jti TEXT NOT NULL,

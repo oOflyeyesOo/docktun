@@ -13,6 +13,7 @@ import (
 
 type Config struct {
 	SetupToken           string `envconfig:"SETUP_TOKEN" default:""`
+	RecoveryMode         bool   `envconfig:"DOCKTUN_RECOVERY_MODE" default:"false"`
 	ListenAddr           string `envconfig:"LISTEN_ADDR" default:"0.0.0.0:3001"`
 	JWTSecret            string `envconfig:"JWT_SECRET" default:""`
 	AdminUsername        string `envconfig:"ADMIN_USERNAME" default:"admin"`

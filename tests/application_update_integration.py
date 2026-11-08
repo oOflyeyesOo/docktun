@@ -85,6 +85,13 @@ HTTPServer(('0.0.0.0',8080),Handler).serve_forever()
   assert wait(login)=='v2:persistent-login'
   assert next(m['Name'] for m in inspect(db)['Mounts'] if m['Destination']=='/var/lib/postgresql/data')==pgdata
   print('Database update passed: existing rows, data volume, postgres DNS alias and application login retained',flush=True)
+  # A candidate advertising another database major is refused before stop/rename.
+  # Reuse the cached base to keep this regression independent of registry limits.
+  dbgood=inspect(db)
+  docker('build','-t',dbtag,'-',input='FROM postgres:17-alpine\nENV PG_MAJOR=18\nLABEL fixture.version="migration-required"\n');docker('push',dbtag)
+  request('/api/docker/containers/'+dbgood['Id']+'/update',{},expected=500)
+  assert inspect(db)['Id']==dbgood['Id'];assert wait(login)=='v2:persistent-login'
+  print('Database migration guard passed: changed-major candidate refused before replacing or stopping the working database',flush=True)
   # Bad candidate: original ID and database connectivity survive rollback.
   good=inspect(app);build('broken',bad=True)
   request('/api/docker/containers/'+good['Id']+'/update',{},expected=500)

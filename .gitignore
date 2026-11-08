@@ -30,3 +30,8 @@ frontend/.pnpm-store/
 # OS
 .DS_Store
 Thumbs.db
+
+# Test/release generation
+__pycache__/
+*.pyc
+release-assets/

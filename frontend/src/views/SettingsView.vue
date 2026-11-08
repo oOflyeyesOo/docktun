@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
 import { RotateCcw, ShieldCheck, KeyRound, Globe, CheckCircle2, AlertCircle, Sparkles } from 'lucide-vue-next'
+import UpdateChannel from '../components/UpdateChannel.vue'
 import ManagedServices from '../components/ManagedServices.vue'
 import SystemDiagnostics from '../components/SystemDiagnostics.vue'
 import LocalProxy from '../components/LocalProxy.vue'
+import OperationsCenter from '../components/OperationsCenter.vue'
+import RecoveryCenter from '../components/RecoveryCenter.vue'
 import ProjectBackups from '../components/ProjectBackups.vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
@@ -46,10 +49,13 @@ async function changePassword() {
       <p class="text-xs text-muted font-mono mt-1">Manage DockTun updates, account security, and diagnostics.</p>
     </div>
 
+    <UpdateChannel />
     <ManagedServices />
     <SystemDiagnostics />
     <LocalProxy />
     <ProjectBackups />
+    <RecoveryCenter />
+    <OperationsCenter />
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 

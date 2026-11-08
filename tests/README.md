@@ -69,3 +69,30 @@ failed-image rollback. It does not migrate database major versions. It only
 controls its uniquely named fixtures and cleans them up afterward. The core
 update scenario independently verifies login, data, aliases, anonymous volumes,
 non-default ports and rollback. Run the listed scripts serially per job.
+
+
+## Roadmap acceptance
+
+- `historical_upgrade_integration.py` upgrades a genuine previously published image
+  and checks changed-password login, data and new-session restart continuity.
+- `recovery_integration.py` uses only unique fixtures: refuses live-writer volume
+  capture, verifies stop/resume, encryption/tamper/wrong-key rejection, native
+  PostgreSQL 17/MySQL 8.4/MariaDB 11.4 exports and empty-target restores, a new
+  application volume and clean DockTun-instance login/review mode, one-use native
+  download authorization and exact support-preview checksum.
+- `release_installer_test.py` verifies a standalone digest-pinned Compose asset,
+  its metadata checksum and rejection of mutable/invalid release identity.
+- Backend tests cover durable leases/restart acknowledgement, queue persistence,
+  retry/superseding, stable app identity, safe tar extraction, authentication of
+  every encryption frame, remote read-back/retention, and failed Access policies.
+- `template_review_integration.py` checks the stack's real `.env`, literal values,
+  dashboard-environment exclusion and storage/path safety in a nested engine.
+
+Use `DOCKTUN_TEST_IMAGE` for the exact locally built candidate. Fixtures are not
+live-account or physical NAS/ARM64 acceptance. Tests create and remove only their
+own resources; retained preview engines from earlier work are not cleanup targets.
+
+- `prebuilt_install_integration.py` installs the single-file candidate in an empty
+  nested engine with no checkout, compiler or `.env`, then checks persistent login
+  after Compose recreation. PR runs load the unpublished candidate locally; release
+  promotion runs the actual digest-pinned downloadable asset.

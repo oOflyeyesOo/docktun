@@ -69,6 +69,7 @@ try:
     for path, body in [('/api/templates/catalog', None), ('/api/templates/import', {'url': 'https://example.invalid/compose.yml'}), ('/api/projects/review', {})]:
         request(path, body, expected=401, auth=False)
     request('/api/templates/import', {'url': 'http://127.0.0.1/private.yml'}, expected=400)
+    alpine_id = inner('image','inspect','--format','{{.Id}}','alpine:3.23')
     compose = '''services:
   app:
     image: alpine:3.23
@@ -85,6 +86,9 @@ try:
 volumes:
   app-data:
 '''
+    # This fixture tests rendering/storage, not Docker Hub availability. The
+    # separately loaded immutable local image makes its update check offline.
+    compose = compose.replace('image: alpine:3.23', 'image: '+alpine_id)
     form = {'name': 'reviewed-example', 'path': '', 'compose_content': compose, 'env_content': "USER_VALUE=from-stack\nLITERAL_INPUT='p$USER_VALUE${NOT_A_VARIABLE}'\n"}
     good = request('/api/projects/review', form)
     assert good['ready'] and len(good['mounts']) == 3, good

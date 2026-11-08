@@ -11,7 +11,9 @@ on:
 
 permissions:
   contents: read
+  actions: read
   packages: write
+  id-token: write
 
 concurrency:
   group: docktun-ghcr-publish
@@ -27,6 +29,13 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      - name: Require successful validation for this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          revision=$(git rev-parse HEAD)
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/validate.yml/runs?head_sha=$revision&status=success" --jq '.workflow_runs | any(.head_sha == "'"$revision"'" and .event == "push")' | grep -qx true
+
       - name: Set up QEMU for ARM64 builds
         uses: docker/setup-qemu-action@v3
 
@@ -41,6 +50,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and publish multi-platform images
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -48,7 +58,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/ooflyeyesoo/docktun:latest
+            ghcr.io/ooflyeyesoo/docktun:edge
             ghcr.io/ooflyeyesoo/docktun:sha-${{ github.event.workflow_run.head_sha || github.sha }}
           labels: |
             org.opencontainers.image.title=DockTun
@@ -58,4 +68,20 @@ jobs:
             org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha || github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: false
+          provenance: mode=max
+          sbom: true
+
+      - name: Scan before signing the edge artifact
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: ghcr.io/ooflyeyesoo/docktun@${{ steps.build.outputs.digest }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+      - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v3.1.4
+      - name: Sign validated and scanned edge digest
+        env:
+          IMAGE: ghcr.io/ooflyeyesoo/docktun@${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "$IMAGE"

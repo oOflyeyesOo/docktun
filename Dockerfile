@@ -26,10 +26,12 @@ RUN cd /zeroconf-src && go test ./... && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TA
 # ==============================================================================
 # Stage 3: Unified DockTun Minimal Runtime (No Nginx, Pure Go + Alpine)
 # ==============================================================================
+FROM ghcr.io/sigstore/cosign/cosign@sha256:0f06154836d2de34f887a5c273506d52ca43edaa1d9e53e6510fa78a48f69c2d AS signature-verifier
 FROM alpine:3.23
 RUN apk --no-cache add ca-certificates docker-cli docker-cli-compose docker-cli-buildx git tzdata curl && \
     git config --global --add safe.directory '*'
 
+COPY --from=signature-verifier /ko-app/cosign /usr/local/bin/cosign
 WORKDIR /app
 
 # Copy compiled backend binary and built frontend SPA assets

@@ -23,6 +23,44 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "recovery-volume-extract" {
+		if err := service.ExtractRecoveryVolume(os.Args[2], os.Stdin); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) == 3 && os.Args[1] == "recovery-instance-check" {
+		if _, err := os.Stat(os.Args[2]); err != nil {
+			log.Fatal(err)
+		}
+		snapshot, err := db.New(os.Args[2])
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer snapshot.Close()
+		var result string
+		if err = snapshot.QueryRow("PRAGMA quick_check").Scan(&result); err != nil || result != "ok" {
+			log.Fatal("restored database integrity check failed")
+		}
+		var users int
+		if snapshot.QueryRow("SELECT count(*) FROM users").Scan(&users) != nil || users < 1 {
+			log.Fatal("restored database has no administrator")
+		}
+		return
+	}
+
+	if len(os.Args) == 6 && os.Args[1] == "update-worker" {
+		if err := service.RunJournaledWorker(os.Args[2], os.Args[5], func() error { return service.RunSelfUpdateWorker(os.Args[2], os.Args[3], os.Args[4]) }); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) == 5 && os.Args[1] == "services-worker" {
+		if err := service.RunJournaledWorker(os.Args[2], os.Args[4], func() error { return service.RunManagedServiceWorker(os.Args[2], os.Args[3]) }); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) == 5 && os.Args[1] == "update-worker" {
 		if err := service.RunSelfUpdateWorker(os.Args[2], os.Args[3], os.Args[4]); err != nil {
 			log.Fatal(err)
@@ -45,6 +83,10 @@ func main() {
 		log.Fatalf("failed to init db: %v", err)
 	}
 	defer database.Close()
+	var recoveryReview string
+	if database.QueryRow(`SELECT value FROM system_settings WHERE key='recovery_review_required'`).Scan(&recoveryReview) == nil && recoveryReview == "true" {
+		cfg.RecoveryMode = true
+	}
 
 	hub := ws.NewHub()
 	go hub.Run()
@@ -53,7 +95,7 @@ func main() {
 	cfdSvc.Logs()
 	// Stage optional companions without starting them. Existing running providers
 	// are left alone; enabling one never disables another.
-	if os.Getenv("DOCKTUN_PREPARE_PROVIDERS") != "false" {
+	if !cfg.RecoveryMode && os.Getenv("DOCKTUN_PREPARE_PROVIDERS") != "false" {
 		providers := service.NewProviderContainers(cfg)
 		for _, name := range []string{"cloudflare", "tailscale", "wireguard"} {
 			go func(provider string) {
@@ -65,13 +107,19 @@ func main() {
 	}
 	auditSvc := service.NewAuditLogger(database)
 	authHandler := handler.NewAuth(cfg, database, auditSvc)
- if err:=authHandler.BootstrapError();err!=nil{log.Fatalf("initialize administrator: %v",err)}
+	if err := authHandler.BootstrapError(); err != nil {
+		log.Fatalf("initialize administrator: %v", err)
+	}
 	configSvc := service.NewConfigManager(cfg, database)
 	configSvc.EnsureInitialBackup()
 
-	authMw := middleware.NewAuth(cfg.JWTSecret).WithValidator(func(raw string)(int,string,error){
- c,err:=authHandler.Sessions().Verify(raw,"access");if err!=nil{return 0,"",err};return c.UserID,c.Username,nil
- })
+	authMw := middleware.NewAuth(cfg.JWTSecret).WithValidator(func(raw string) (int, string, error) {
+		c, err := authHandler.Sessions().Verify(raw, "access")
+		if err != nil {
+			return 0, "", err
+		}
+		return c.UserID, c.Username, nil
+	})
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
@@ -121,15 +169,18 @@ func main() {
 
 	statusHandler := handler.NewStatus(cfdSvc, cfg)
 	controlHandler := handler.NewControl(cfdSvc, auditSvc)
-	logsHandler := handler.NewLogs(hub, cfg.JWTSecret).WithSessionValidator(func(raw string)error{_,err:=authHandler.Sessions().Verify(raw,"access");return err})
+	logsHandler := handler.NewLogs(hub, cfg.JWTSecret).WithSessionValidator(func(raw string) error { _, err := authHandler.Sessions().Verify(raw, "access"); return err })
 	configHandler := handler.NewConfig(configSvc, auditSvc, cfAPISvc)
 	tcpHandler := handler.NewTcpAccess(cfdSvc)
 	auditHandler := handler.NewAudit(auditSvc)
 	healthHandler := handler.NewHealthCheck(cfg.CloudflaredConfig).WithActiveConfig(cfAPISvc, configSvc)
 	metricsHandler := handler.NewMetrics(cfg, dockerContainersSvc)
 	settingsHandler := handler.NewSettings(database, auditSvc)
-	notifHandler := handler.NewNotifications(dataDir)
-	projectsHandler := handler.NewProjects(projectsSvc, auditSvc).WithNotifications(notifHandler.DeliverEvent)
+	notifHandler := handler.NewNotifications(dataDir).WithDatabase(database)
+	projectsHandler := handler.NewProjects(projectsSvc, auditSvc)
+	if !cfg.RecoveryMode {
+		projectsHandler = projectsHandler.WithNotifications(notifHandler.DeliverEvent)
+	}
 	templatesHandler := handler.NewTemplates()
 	dockerRunHandler := handler.NewDockerRun(dockerRunSvc, auditSvc)
 	dockerContainersHandler := handler.NewDockerContainers(dockerContainersSvc)
@@ -139,8 +190,28 @@ func main() {
 	storageHandler := handler.NewStorageHandler(storageSvc, storageFilesSvc, auditSvc)
 	setupSvc := service.NewSetupService(cfg, database, dockerContainersSvc, cfAPISvc, configSvc, meshSvc, auditSvc, dataDir)
 	setupHandler := handler.NewSetup(setupSvc, authHandler)
+	operations := service.NewOperationStore(database)
+	if err := operations.ReconcileInterrupted(); err != nil {
+		log.Fatalf("reconcile interrupted operations: %v", err)
+	}
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := operations.ReconcileInterrupted(); err != nil {
+				log.Printf("operation reconciliation: %v", err)
+			}
+		}
+	}()
+	maintenance := &handler.Maintenance{Containers: dockerContainersSvc, Operations: operations, Notifications: notifHandler}
+	recovery := &handler.Recovery{Service: service.NewRecovery(database, cfg, operations)}
+	if err := recovery.Service.ReconcileStartup(); err != nil {
+		log.Fatalf("recovery startup reconciliation: %v", err)
+	}
+	support := &handler.Support{Service: &service.SupportBundles{Directory: filepath.Join(dataDir, "support"), Operations: operations, Config: cfg}}
 
 	r.Get("/healthz", handler.Readiness(database))
+	r.Get("/downloads/recovery/{id}", recovery.NativeDownload)
 	r.Get("/api/setup/status", setupHandler.Status)
 	authLimiter := middleware.NewRateLimiter(10, time.Minute)
 	refreshLimiter := middleware.NewRateLimiter(30, time.Minute)
@@ -151,18 +222,45 @@ func main() {
 
 	r.Group(func(r chi.Router) {
 		r.Use(authMw.Verify)
+		r.Get("/api/recovery/settings", recovery.Settings)
+		r.Put("/api/recovery/settings", recovery.Settings)
+		r.Post("/api/recovery/{id}/remote-upload", recovery.UploadRemote)
+		r.Post("/api/recovery/{id}/remote-fetch", recovery.FetchRemote)
+		r.Delete("/api/recovery/{id}", recovery.Delete)
+		r.Get("/api/recovery/status", recovery.Status)
+		r.Get("/api/recovery/inventory", recovery.Inventory)
+		r.Post("/api/recovery/activate", recovery.Activate)
+		r.Get("/api/recovery/backups", recovery.List)
+		r.Post("/api/recovery/backups", recovery.Backup)
+		r.Post("/api/recovery/import", recovery.Upload)
+		r.Get("/api/recovery/{id}/download", recovery.Download)
+		r.Post("/api/recovery/{id}/download-ticket", recovery.Ticket)
+		r.Post("/api/recovery/{id}/inspect", recovery.Inspect)
+		r.Post("/api/recovery/{id}/restore", recovery.Restore)
+		r.Post("/api/support-bundles", support.Create)
+		r.Get("/api/support-bundles/{id}", support.Download)
+		r.Get("/api/operations", maintenance.History)
+		r.Post("/api/operations/{id}/acknowledge", maintenance.Acknowledge)
+		r.Get("/api/docker/containers/{id}/update-plan", maintenance.Plan)
+		r.Post("/api/docker/containers/{id}/update-plan", maintenance.Plan)
+		r.Put("/api/docker/containers/{id}/readiness", maintenance.Readiness)
+		r.Get("/api/docker/containers/{id}/import-preview", maintenance.ImportPreview)
+		r.Get("/api/notifications/deliveries", maintenance.Deliveries)
+		r.Post("/api/notifications/deliveries/{id}/retry", maintenance.RetryDelivery)
 		r.Get("/api/templates/catalog", templatesHandler.Catalog)
 		r.Post("/api/templates/import", templatesHandler.Import)
 		r.Post("/api/templates/setup", templatesHandler.Setup)
 		r.Post("/api/templates/ports", templatesHandler.Ports)
 		r.Post("/api/templates/files", templatesHandler.Files)
 		r.Post("/api/projects/review", templatesHandler.Review)
-		updater := handler.NewSelfUpdate(service.NewSelfUpdater(dataDir), auditSvc)
-		servicesUpdater := handler.NewManagedServices(service.NewManagedServices(dataDir), auditSvc)
+		updater := handler.NewSelfUpdate(service.NewSelfUpdater(dataDir), auditSvc).WithOperations(operations)
+		servicesUpdater := handler.NewManagedServices(service.NewManagedServices(dataDir), auditSvc).WithOperations(operations)
 		r.Get("/api/services", servicesUpdater.Status)
 		r.Post("/api/services/check", servicesUpdater.Check)
 		r.Post("/api/services/update", servicesUpdater.Update)
 		r.Get("/api/self-update", updater.Status)
+		r.Get("/api/self-update/channel", updater.Channel)
+		r.Put("/api/self-update/channel", updater.Channel)
 		r.Post("/api/self-update/check", updater.Check)
 		r.Post("/api/self-update/install", updater.Install)
 
@@ -249,6 +347,7 @@ func main() {
 		r.Get("/api/docker/containers/{id}/tailscale", dockerContainersHandler.TailscaleNode)
 		r.Post("/api/docker/containers/{id}/tailscale", dockerContainersHandler.TailscaleNode)
 		r.Post("/api/docker/containers/{id}/exposure", dockerContainersHandler.UpdateExposure)
+		r.Post("/api/docker/containers/{id}/exposure-plan", dockerContainersHandler.ExposurePreflight)
 		r.Post("/api/docker/containers/batch", dockerContainersHandler.Batch)
 		r.Post("/api/docker/containers/{id}/network/connect", dockerContainersHandler.ConnectNetwork)
 		r.Post("/api/docker/containers/{id}/network/disconnect", dockerContainersHandler.DisconnectNetwork)
@@ -369,7 +468,12 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
- go notifHandler.RunMonitor(ctx,cfg.CloudflaredContainer,service.SampleNotifications)
+	if !cfg.RecoveryMode {
+		go recovery.Service.RunSchedules(ctx)
+	}
+	if !cfg.RecoveryMode {
+		go notifHandler.RunMonitor(ctx, cfg.CloudflaredContainer, service.SampleNotifications)
+	}
 
 	go func() {
 		ticker := time.NewTicker(15 * time.Second)
@@ -379,7 +483,9 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				dockerContainersSvc.ReconcileTailscaleAppNetworks()
+				if !cfg.RecoveryMode {
+					dockerContainersSvc.ReconcileTailscaleAppNetworks()
+				}
 			}
 		}
 	}()
@@ -395,7 +501,7 @@ func main() {
 	go func() {
 		time.Sleep(2 * time.Second)
 		mesh, err := meshSvc.Load()
-		if err == nil && mesh.Enabled && mesh.Mode == "public" {
+		if err == nil && !cfg.RecoveryMode && mesh.Enabled && mesh.Mode == "public" {
 			if _, err := dockerContainersSvc.ReconcileNetworks(); err != nil {
 				log.Printf("[docktun] network reconciliation notice: %v", err)
 			}
@@ -413,7 +519,7 @@ func main() {
 				return
 			case <-ticker.C:
 				mesh, err := meshSvc.Load()
-				if err == nil && mesh.Enabled && mesh.Mode == "public" {
+				if err == nil && !cfg.RecoveryMode && mesh.Enabled && mesh.Mode == "public" {
 					_, _ = dockerContainersSvc.ReconcileNetworks()
 				}
 			}

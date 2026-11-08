@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"docktun/internal/service"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,6 +16,8 @@ import (
 type Notifications struct {
 	dataPath string
 	mu       sync.Mutex
+	queue    *service.AlertQueue
+	wake     chan struct{}
 }
 
 func NewNotifications(dataPath string) *Notifications {

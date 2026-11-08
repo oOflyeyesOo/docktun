@@ -51,7 +51,11 @@ type ManagedServicesState struct {
 	Job      ServiceUpdateJob `json:"job"`
 }
 
-type ManagedServices struct{ statePath string }
+type ManagedServices struct {
+	statePath      string
+	operationStore *OperationStore
+	operationID    string
+}
 
 var managedUpdateMu sync.Mutex
 
@@ -148,7 +152,11 @@ func managedServiceKind(c, core updateContainer) string {
 
 func serviceImage(c, core updateContainer, kind string) string {
 	if kind == "core" || kind == "zeroconf" {
-		return coreEnvironment(core, "DOCKTUN_UPDATE_IMAGE", defaultUpdateImage)
+		override := coreEnvironment(core, "DOCKTUN_UPDATE_IMAGE", "")
+		if override != "" {
+			return override
+		}
+		return NewSelfUpdater(filepath.Dir(coreEnvironment(core, "DB_PATH", "/app/data/app.db"))).Channel().Image
 	}
 	if image := containerLabels(c)[serviceImageLabel]; image != "" {
 		return image
@@ -371,6 +379,14 @@ func (s *ManagedServices) Start(ctx context.Context, action string, ids []string
 	args := []string{"run", "-d", "--rm", "--name", job.Helper, "--label", "docktun.update.target=" + own.ID, "--network", "none", "--volumes-from", own.ID, "--entrypoint", "/app/server"}
 	args = append(args, updateWorkerIdentity(own)...)
 	args = append(args, own.Image, "services-worker", own.ID, s.statePath)
+	if s.operationID != "" {
+		args = append(args, s.operationID)
+	}
+	if s.operationStore != nil {
+		if err = s.operationStore.SetWorker(s.operationID, job.Helper); err != nil {
+			return job, err
+		}
+	}
 	_, err = updateDocker(ctx, args...)
 	if err != nil {
 		// A disconnected HTTP caller must not overwrite a running/completed
@@ -442,6 +458,11 @@ func RunManagedServiceWorker(target, path string) error {
 				row.Result = "failed"
 				row.Message = err.Error()
 				return fail(fmt.Errorf("check %s: %w", row.Name, err))
+			}
+			if row.Kind == "core" || row.Kind == "zeroconf" {
+				if _, verifyErr := verifyOfficialUpdate(ctx, row.Image); verifyErr != nil {
+					return fail(verifyErr)
+				}
 			}
 			var image struct {
 				ID     string `json:"Id"`

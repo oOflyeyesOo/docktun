@@ -115,23 +115,15 @@ func TestComposeHostPathsPreserveLiteralDollarSigns(t *testing.T) {
 	}
 }
 
-func TestValidateComposeReferencedPathsCreatesMissingFiles(t *testing.T) {
+func TestValidateComposeReferencedPathsNeverInventsConfiguration(t *testing.T) {
 	root := t.TempDir()
-	document := map[string]any{
-		"services": map[string]any{
-			"caddy": map[string]any{
-				"volumes": []any{
-					map[string]any{"type": "bind", "source": filepath.ToSlash(filepath.Join(root, "Caddyfile")), "target": "/etc/caddy/Caddyfile"},
-				},
-			},
-		},
+	missing := filepath.Join(root, "Caddyfile")
+	document := map[string]any{"services": map[string]any{"app": map[string]any{"volumes": []any{map[string]any{"type": "bind", "source": filepath.ToSlash(missing), "target": "/etc/caddy/Caddyfile"}}}}}
+	if validateComposeReferencedPaths(document, filepath.ToSlash(root)) == nil {
+		t.Fatal("missing configuration accepted")
 	}
-	if err := validateComposeReferencedPaths(document, filepath.ToSlash(root)); err != nil {
-		t.Fatal(err)
-	}
-	content, err := os.ReadFile(filepath.Join(root, "Caddyfile"))
-	if err != nil || !strings.Contains(string(content), "DockTun app is running") {
-		t.Fatalf("expected generated Caddyfile, read error=%v content=%q", err, content)
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatal("dummy configuration created")
 	}
 }
 
@@ -161,25 +153,15 @@ func TestValidateComposeReferencedPathsAcceptsExistingFilesAndDirectories(t *tes
 	}
 }
 
-func TestValidateComposeReferencedPathsCreatesMissingDirectories(t *testing.T) {
+func TestValidateComposeReferencedPathsDoesNotRecreateMissingStorage(t *testing.T) {
 	root := t.TempDir()
-	directory := filepath.Join(root, "prometheus")
-	document := map[string]any{
-		"services": map[string]any{
-			"prometheus": map[string]any{
-				"volumes": []any{
-					map[string]any{"type": "bind", "source": filepath.ToSlash(directory), "target": "/etc/prometheus/"},
-				},
-			},
-		},
+	missing := filepath.Join(root, "lost-data")
+	document := map[string]any{"services": map[string]any{"app": map[string]any{"volumes": []any{map[string]any{"type": "bind", "source": filepath.ToSlash(missing), "target": "/data/"}}}}}
+	if validateComposeReferencedPaths(document, filepath.ToSlash(root)) == nil {
+		t.Fatal("missing app data accepted")
 	}
-
-	if err := validateComposeReferencedPaths(document, filepath.ToSlash(root)); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(directory)
-	if err != nil || !info.IsDir() {
-		t.Fatalf("expected missing directory to be created, stat=%v", err)
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatal("empty replacement for missing data created")
 	}
 }
 
@@ -212,26 +194,12 @@ func TestComposePortainerHostSourceUsesProjectStorage(t *testing.T) {
 	}
 }
 
-func TestComposeEnvironmentWithDefaultsFillsRequiredVariables(t *testing.T) {
-	root := t.TempDir()
-	source := filepath.Join(root, "compose.yml")
-	if err := os.WriteFile(source, []byte("services:\n  app:\n    image: example\n    environment:\n      URL: ${APP_URL:?required}\n      NAME: ${APP_NAME?required}\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	env := composeEnvironmentWithDefaults(source)
-	values := strings.Join(env, "\n")
-	if !strings.Contains(values, "APP_URL=http://localhost") || !strings.Contains(values, "APP_NAME=docktun-generated") {
-		t.Fatalf("required defaults missing: %s", values)
-	}
-}
-
-func TestComposeEnvironmentWithDefaultsFillsBareVariables(t *testing.T) {
-	root := t.TempDir()
-	source := filepath.Join(root, "compose.yml")
-	if err := os.WriteFile(source, []byte("services:\n  app:\n    image: example\n    command: $SERVICE\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(strings.Join(composeEnvironmentWithDefaults(source), "\n"), "SERVICE=app") {
-		t.Fatal("bare Compose variable was not given a default")
+func TestComposeEnvironmentLeavesStackInterpolationToCompose(t *testing.T) {
+	t.Setenv("POSTGRES_PASSWORD", "dashboard-secret")
+	t.Setenv("USER_VALUE", "dashboard-value")
+	for _, entry := range composeEnvironment() {
+		if strings.HasPrefix(entry, "POSTGRES_PASSWORD=") || strings.HasPrefix(entry, "USER_VALUE=") {
+			t.Fatal("dashboard value overrides project dotenv")
+		}
 	}
 }

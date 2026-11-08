@@ -1260,6 +1260,7 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 		return fmt.Errorf("enter the existing VPN address and port; WireGuard/custom mesh routing must already be configured")
 	}
 	if settings.Mode == "public" {
+ if err:=s.exposureHostnameAvailable(name,settings.Hostname);err!=nil{return err}
 		if cleanHostname(settings.Hostname) == "" {
 			return fmt.Errorf("enter the public hostname to expose")
 		}
@@ -1268,6 +1269,17 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 		}
 	}
 
+	// Establish requested protection before any new public route becomes reachable.
+	if settings.Mode == "public" && settings.ZeroTrustEnabled {
+		if s.cfAPI == nil {
+			return fmt.Errorf("Access protection service unavailable; route was not published")
+		}
+		appID, err := s.cfAPI.SyncZeroTrustAccess(ZeroTrustPolicyOptions{Hostname: settings.Hostname, AuthType: settings.ZeroTrustAuthType, Emails: settings.ZeroTrustEmails, SessionDuration: settings.ZeroTrustSession})
+		if err != nil || appID == "" {
+			return fmt.Errorf("Access protection could not be confirmed; route was not published: %v", err)
+		}
+		settings.ZeroTrustAppID = appID
+	}
 	prevExp := s.getExposureFromDB(name)
 	ingress, err := s.exposureIngressForMutation(settings.Mode)
 	if err != nil {
@@ -1321,22 +1333,7 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 
 	committed = true
 	// 4. Synchronize Zero Trust Access Application & Policy if enabled
-	if cleanSettings.Mode == "public" && cleanSettings.ZeroTrustEnabled && cleanSettings.Hostname != "" && s.cfAPI != nil {
-		go func(cName string, set ExposureSettings) {
-			appID, err := s.cfAPI.SyncZeroTrustAccess(ZeroTrustPolicyOptions{
-				Hostname:        set.Hostname,
-				AuthType:        set.ZeroTrustAuthType,
-				Emails:          set.ZeroTrustEmails,
-				SessionDuration: set.ZeroTrustSession,
-			})
-			if err != nil {
-				log.Printf("[docktun] Cloudflare Zero Trust sync error for %s: %v", set.Hostname, err)
-			} else if appID != "" {
-				_ = s.updateZeroTrustAppID(cName, appID)
-				log.Printf("[docktun] Cloudflare Zero Trust Access active for %s (app_id: %s)", set.Hostname, appID)
-			}
-		}(name, cleanSettings)
-	} else if (!cleanSettings.ZeroTrustEnabled || cleanSettings.Mode != "public") && s.cfAPI != nil && prevExp.ZeroTrustAppID != "" {
+	if (!cleanSettings.ZeroTrustEnabled || cleanSettings.Mode != "public") && s.cfAPI != nil && prevExp.ZeroTrustAppID != "" {
 		go func(appID string) {
 			if err := s.cfAPI.DeleteZeroTrustAccess(appID); err != nil {
 				log.Printf("[docktun] Cloudflare Zero Trust delete notice: %v", err)
@@ -2040,23 +2037,51 @@ func (s *DockerContainers) CheckAllUpdates() ([]UpdateCheckResult, error) {
 	return results, nil
 }
 
-func (s *DockerContainers) UpdateContainer(id string,userID int,ip string)(string,error){
- ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second);defer cancel()
- if current,e:=selfContainer(ctx);e==nil && (id==current.ID || id==strings.TrimPrefix(current.Name,"/") || (len(id)>=12 && strings.HasPrefix(current.ID,id))) {
-  state,err:=s.selfUpdater.Start(context.Background());if err==nil && s.audit!=nil{s.audit.Log(userID,"self_update",state.Message,ip)};return "self-update: "+state.Message,err
- }
- old,err:=inspectUpdateContainer(ctx,id);if err!=nil{return "",err}
- name:=strings.TrimPrefix(old.Name,"/")
- if s.isSelfContainer(old.ID,name){return "",fmt.Errorf("use Settings to update DockTun")}
- output,err:=replaceApplicationContainer(old)
- if err==nil {
-  image,_:=old.Config["Image"].(string)
-  fresh,e:=inspectUpdateContainer(context.Background(),name);if e==nil{s.setContainerUpToDate(fresh.ID,name,image)}
-  if s.audit!=nil{s.audit.Log(userID,"container_update",name+"\n"+output,ip)}
- }
- return output,err
+func (s *DockerContainers) UpdateContainer(id string, userID int, ip string) (string, error) {
+	return s.UpdateContainerPinned(id, userID, ip, "")
 }
-
+func (s *DockerContainers) UpdateContainerPinned(id string, userID int, ip, expected string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if current, e := selfContainer(ctx); e == nil && (id == current.ID || id == strings.TrimPrefix(current.Name, "/") || (len(id) >= 12 && strings.HasPrefix(current.ID, id))) {
+		state, err := s.selfUpdater.StartJournaled(context.Background(), NewOperationStore(s.db))
+		if err == nil && s.audit != nil {
+			s.audit.Log(userID, "self_update", state.Message, ip)
+		}
+		return "self-update: " + state.Message, err
+	}
+	old, err := inspectUpdateContainer(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	name := strings.TrimPrefix(old.Name, "/")
+	if s.isSelfContainer(old.ID, name) {
+		return "", fmt.Errorf("use Settings to update DockTun")
+	}
+	store := NewOperationStore(s.db)
+	job, err := store.Begin("container_update", "container:"+name, map[string]string{"original_id": old.ID, "rollback_name": name + "-rollback-" + old.ID[:12]})
+	if err != nil {
+		return "", err
+	}
+	_ = store.Phase(job.ID, "running", "Staging image; original data and network definition retained")
+	var readiness string
+	_ = s.db.QueryRow(`SELECT url FROM readiness_checks WHERE container_name=?`, name).Scan(&readiness)
+	output, err := replaceApplicationWithReadiness(old, readiness, expected)
+	if finishErr := store.Finish(job.ID, err); finishErr != nil {
+		return output, fmt.Errorf("operation journal could not be finalized; inspect operation %s", job.ID)
+	}
+	if err == nil {
+		image, _ := old.Config["Image"].(string)
+		fresh, e := inspectUpdateContainer(context.Background(), name)
+		if e == nil {
+			s.setContainerUpToDate(fresh.ID, name, image)
+		}
+		if s.audit != nil {
+			s.audit.Log(userID, "container_update", name+"\n"+output, ip)
+		}
+	}
+	return output, err
+}
 
 func (s *DockerContainers) setContainerUpToDate(id, name, image string) {
 	if s.db == nil {

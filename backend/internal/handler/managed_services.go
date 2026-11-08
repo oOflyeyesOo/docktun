@@ -9,13 +9,19 @@ import (
 )
 
 type ManagedServices struct {
-	svc   *service.ManagedServices
-	audit *service.AuditLogger
+	svc        *service.ManagedServices
+	audit      *service.AuditLogger
+	operations *service.OperationStore
 }
 
 func NewManagedServices(svc *service.ManagedServices, audit *service.AuditLogger) *ManagedServices {
 	return &ManagedServices{svc: svc, audit: audit}
 }
+func (h *ManagedServices) WithOperations(store *service.OperationStore) *ManagedServices {
+	h.operations = store
+	return h
+}
+
 func (h *ManagedServices) Status(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
@@ -40,7 +46,7 @@ func (h *ManagedServices) start(w http.ResponseWriter, r *http.Request, action s
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	job, err := h.svc.Start(ctx, action, req.IDs)
+	job, err := h.svc.StartJournaled(ctx, action, req.IDs, h.operations)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusConflict)
 		return
