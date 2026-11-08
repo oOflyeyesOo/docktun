@@ -52,8 +52,9 @@ try:
   env=['-e','POSTGRES_PASSWORD=fixture-db-password','-e','POSTGRES_DB=fixture'] if engine=='postgres' else ['-e',('MARIADB' if engine=='mariadb' else 'MYSQL')+'_ROOT_PASSWORD=fixture-db-password','-e',('MARIADB' if engine=='mariadb' else 'MYSQL')+'_DATABASE=fixture']
   docker('run','-d','--name',name,*env,dbimage)
   def sql(query,engine=engine,name=name):
-   if engine=='postgres':return docker('exec',name,'psql','-At','-U','postgres','-d','fixture','-c',query)
-   return docker('exec','-e','MYSQL_PWD=fixture-db-password',name,'mariadb' if engine=='mariadb' else 'mysql','-N','-uroot','fixture','-e',query)
+   if engine=='postgres':return docker('exec','-e','PGPASSWORD=fixture-db-password',name,'psql','-h','127.0.0.1','-At','-U','postgres','-d','fixture','-c',query)
+   return docker('exec','-e','MYSQL_PWD=fixture-db-password',name,'mariadb' if engine=='mariadb' else 'mysql','-h','127.0.0.1','-N','-uroot','fixture','-e',query)
+  # TCP SQL excludes the temporary socket-only initialization server.
   wait(lambda:sql('SELECT 1'))
   sql("CREATE TABLE marker(value varchar(100)); INSERT INTO marker VALUES ('recovered-login');")
   databases.append({'container':name,'engine':engine,'database':'fixture','user':user,'sql':sql})
