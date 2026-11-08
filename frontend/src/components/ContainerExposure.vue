@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed,ref,watch } from 'vue'
+import { useApi } from '../composables/useApi'
 import ContainerTailscale from './ContainerTailscale.vue'
 const props = defineProps<{
   container: { id: string; name: string; ports?: string }
@@ -7,7 +8,12 @@ const props = defineProps<{
   saving?: boolean
   message?: { type: string; text: string }
 }>()
-defineEmits<{ save: [] }>()
+const emit=defineEmits<{ save: [] }>()
+const {apiFetch}=useApi();const plan=ref<any>(null),checking=ref(false),error=ref('')
+watch(()=>JSON.stringify([props.container.id,props.settings]),()=>{plan.value=null})
+async function preview(){checking.value=true;error.value='';const snapshot=JSON.stringify([props.container.id,props.settings]);try{const result=await apiFetch('/api/docker/containers/'+props.container.id+'/exposure-plan',{method:'POST',body:JSON.stringify(props.settings)});if(snapshot===JSON.stringify([props.container.id,props.settings]))plan.value=result}catch(e:any){error.value=e.message}finally{checking.value=false}}
+function apply(){if(!plan.value?.ready)return;if(props.settings.mode==='public'&&!props.settings.zero_trust_enabled&&!window.confirm('Publish this app without Cloudflare Access protection? Confirm the application has the authentication you need.'))return;emit('save')}
+
 const provider = computed({
   get: () => props.settings.mode === 'public' ? 'cloudflare' : props.settings.mode === 'private' ? props.settings.private_type : 'none',
   set: (value: string) => {
@@ -59,8 +65,9 @@ const provider = computed({
       <label class="block space-y-1 text-sm"><span>VPN address</span><input v-model="settings.private_host" class="cyber-input w-full" placeholder="VPN-reachable host or IP" /></label>
       <label class="block space-y-1 text-sm"><span>Access port</span><input v-model.number="settings.private_port" type="number" min="1" max="65535" class="cyber-input w-full" /></label>
     </template>
-    <div class="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-4">
-      <button type="button" class="cyber-btn" :disabled="saving" @click="$emit('save')">{{ saving ? 'Saving…' : 'Save exposure' }}</button>
+    <div class="space-y-2 text-xs"><button type="button" class="cyber-btn-secondary" :disabled="checking || saving" @click="preview">{{checking?'Checking…':'Preview access changes'}}</button><p v-if="error" class="text-red-700">{{error}}</p><template v-if="plan"><p v-for="check in plan.checks" :key="check.id" :class="check.status==='failed'?'text-red-700':check.status==='warning'?'text-amber-800':'text-emerald-700'">{{check.label}}: {{check.message}}</p><p v-for="change in plan.changes" :key="change">{{change}}</p><p v-for="note in plan.limitations" :key="note" class="text-muted">{{note}}</p></template></div>
+ <div class="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-4">
+      <button type="button" class="cyber-btn" :disabled="saving || !plan?.ready" @click="apply">{{ saving ? 'Saving…' : 'Save exposure' }}</button>
       <p v-if="message" role="status" class="text-sm" :class="message.type === 'error' ? 'text-red-700' : 'text-emerald-700'">{{ message.text }}</p>
     </div>
   </section>

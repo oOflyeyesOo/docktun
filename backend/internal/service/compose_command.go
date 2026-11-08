@@ -9,14 +9,9 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 )
-
-var composeRequiredVariable = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?::\?|\?)`)
-var composeVariable = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)[^}]*\}`)
-var composeBareVariable = regexp.MustCompile(`(^|[^$])\$([A-Za-z_][A-Za-z0-9_]*)`)
 
 // Compose reads files inside DockTun, but Docker interprets bind sources on the
 // daemon host. Render locally, translate known mounts, and stream the resolved
@@ -68,7 +63,7 @@ func composeProjectCommandPolicy(projectName, directory string, sources []string
 		renderArgs = append(renderArgs, "-f", source)
 	}
 	renderArgs = append(renderArgs, "config", "--format", "json")
-	composeEnv := composeEnvironmentWithDefaults(sources[0])
+	composeEnv := composeEnvironment()
 	raw, err := composeDockerOutputInDirWithEnv(ctx, absolute, composeEnv, renderArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("validate Compose configuration: %w", err)
@@ -125,65 +120,6 @@ func composeProjectCommandPolicy(projectName, directory string, sources []string
 	return cmd, nil
 }
 
-func composeEnvironmentWithDefaults(source string) []string {
-	env := composeEnvironment()
-	raw, err := os.ReadFile(source)
-	if err != nil {
-		return env
-	}
-	existing := make(map[string]bool)
-	for _, entry := range env {
-		if key, _, ok := strings.Cut(entry, "="); ok {
-			existing[key] = true
-		}
-	}
-	for _, match := range composeRequiredVariable.FindAllStringSubmatch(string(raw), -1) {
-		key := match[1]
-		if existing[key] {
-			continue
-		}
-		value := composeGeneratedVariableValue(key)
-		env = append(env, key+"="+value)
-		existing[key] = true
-	}
-	for _, match := range composeVariable.FindAllStringSubmatch(string(raw), -1) {
-		key := match[1]
-		if existing[key] || strings.Contains(match[0], ":-") || strings.Contains(match[0], ":+") {
-			continue
-		}
-		env = append(env, key+"="+composeGeneratedVariableValue(key))
-		existing[key] = true
-	}
-	for _, match := range composeBareVariable.FindAllStringSubmatch(string(raw), -1) {
-		key := match[2]
-		if existing[key] {
-			continue
-		}
-		env = append(env, key+"="+composeGeneratedVariableValue(key))
-		existing[key] = true
-	}
-	return env
-}
-
-func composeGeneratedVariableValue(key string) string {
-	switch strings.ToUpper(key) {
-	case "DATA_LOCATION":
-		return "./data"
-	case "SERVICE":
-		return "app"
-	case "NETWORK":
-		return "docktun"
-	}
-	lower := strings.ToLower(key)
-	if strings.Contains(lower, "url") {
-		return "http://localhost"
-	}
-	if strings.Contains(lower, "email") {
-		return "admin@localhost"
-	}
-	return "docktun-generated"
-}
-
 func validateComposeReferencedPaths(document map[string]any, projectDirectory string) error {
 	projectDirectory = strings.TrimRight(path.Clean(projectDirectory), "/")
 	check := func(kind, value string, wantDir bool) error {
@@ -193,22 +129,7 @@ func validateComposeReferencedPaths(document map[string]any, projectDirectory st
 		}
 		info, err := os.Stat(filepath.FromSlash(value))
 		if err != nil {
-			if os.IsNotExist(err) {
-				if wantDir {
-					if err := os.MkdirAll(filepath.FromSlash(value), 0755); err != nil {
-						return fmt.Errorf("cannot create Compose %s %s: %w", kind, value, err)
-					}
-					return nil
-				}
-				if err := os.MkdirAll(filepath.Dir(filepath.FromSlash(value)), 0755); err != nil {
-					return fmt.Errorf("cannot prepare Compose file %s: %w", kind, err)
-				}
-				if err := os.WriteFile(filepath.FromSlash(value), composeGeneratedFile(value), 0600); err != nil {
-					return fmt.Errorf("cannot create Compose file %s: %w", kind, err)
-				}
-				return nil
-			}
-			return fmt.Errorf("cannot inspect Compose %s %s: %w", kind, value, err)
+			return fmt.Errorf("Compose %s %s is unavailable; restore or provide the real source before deploying: %w", kind, value, err)
 		}
 
 		if wantDir && !info.IsDir() {
@@ -277,17 +198,6 @@ func composePathLooksLikeFile(source, target string) bool {
 		}
 	}
 	return false
-}
-
-func composeGeneratedFile(source string) []byte {
-	switch strings.ToLower(path.Base(source)) {
-	case "caddyfile":
-		return []byte(":80 {\n\trespond \"DockTun app is running\"\n}\n")
-	case "prometheus.yml", "prometheus.yaml":
-		return []byte("global:\n  scrape_interval: 15s\nscrape_configs: []\n")
-	default:
-		return []byte{}
-	}
 }
 
 func composeDockerOutput(ctx context.Context, args ...string) ([]byte, error) {

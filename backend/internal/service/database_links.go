@@ -38,7 +38,7 @@ func databaseHosts(env []string) []string {
 				continue
 			}
 			value = u.Hostname()
-		case "DB_HOST", "POSTGRES_HOST", "MYSQL_HOST", "REDIS_HOST":
+		case "DB_HOST", "POSTGRES_HOST", "PGHOST", "MYSQL_HOST", "MARIADB_HOST", "REDIS_HOST":
 			if host, _, err := net.SplitHostPort(value); err == nil {
 				value = host
 			}

@@ -15,6 +15,9 @@ var applicationUpdateLocks sync.Map
 // Image updates preserve the running Docker definition. They never invent a
 // one-service Compose stack or rewrite a database hostname, credential or mount.
 func replaceApplicationContainer(old updateContainer) (string, error) {
+	return replaceApplicationWithReadiness(old, "")
+}
+func replaceApplicationWithReadiness(old updateContainer, readiness string, expected ...string) (string, error) {
 	lock, _ := applicationUpdateLocks.LoadOrStore(strings.TrimPrefix(old.Name, "/"), &sync.Mutex{})
 	mu := lock.(*sync.Mutex)
 	if !mu.TryLock() {
@@ -41,6 +44,12 @@ func replaceApplicationContainer(old updateContainer) (string, error) {
 		return "", err
 	}
 	imageID := strings.TrimSpace(string(raw))
+	if len(expected) > 0 && expected[0] != "" && expected[0] != imageID {
+		return "", fmt.Errorf("candidate image changed; review a fresh update plan")
+	}
+	if err = validateDatabaseImageTransition(ctx, old, imageID); err != nil {
+		return "", err
+	}
 	if imageID == old.Image {
 		return "Container already uses the current image; settings and data were unchanged.", nil
 	}
@@ -72,15 +81,15 @@ func replaceApplicationContainer(old updateContainer) (string, error) {
 		defer done()
 		if newID != "" {
 			if _, e := updateDocker(rb, "rm", "-f", newID); e != nil {
-				return "", fmt.Errorf("update failed: %v; replacement removal failed: %w; previous container retained as %s", cause, e, backup)
+				return "", &operationRecoveryRequired{fmt.Errorf("update failed: %v; replacement removal failed: %w; previous container retained as %s", cause, e, backup)}
 			}
 		}
 		if _, e := updateDocker(rb, "rename", old.ID, name); e != nil {
-			return "", fmt.Errorf("update failed: %v; previous container retained as %s: %w", cause, backup, e)
+			return "", &operationRecoveryRequired{fmt.Errorf("update failed: %v; previous container retained as %s: %w", cause, backup, e)}
 		}
 		if old.State.Running {
 			if _, e := updateDocker(rb, "start", old.ID); e != nil {
-				return "", fmt.Errorf("previous container restored but restart failed: %w", e)
+				return "", &operationRecoveryRequired{fmt.Errorf("previous container restored but restart failed: %w", e)}
 			}
 		}
 		return "Previous container restored with its original data and networks.", fmt.Errorf("update rolled back: %w", cause)
@@ -132,8 +141,26 @@ func replaceApplicationContainer(old updateContainer) (string, error) {
 			return rollback(fmt.Errorf("replacement failed its startup/health check"))
 		}
 	}
+	if old.State.Running && readiness != "" {
+		deadline := time.Now().Add(90 * time.Second)
+		for {
+			err = probeReadiness(ctx, readiness)
+			if err == nil {
+				break
+			}
+			if time.Now().After(deadline) || ctx.Err() != nil {
+				return rollback(err)
+			}
+			select {
+			case <-ctx.Done():
+				return rollback(ctx.Err())
+			case <-time.After(2 * time.Second):
+			}
+		}
+
+	}
 	if _, err = updateDocker(ctx, "rm", old.ID); err != nil {
-		return "Replacement is active; previous container retained as " + backup, err
+		return "Replacement is active; previous container retained as " + backup, &operationRecoveryRequired{err}
 	}
 	return "Updated image with original mounts, environment, entrypoint, restart policy, ports and network aliases preserved. Previous running/stopped state retained. Containers without a Docker healthcheck are checked for stable running state only.", nil
 }

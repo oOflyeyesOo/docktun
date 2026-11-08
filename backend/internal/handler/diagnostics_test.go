@@ -25,7 +25,7 @@ func TestDiagnostics(t *testing.T) {
 			calls := 0
 			h := diagnostics(func(ctx context.Context, args ...string) ([]byte, error) {
 				calls++
-				if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 3*time.Second {
+				if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 10*time.Second {
 					t.Fatal("missing bounded deadline")
 				}
 				if calls == 1 && strings.Join(args, " ") != "version --format {{.Server.Version}}" {

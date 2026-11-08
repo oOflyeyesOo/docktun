@@ -134,6 +134,17 @@ func (h *Notifications) DeliverEvent(kind, message string) {
 	if err != nil || !cfg.Enabled || (kind == "deploy_finish" && !cfg.NotifyDeployFinish) {
 		return
 	}
+	if h.queue != nil {
+		if err = h.queue.Apply([]service.QueuedIncident{{Kind: kind, Key: fmt.Sprintf("event-%d", time.Now().UnixNano()), Message: message}}, "", time.Now().Unix()); err != nil {
+			log.Printf("notification could not be queued: %v", err)
+			return
+		}
+		select {
+		case h.wake <- struct{}{}:
+		default:
+		}
+		return
+	}
 	if err = h.sendIncident(ctx, cfg, incident{Kind: kind, Message: message}); err != nil {
 		log.Printf("notification delivery failed: %v", err)
 	}
@@ -142,6 +153,10 @@ func (h *Notifications) RunMonitor(ctx context.Context, tunnel string, sample fu
 	h.runMonitor(ctx, tunnel, sample, 30*time.Second)
 }
 func (h *Notifications) runMonitor(ctx context.Context, tunnel string, sample func(context.Context) (service.NotificationSample, error), period time.Duration) {
+	if h.queue != nil {
+		h.runDurableMonitor(ctx, tunnel, sample, period)
+		return
+	}
 	tracker := notificationTracker{}
 	pending := map[string]incident{}
 	ticker := time.NewTicker(period)

@@ -35,11 +35,13 @@ type SelfUpdateState struct {
 var selfUpdateMu sync.Mutex
 
 type SelfUpdater struct {
-	statePath    string
-	buildMu      sync.Mutex
-	build        RunningBuildInfo
-	buildAt      time.Time
-	inspectBuild func(context.Context) (RunningBuildInfo, error)
+	operationStore *OperationStore
+	operationID    string
+	statePath      string
+	buildMu        sync.Mutex
+	build          RunningBuildInfo
+	buildAt        time.Time
+	inspectBuild   func(context.Context) (RunningBuildInfo, error)
 }
 
 func NewSelfUpdater(dataDir string) *SelfUpdater {
@@ -71,6 +73,14 @@ func updateDocker(ctx context.Context, args ...string) ([]byte, error) {
 	return out, nil
 }
 
+type DockerAPIError struct {
+	Status  int
+	Message string
+}
+
+func (e *DockerAPIError) Error() string {
+	return fmt.Sprintf("Docker API: %s (%d)", e.Message, e.Status)
+}
 func dockerJSON(ctx context.Context, method, path string, body any, result any) error {
 	var payload io.Reader
 	if body != nil {
@@ -97,7 +107,7 @@ func dockerJSON(ctx context.Context, method, path string, body any, result any) 
 	if res.StatusCode >= 300 {
 		var msg struct{ Message string }
 		_ = json.NewDecoder(res.Body).Decode(&msg)
-		return fmt.Errorf("Docker API: %s (%d)", msg.Message, res.StatusCode)
+		return &DockerAPIError{Status: res.StatusCode, Message: msg.Message}
 	}
 	if result != nil {
 		return json.NewDecoder(res.Body).Decode(result)
@@ -213,7 +223,7 @@ func validateCorePersistence(c updateContainer) error {
 }
 
 func (s *SelfUpdater) Status() SelfUpdateState {
-	state := SelfUpdateState{Phase: "idle", Image: updateImage(), Message: "Check for a published DockTun update."}
+	state := SelfUpdateState{Phase: "idle", Image: s.Channel().Image, Message: "Check for a published DockTun update."}
 	if b, err := os.ReadFile(s.statePath); err == nil {
 		_ = json.Unmarshal(b, &state)
 	}
@@ -250,7 +260,7 @@ func (s *SelfUpdater) Check(ctx context.Context) (SelfUpdateState, error) {
 		return previous, err
 	}
 	// Pulling only stages the image; the running container is unchanged until Install.
-	state := SelfUpdateState{Phase: "checking", Image: updateImage(), CurrentImage: c.Image, Message: "Downloading the latest published image for comparison."}
+	state := SelfUpdateState{Phase: "checking", Image: s.Channel().Image, CurrentImage: c.Image, Message: "Downloading the latest published image for comparison."}
 	if err = s.save(state); err != nil {
 		return state, err
 	}
@@ -260,6 +270,14 @@ func (s *SelfUpdater) Check(ctx context.Context) (SelfUpdateState, error) {
 		_ = s.save(state)
 		return state, err
 	}
+	verified, verifyErr := verifyOfficialUpdate(ctx, state.Image)
+	if verifyErr != nil {
+		state.Phase = "failed"
+		state.Message = verifyErr.Error()
+		_ = s.save(state)
+		return state, verifyErr
+	}
+	state.Image = verified
 	out, err := updateDocker(ctx, "image", "inspect", state.Image, "--format", "{{.Id}}")
 	if err != nil {
 		state.Phase = "failed"
@@ -314,13 +332,21 @@ func (s *SelfUpdater) Start(ctx context.Context) (SelfUpdateState, error) {
 		return state, err
 	}
 	helper := "docktun-updater-" + c.ID[:12]
-	state = SelfUpdateState{Phase: "pulling", Image: updateImage(), CurrentImage: c.Image, Helper: helper, Message: "Preparing the update. This page will reconnect automatically."}
+	state = SelfUpdateState{Phase: "pulling", Image: s.Channel().Image, CurrentImage: c.Image, Helper: helper, Message: "Preparing the update. This page will reconnect automatically."}
 	if err = s.save(state); err != nil {
 		return state, err
 	}
 	args := []string{"run", "-d", "--rm", "--name", helper, "--label", "docktun.update.target=" + c.ID, "--network", "none", "--volumes-from", c.ID, "--entrypoint", "/app/server"}
 	args = append(args, updateWorkerIdentity(c)...)
 	args = append(args, c.Image, "update-worker", c.ID, state.Image, s.statePath)
+	if s.operationID != "" {
+		args = append(args, s.operationID)
+	}
+	if s.operationStore != nil {
+		if err = s.operationStore.SetWorker(s.operationID, state.Helper); err != nil {
+			return state, err
+		}
+	}
 	_, err = updateDocker(ctx, args...)
 	if err != nil {
 		state.Phase = "failed"
@@ -450,6 +476,12 @@ func RunSelfUpdateWorker(target, image, statePath string) error {
 	if err = stageUpdateImage(ctx, image); err != nil {
 		return fail(err)
 	}
+	verified, verifyErr := verifyOfficialUpdate(ctx, image)
+	if verifyErr != nil {
+		return fail(verifyErr)
+	}
+	image = verified
+
 	out, err := updateDocker(ctx, "image", "inspect", image, "--format", "{{.Id}}")
 	if err != nil {
 		return fail(err)

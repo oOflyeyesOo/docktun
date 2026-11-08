@@ -21,11 +21,11 @@ Modern, self-hosted web dashboard for managing Docker containers and Compose sta
 - **Optional local reverse proxy**: Choose Caddy, Traefik, or Nginx under **Settings → Local Reverse Proxy**, add manual hostname-to-container routes, and apply. DockTun creates and uses the dedicated `docktun-proxy` network, connects selected containers, and manages one active proxy companion. Routes use container names and internal ports; no public DNS or Cloudflare credentials are required.
 - **Project backup and restore**: Export registered projects as portable `.tar.gz` archives from Settings and restore them into a new project name and folder. Archives include Compose, `.env`, and supporting files; protect them because `.env` may contain credentials.
 - **Web security protections**: The API applies browser hardening headers, limits login and token-refresh attempts by client address, and rejects oversized authentication request bodies.
-- **Session revocation**: Logout revokes the presented access or refresh token, and refresh-token rotation invalidates the previous token so copied refresh credentials cannot be reused.
+- **Session revocation**: Logout revokes the complete login session. Access and refresh tokens have separate purposes; refresh rotation rejects reuse, and password changes invalidate existing sessions. Upgrading from older builds requires one fresh sign-in without changing stored accounts or passwords.
 - 💻 **Web Terminal & Logs** — In-browser interactive `docker exec` terminal and real-time streaming WebSocket logs with filtering.
 - 📁 **File & Volume Explorer** — Browse container filesystems, view and edit configuration files in-place, and upload or download files.
-- 🔄 **Self-Healing & 1-Click Updates** — Automatic database companion network relinking, continuous health reconciliation, and 1-click self-updating with automated health-check rollback.
-- 🔔 **Audit Trail & Alerts** — Full SQLite action history and webhook notifications for Discord, Telegram, and Slack.
+- 🔄 **Self-Healing & 1-Click Updates** — Image updates preserve the running container definition, persistent mounts and network aliases, with startup/health-check rollback. Database major migrations require a separate recovery plan. Optional explicit dependency-network recovery is available for existing misconfigurations.
+- 🔔 **Audit Trail & Alerts** — SQLite action history and sampled outage/resource notifications for Discord, Telegram, Slack and Ntfy. See the roadmap for durable delivery and recovery acceptance.
 
 ---
 
@@ -349,3 +349,18 @@ MIT License. See [LICENSE](LICENSE) for details.
 Portless `http://app.local` links require the `zeroconf` service in the current Compose file. For an existing prebuilt installation, download the updated `compose.prebuilt.yml`, retain your existing volume/project settings, then run `docker compose -f compose.prebuilt.yml up -d --pull always docktun zeroconf`. Updating only the DockTun container does not add or recreate this separate service.
 
 The proxy uses Linux host networking and host TCP port 80. Check `docker logs docktun-zeroconf` if names resolve but pages fail. A Synology web server or another proxy may already occupy port 80; arrange the existing LAN reverse proxy to serve these hostnames or free that port before using portless links. Keep direct LAN IP and published-port URLs available as a fallback. mDNS clients must be on a network that passes local multicast. On hosts with multiple interfaces, set `HOST_IP` in the zeroconf service to the Docker host's LAN address. These links do not enable a remote tunnel.
+
+## Improvement roadmap
+
+See [ROADMAP.md](ROADMAP.md) for implementation status and acceptance gates.
+Project-file archives do not include named-volume/database contents or Git history.
+A running container is not necessarily application-ready; use a Docker healthcheck
+that validates the application and its database dependency.
+
+
+### Reliability and recovery guide
+
+See [updates, database connectivity, backup levels and recovery](docs/reliability-and-recovery.md)
+and [release channels, immutable installers and platform acceptance](docs/releases-and-platforms.md).
+The [roadmap ledger](ROADMAP.md) separates implemented behavior from review,
+publication, physical-device and live-account acceptance gates.

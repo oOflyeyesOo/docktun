@@ -781,9 +781,18 @@ func (s *CloudflareAPI) SyncZeroTrustAccess(opts ZeroTrustPolicyOptions) (string
 		authType = "email"
 	}
 
+	if authType != "email" && authType != "domain" && authType != "everyone" && authType != "ip" && authType != "bypass_ip" {
+		return "", fmt.Errorf("unsupported Access policy type")
+	}
+	if authType != "everyone" && strings.TrimSpace(opts.Emails+opts.Domains+opts.IPRanges) == "" {
+		return "", fmt.Errorf("Access allowlist is empty; choose explicit entries or any authenticated user")
+	}
 	// 1. Check if application for domain already exists
 	var appID string
 	existingApps, err := s.ListAccessApplications()
+	if err != nil {
+		return "", fmt.Errorf("read existing Access applications: %w", err)
+	}
 	if err == nil {
 		for _, a := range existingApps {
 			if strings.EqualFold(cleanHostname(a.Domain), cleanHost) {
@@ -840,13 +849,21 @@ func (s *CloudflareAPI) SyncZeroTrustAccess(opts ZeroTrustPolicyOptions) (string
 		}
 		jsonBytes, _ := json.Marshal(updateBody)
 		updateURL := fmt.Sprintf("%s/%s", baseURL, appID)
-		if putReq, err := http.NewRequest("PUT", updateURL, bytes.NewBuffer(jsonBytes)); err == nil {
-			putReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
-			putReq.Header.Set("Content-Type", "application/json")
-			if pResp, err := s.client.Do(putReq); err == nil {
-				pResp.Body.Close()
-			}
+		putReq, err := http.NewRequest("PUT", updateURL, bytes.NewBuffer(jsonBytes))
+		if err != nil {
+			return "", err
 		}
+		putReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
+		putReq.Header.Set("Content-Type", "application/json")
+		response, err := s.client.Do(putReq)
+		if err != nil {
+			return "", err
+		}
+		err = confirmAccessMutation(response)
+		if err != nil {
+			return "", err
+		}
+
 	}
 
 	if appID == "" {
@@ -939,11 +956,8 @@ func (s *CloudflareAPI) SyncZeroTrustAccess(opts ZeroTrustPolicyOptions) (string
 		}
 	}
 
-	// Fallback to everyone if no specific rules were extracted
 	if len(include) == 0 {
-		include = append(include, map[string]interface{}{
-			"everyone": map[string]interface{}{},
-		})
+		return "", fmt.Errorf("Access allowlist contains no valid rules")
 	}
 
 	policyBody := map[string]interface{}{
@@ -953,41 +967,50 @@ func (s *CloudflareAPI) SyncZeroTrustAccess(opts ZeroTrustPolicyOptions) (string
 	}
 	pBytes, _ := json.Marshal(policyBody)
 
-	// Check if a policy already exists
-	getPolReq, _ := http.NewRequest("GET", policyURL, nil)
-	getPolReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
-	getPolReq.Header.Set("Content-Type", "application/json")
-	if pResp, err := s.client.Do(getPolReq); err == nil {
-		defer pResp.Body.Close()
-		var polListResp cfApiResponse
-		if err := json.NewDecoder(pResp.Body).Decode(&polListResp); err == nil && polListResp.Success {
-			var pols []struct {
-				ID string `json:"id"`
-			}
-			if err := json.Unmarshal(polListResp.Result, &pols); err == nil && len(pols) > 0 {
-				// Update existing policy
-				updatePolURL := fmt.Sprintf("%s/%s", policyURL, pols[0].ID)
-				putReq, _ := http.NewRequest("PUT", updatePolURL, bytes.NewBuffer(pBytes))
-				putReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
-				putReq.Header.Set("Content-Type", "application/json")
-				if putResp, err := s.client.Do(putReq); err == nil {
-					defer putResp.Body.Close()
-					return appID, nil
-				}
-			}
-		}
+	// Refuse to overwrite unrelated policy rules on a shared hostname.
+	listReq, _ := http.NewRequest("GET", policyURL, nil)
+	listReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
+	response, err := s.client.Do(listReq)
+	if err != nil {
+		return "", err
 	}
-
-	// Otherwise, create new policy
-	createPolReq, err := http.NewRequest("POST", policyURL, bytes.NewBuffer(pBytes))
-	if err == nil {
-		createPolReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
-		createPolReq.Header.Set("Content-Type", "application/json")
-		if cResp, err := s.client.Do(createPolReq); err == nil {
-			defer cResp.Body.Close()
-		}
+	var policyList cfApiResponse
+	decodeErr := json.NewDecoder(response.Body).Decode(&policyList)
+	response.Body.Close()
+	if decodeErr != nil || response.StatusCode < 200 || response.StatusCode >= 300 || !policyList.Success {
+		return "", fmt.Errorf("cannot verify existing Access policies")
 	}
-
+	var policies []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err = json.Unmarshal(policyList.Result, &policies); err != nil {
+		return "", err
+	}
+	method, endpoint := "POST", policyURL
+	for _, policy := range policies {
+		if policy.Name != "DockTun Zero Trust Policy" {
+			return "", fmt.Errorf("existing external Access policies require manual review before publishing")
+		}
+		if method == "PUT" {
+			return "", fmt.Errorf("duplicate DockTun Access policies require manual review")
+		}
+		method = "PUT"
+		endpoint = policyURL + "/" + url.PathEscape(policy.ID)
+	}
+	request, err := http.NewRequest(method, endpoint, bytes.NewBuffer(pBytes))
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Authorization", "Bearer "+creds.APIToken)
+	request.Header.Set("Content-Type", "application/json")
+	response, err = s.client.Do(request)
+	if err != nil {
+		return "", err
+	}
+	if err = confirmAccessMutation(response); err != nil {
+		return "", err
+	}
 	return appID, nil
 }
 
@@ -1020,5 +1043,14 @@ func (s *CloudflareAPI) DeleteZeroTrustAccess(appID string) error {
 	}
 	defer resp.Body.Close()
 
+	return nil
+}
+
+func confirmAccessMutation(response *http.Response) error {
+	defer response.Body.Close()
+	var result cfApiResponse
+	if json.NewDecoder(response.Body).Decode(&result) != nil || response.StatusCode < 200 || response.StatusCode >= 300 || !result.Success {
+		return fmt.Errorf("Cloudflare rejected Access policy/application change; protection was not confirmed")
+	}
 	return nil
 }

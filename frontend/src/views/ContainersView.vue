@@ -70,6 +70,7 @@ import {
   Key,
   Tv
 } from 'lucide-vue-next'
+import AppReliability from '../components/AppReliability.vue'
 import { useApi } from '../composables/useApi'
 
 const { apiFetch } = useApi()
@@ -166,6 +167,8 @@ const checkingUpdates = ref(false)
 const checkingSingleUpdate = ref<Record<string, boolean>>({})
 const updatingContainer = ref<Record<string, boolean>>({})
 const showUpdateConfirmModal = ref<{ container: ContainerItem } | null>(null)
+const updatePlan=ref<any>(null),updatePlanLoading=ref(false),updatePlanError=ref('')
+let updatePlanVersion=0
 const updateResultModal = ref<{ name: string; output: string; success: boolean; error?: string } | null>(null)
 
 const availableUpdatesCount = computed(() => {
@@ -1090,17 +1093,23 @@ async function checkSingleUpdate(container: ContainerItem) {
   }
 }
 
-function confirmUpdate(container: ContainerItem) {
-  showUpdateConfirmModal.value = { container }
+async function confirmUpdate(container: ContainerItem) {
+  showUpdateConfirmModal.value = { container };updatePlan.value=null;updatePlanError.value='';updatePlanLoading.value=true
+  const v=++updatePlanVersion
+  try{const result=await apiFetch('/api/docker/containers/'+container.id+'/update-plan',{method:'POST'});if(v===updatePlanVersion && showUpdateConfirmModal.value?.container.id===container.id)updatePlan.value=result}
+  catch(e:any){if(v===updatePlanVersion)updatePlanError.value=e.message}
+  finally{if(v===updatePlanVersion)updatePlanLoading.value=false}
 }
 
 async function performUpdate(container: ContainerItem) {
+  if(!updatePlan.value?.ready || updatePlanLoading.value)return
+  const expected=updatePlan.value.candidate_image
   showUpdateConfirmModal.value = null
   updatingContainer.value[container.id] = true
   try {
     const res = await apiFetch<{ status?: string; output?: string; container_id?: string; container_name?: string }>(
       `/api/docker/containers/${container.id}/update`,
-      { method: 'POST' }
+      { method:'POST',body:JSON.stringify({expected_image_id:expected}) }
     )
     const isDocktunSelf = res.output && res.output.includes('self-update')
     updateResultModal.value = {
@@ -2845,6 +2854,7 @@ onUnmounted(() => {
 
         <!-- Tab Body Container -->
         <div class="flex-1 overflow-y-auto p-5 text-slate-800">
+          <AppReliability v-if="selectedTab==='overview'" class="mb-4" :container-id="selectedContainer.id" :container-name="selectedContainer.name" />
           <div v-if="['compose', 'env', 'files'].includes(selectedTab) && projectFileAccess" class="mb-4 rounded-lg border p-3 text-sm" :class="projectFileAccess.available && projectFileAccess.writable ? 'border-slate-200 bg-slate-50' : 'border-amber-300 bg-amber-50'" role="status">
             <p v-if="!projectFileAccess.available" class="font-semibold">Stack files are unavailable in DockTun</p>
             <p v-else-if="!projectFileAccess.writable" class="font-semibold">Stack files are read-only</p>
@@ -3818,7 +3828,8 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <div class="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-xs font-mono">
+        <div class="space-y-2 text-xs" aria-live="polite"><p v-if="updatePlanLoading">Staging candidate image and checking migration safety. Your running container is unchanged.</p><p v-if="updatePlanError" role="alert" class="text-red-600">{{updatePlanError}}</p><div v-for="check in updatePlan?.checks||[]" :key="check.id" class="border-b border-slate-100 pb-2"><strong>{{check.label}} · {{check.status}}</strong><p class="mt-1">{{check.message}}</p></div><p class="text-amber-800">{{updatePlan?.rollback_scope}}</p></div>
+          <div class="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-xs font-mono">
           <div class="flex justify-between">
             <span class="text-slate-500 font-sans">Target Image:</span>
             <span class="text-cyan-700 font-bold">{{ showUpdateConfirmModal.container.image }}</span>
@@ -3848,10 +3859,11 @@ onUnmounted(() => {
           </button>
           <button
             @click="performUpdate(showUpdateConfirmModal.container)"
+              :disabled="updatePlanLoading || !updatePlan?.ready || !!updatePlanError"
             class="cyber-btn flex items-center gap-2 text-xs text-amber-200 border-amber-500/80 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 font-bold shadow-lg shadow-amber-900/30"
           >
             <ArrowUpCircle class="h-4 w-4" />
-            <span>Pull & Recreate Container</span>
+            <span>Apply verified image update</span>
           </button>
         </div>
       </div>

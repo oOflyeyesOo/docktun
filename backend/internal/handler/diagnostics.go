@@ -36,7 +36,7 @@ func diagnostics(run diagnosticRunner) http.HandlerFunc {
 			{"Docker engine", []string{"version", "--format", "{{.Server.Version}}"}, "Cannot reach Docker. Check that the engine is running and the Docker socket is mounted with access."},
 			{"Docker Compose", []string{"compose", "version", "--short"}, "Compose is unavailable. Project actions require the Docker Compose plugin in the DockTun image."},
 		} {
-			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 			out, err := run(ctx, probe.args...)
 			cancel()
 			check := diagnosticCheck{Name: probe.name, OK: err == nil && strings.TrimSpace(string(out)) != "", Message: probe.failure}

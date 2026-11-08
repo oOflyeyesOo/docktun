@@ -295,7 +295,14 @@ func (h *DockerContainers) Update(w http.ResponseWriter, r *http.Request) {
 		cname = strings.TrimPrefix(detail.Name, "/")
 	}
 
-	out, err := h.svc.UpdateContainer(id, userID, ip)
+	var input struct {
+		ExpectedImage string `json:"expected_image_id"`
+	}
+	if r.ContentLength > 0 && json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&input) != nil {
+		jsonError(w, "invalid update request", 400)
+		return
+	}
+	out, err := h.svc.UpdateContainerPinned(id, userID, ip, input.ExpectedImage)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -344,4 +351,19 @@ func (h *DockerContainers) RelinkDatabase(w http.ResponseWriter, r *http.Request
 		"status":  "ok",
 		"message": "database links and network aliases successfully verified",
 	})
+}
+
+func (h *DockerContainers) ExposurePreflight(w http.ResponseWriter, r *http.Request) {
+	var input service.ExposureSettings
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&input) != nil {
+		jsonError(w, "invalid exposure settings", 400)
+		return
+	}
+	plan, err := h.svc.ExposurePreflight(r.Context(), chi.URLParam(r, "id"), input)
+	if err != nil {
+		jsonError(w, "container could not be inspected", 409)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(plan)
 }
