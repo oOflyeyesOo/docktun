@@ -42,7 +42,9 @@ try:
  docker('build','-t',dbtag,'-',input='FROM postgres:17-alpine\nLABEL fixture.version="old"\n');docker('push',dbtag)
  containers.append(db)
  docker('run','-d','--name',db,'--network',dbnet,'--network-alias','postgres','-e','POSTGRES_PASSWORD=fixture-db-password','-e','POSTGRES_DB=fixture','-v',pgdata+':/var/lib/postgresql/data',dbtag)
- wait(lambda:docker('exec',db,'pg_isready','-U','postgres','-d','fixture'))
+ # The entrypoint's temporary init server accepts socket probes before the
+ # requested database exists. TCP SQL verifies the final server and real DB.
+ wait(lambda:docker('exec',db,'sh','-c','PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U postgres -d fixture -Atqc "SELECT 1"'))
  docker('exec',db,'psql','-U','postgres','-d','fixture','-c',"CREATE TABLE login_marker(value text); INSERT INTO login_marker VALUES ('persistent-login');")
  with tempfile.TemporaryDirectory() as tmp:
   root=pathlib.Path(tmp)
@@ -98,7 +100,7 @@ HTTPServer(('0.0.0.0',8080),Handler).serve_forever()
   assert inspect(app)['Id']==good['Id'];assert wait(login)=='v2:persistent-login'
   print('Failed app update passed: original container and working database login restored',flush=True)
 finally:
- for name in reversed(containers):subprocess.run(['docker','rm','-f',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+ for name in reversed(containers):subprocess.run(['docker','rm','-f','-v',name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
  for net in networks:subprocess.run(['docker','network','rm',net],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
  for volume in volumes:subprocess.run(['docker','volume','rm',volume],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
  for tag in images:subprocess.run(['docker','image','rm',tag],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

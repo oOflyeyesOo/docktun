@@ -95,5 +95,5 @@ try:
  artifact=fresh.request('/api/support-bundles/'+preview['id'],return_bytes=True);assert hashlib.sha256(artifact).hexdigest()==preview['sha256']
  print('Recovery passed: live-writer refusal, stop/resume, authenticated encryption/tampering, native PostgreSQL/MySQL/MariaDB exports and empty-target restores, new-volume data, clean-instance login/review mode, one-use download, support preview checksum')
 finally:
- if containers:subprocess.run(['docker','rm','-f',*containers],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+ if containers:subprocess.run(['docker','rm','-f','-v',*containers],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
  if volumes:subprocess.run(['docker','volume','rm',*volumes],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
