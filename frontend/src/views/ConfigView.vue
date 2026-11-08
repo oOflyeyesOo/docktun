@@ -86,6 +86,7 @@ const message = ref<{ type: 'success' | 'error'; text: string; action?: string }
 const metrics = ref<MetricsData | null>(null)
 const health = ref<HealthItem[]>([])
 const healthLoading = ref(false)
+const healthError = ref('')
 const tunnelStatus = ref<any>(null)
 
 async function fetchStatus() {
@@ -250,9 +251,11 @@ async function fetchMetrics() {
 
 async function fetchHealth() {
   healthLoading.value = true
+  healthError.value = ''
   try {
-    health.value = (await apiFetch<HealthItem[]>('/api/health')) || []
-  } catch {
+    health.value = (await apiFetch<HealthItem[]>('/api/health?force=true')) || []
+  } catch (e: any) {
+    healthError.value = e.message || 'Unable to check active routes'
     health.value = []
   } finally {
     healthLoading.value = false
@@ -953,8 +956,9 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <div v-if="health.length === 0 && !healthLoading" class="text-xs text-slate-500 py-4 text-center font-mono">
-          No active ingress targets responding.
+        <p v-if="healthError" role="alert" class="text-sm text-red-600">{{ healthError }}</p>
+        <div v-if="health.length === 0 && !healthLoading && !healthError" class="text-xs text-slate-500 py-4 text-center font-mono">
+          No probeable ingress targets are configured.
         </div>
 
         <div v-else class="divide-y divide-slate-200/80">

@@ -15,3 +15,7 @@ test('new-stack examples use Compose networking without requiring an exposure pr
   assert.deepEqual(composeTemplates.find(template => template.id === 'redis-cache').ports, ['8081:8081'])
   assert.deepEqual(composeTemplates.find(template => template.id === 'movie-night').ports, ['3000:3000'])
 })
+
+test('unpublished Movie Night companion is not advertised as deployable', () => {
+ assert.match(composeTemplates.find(t => t.id === 'movie-night').unavailable, /not published/)
+})

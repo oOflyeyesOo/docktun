@@ -65,10 +65,13 @@ func main() {
 	}
 	auditSvc := service.NewAuditLogger(database)
 	authHandler := handler.NewAuth(cfg, database, auditSvc)
+ if err:=authHandler.BootstrapError();err!=nil{log.Fatalf("initialize administrator: %v",err)}
 	configSvc := service.NewConfigManager(cfg, database)
 	configSvc.EnsureInitialBackup()
 
-	authMw := middleware.NewAuth(cfg.JWTSecret)
+	authMw := middleware.NewAuth(cfg.JWTSecret).WithValidator(func(raw string)(int,string,error){
+ c,err:=authHandler.Sessions().Verify(raw,"access");if err!=nil{return 0,"",err};return c.UserID,c.Username,nil
+ })
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
@@ -118,15 +121,15 @@ func main() {
 
 	statusHandler := handler.NewStatus(cfdSvc, cfg)
 	controlHandler := handler.NewControl(cfdSvc, auditSvc)
-	logsHandler := handler.NewLogs(hub, cfg.JWTSecret)
+	logsHandler := handler.NewLogs(hub, cfg.JWTSecret).WithSessionValidator(func(raw string)error{_,err:=authHandler.Sessions().Verify(raw,"access");return err})
 	configHandler := handler.NewConfig(configSvc, auditSvc, cfAPISvc)
 	tcpHandler := handler.NewTcpAccess(cfdSvc)
 	auditHandler := handler.NewAudit(auditSvc)
-	healthHandler := handler.NewHealthCheck(cfg.CloudflaredConfig)
+	healthHandler := handler.NewHealthCheck(cfg.CloudflaredConfig).WithActiveConfig(cfAPISvc, configSvc)
 	metricsHandler := handler.NewMetrics(cfg, dockerContainersSvc)
 	settingsHandler := handler.NewSettings(database, auditSvc)
 	notifHandler := handler.NewNotifications(dataDir)
-	projectsHandler := handler.NewProjects(projectsSvc, auditSvc)
+	projectsHandler := handler.NewProjects(projectsSvc, auditSvc).WithNotifications(notifHandler.DeliverEvent)
 	templatesHandler := handler.NewTemplates()
 	dockerRunHandler := handler.NewDockerRun(dockerRunSvc, auditSvc)
 	dockerContainersHandler := handler.NewDockerContainers(dockerContainersSvc)
@@ -166,7 +169,6 @@ func main() {
 		r.Get("/api/setup/details", setupHandler.Details)
 		r.Post("/api/setup/reconfigure", setupHandler.Reconfigure)
 		r.Post("/auth/logout", authHandler.Logout)
-		r.Post("/auth/refresh", authHandler.Refresh)
 
 		r.Get("/api/status", statusHandler.Get)
 		r.Get("/api/local-proxy", localProxyHandler.Get)
@@ -367,6 +369,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+ go notifHandler.RunMonitor(ctx,cfg.CloudflaredContainer,service.SampleNotifications)
 
 	go func() {
 		ticker := time.NewTicker(15 * time.Second)

@@ -26,7 +26,7 @@ async function restoreProject() {
     const form = new FormData(); form.append('name', restore.value.name); form.append('path', restore.value.path); form.append('backup', archive.value)
     await apiFetch('/api/projects/restore', { method: 'POST', body: form })
     message.value = 'Project restored. Review its Compose settings before starting it.'
-    restore.value = { name: '', path: '' }; archive.value = null
+    restore.value = { name: '', path: '' }; archive.value = null; await load()
   } catch (e: any) { error.value = e.message || 'Could not restore project backup' }
   finally { busy.value = false }
 }

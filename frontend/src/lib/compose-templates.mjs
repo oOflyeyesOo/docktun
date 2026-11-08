@@ -287,6 +287,7 @@ volumes:
   },
   {
     id: 'movie-night',
+    unavailable: 'Browser companion image is not published. Requires verified cinema/browser images; cinema currently supports AMD64 only.',
     name: 'Movie Night VR Cinema',
     category: 'media',
     icon: 'Film',

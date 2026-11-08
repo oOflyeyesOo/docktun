@@ -191,6 +191,27 @@ func validateUpdateContainer(c updateContainer) error {
 	}
 	return nil
 }
+
+// Both the database and automatically persisted signing secret must survive a
+// replacement. A mount for update progress alone is insufficient.
+func validateCorePersistence(c updateContainer) error {
+	database := coreEnvironment(c, "DB_PATH", "/app/data/app.db")
+	if !filepath.IsAbs(database) {
+		workdir, _ := c.Config["WorkingDir"].(string)
+		if workdir == "" {
+			workdir = "/"
+		}
+		database = filepath.Join(workdir, database)
+	}
+	directory := filepath.Dir(database)
+	for _, mount := range c.Mounts {
+		if mount.RW && (mount.Type == "bind" || mount.Type == "volume") && pathWithin(filepath.ToSlash(directory), filepath.ToSlash(mount.Destination)) {
+			return nil
+		}
+	}
+	return fmt.Errorf("database directory %s is not on a writable persistent mount; back it up and mount it before updating", directory)
+}
+
 func (s *SelfUpdater) Status() SelfUpdateState {
 	state := SelfUpdateState{Phase: "idle", Image: updateImage(), Message: "Check for a published DockTun update."}
 	if b, err := os.ReadFile(s.statePath); err == nil {
@@ -286,6 +307,9 @@ func (s *SelfUpdater) Start(ctx context.Context) (SelfUpdateState, error) {
 	if !persistent {
 		return state, fmt.Errorf("mount DockTun's data directory read-write before updating; the updater must preserve your settings and progress")
 	}
+	if err = validateCorePersistence(c); err != nil {
+		return state, err
+	}
 	if err = validateUpdateContainer(c); err != nil {
 		return state, err
 	}
@@ -310,21 +334,26 @@ func (s *SelfUpdater) Start(ctx context.Context) (SelfUpdateState, error) {
 // Clone only the configurable network fields. Docker-assigned endpoint IDs and
 // dynamic addresses must not be copied; static IPAM requests and aliases survive.
 func updateCreateBody(c updateContainer, image string) map[string]any {
+	return replacementCreateBody(c, image, true)
+}
+func replacementCreateBody(c updateContainer, image string, core bool) map[string]any {
 	body := map[string]any{}
 	for k, v := range c.Config {
 		body[k] = v
 	}
 	body["Image"] = image
-	env := []any{}
-	if original, ok := c.Config["Env"].([]any); ok {
-		for _, v := range original {
-			if !strings.HasPrefix(fmt.Sprint(v), "DOCKTUN_CONTAINER=") {
-				env = append(env, v)
+	if core {
+		env := []any{}
+		if original, ok := c.Config["Env"].([]any); ok {
+			for _, v := range original {
+				if !strings.HasPrefix(fmt.Sprint(v), "DOCKTUN_CONTAINER=") {
+					env = append(env, v)
+				}
 			}
 		}
+		env = append(env, "DOCKTUN_CONTAINER="+strings.TrimPrefix(c.Name, "/"))
+		body["Env"] = env
 	}
-	env = append(env, "DOCKTUN_CONTAINER="+strings.TrimPrefix(c.Name, "/"))
-	body["Env"] = env
 	host := map[string]any{}
 	for k, v := range c.HostConfig {
 		host[k] = v
@@ -414,6 +443,9 @@ func RunSelfUpdateWorker(target, image, statePath string) error {
 	if err = validateUpdateContainer(old); err != nil {
 		return fail(err)
 	}
+	if err = validateCorePersistence(old); err != nil {
+		return fail(err)
+	}
 	time.Sleep(2 * time.Second)
 	if err = stageUpdateImage(ctx, image); err != nil {
 		return fail(err)
@@ -471,6 +503,13 @@ func RunSelfUpdateWorker(target, image, statePath string) error {
 		return rollback(err)
 	}
 	newID = created.ID
+	replacement, inspectErr := inspectUpdateContainer(ctx, newID)
+	if inspectErr != nil {
+		return rollback(inspectErr)
+	}
+	if err = verifyReplacementStorageNetworks(old, replacement); err != nil {
+		return rollback(err)
+	}
 	if _, err = updateDocker(ctx, "start", newID); err != nil {
 		return rollback(err)
 	}

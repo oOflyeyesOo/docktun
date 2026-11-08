@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -14,12 +16,28 @@ import (
 )
 
 type Projects struct {
-	svc   *service.Projects
-	audit *service.AuditLogger
+	svc    *service.Projects
+	audit  *service.AuditLogger
+	notify func(string, string)
 }
 
 func NewProjects(svc *service.Projects, audit *service.AuditLogger) *Projects {
 	return &Projects{svc: svc, audit: audit}
+}
+
+func (h *Projects) WithNotifications(notify func(string, string)) *Projects {
+	h.notify = notify
+	return h
+}
+func (h *Projects) deployed(name, output string) {
+	if h.notify == nil {
+		return
+	}
+	status := "finished"
+	if strings.Contains(output, "[ERROR]") {
+		status = "failed"
+	}
+	h.notify("deploy_finish", "Stack "+name+" deployment "+status+". Check its action history for details.")
 }
 
 func (h *Projects) List(w http.ResponseWriter, r *http.Request) {
@@ -41,20 +59,35 @@ func (h *Projects) Backup(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid project id", http.StatusBadRequest)
 		return
 	}
-	w.Header().Set("Content-Type", "application/gzip")
-	w.Header().Set("Content-Disposition", `attachment; filename="docktun-project-backup.tar.gz"`)
-	_, err = h.svc.Backup(id, w)
+	archive, err := os.CreateTemp("", "docktun-backup-*.tar.gz")
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusNotFound)
+		jsonError(w, "could not prepare backup", 500)
 		return
 	}
+	defer os.Remove(archive.Name())
+	defer archive.Close()
+	if _, err = h.svc.Backup(id, archive); err != nil {
+		jsonError(w, err.Error(), 400)
+		return
+	}
+	if _, err = archive.Seek(0, io.SeekStart); err != nil {
+		jsonError(w, "could not read backup", 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", `attachment; filename="docktun-project-backup.tar.gz"`)
+	w.Header().Set("Cache-Control", "no-store")
+	io.Copy(w, archive)
+
 }
 
 func (h *Projects) Restore(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(512 << 20); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, 520<<20)
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
 		jsonError(w, "invalid project backup upload", http.StatusBadRequest)
 		return
 	}
+	defer r.MultipartForm.RemoveAll()
 	name := r.FormValue("name")
 	path := r.FormValue("path")
 	file, _, err := r.FormFile("backup")
@@ -67,6 +100,10 @@ func (h *Projects) Restore(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if h.audit != nil {
+		userID, _ := r.Context().Value("user_id").(int)
+		h.audit.Log(userID, "project_restore", project.Name, r.RemoteAddr)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -178,6 +215,7 @@ func (h *Projects) Create(w http.ResponseWriter, r *http.Request) {
 	if body.AutoStart && strings.TrimSpace(body.ComposeContent) != "" {
 		onDone := func(output string) {
 			h.audit.Log(userID, "project_up", p.Name+"\n"+output, r.RemoteAddr)
+			h.deployed(p.Name, output)
 		}
 		h.svc.ComposeAction(p.ID, p.Path, onDone, "up", "-d")
 	}
@@ -334,6 +372,9 @@ func (h *Projects) Action(w http.ResponseWriter, r *http.Request) {
 			detail = p.Name + "\n" + output
 		}
 		h.audit.Log(userID, "project_"+action, detail, ip)
+		if action == "deploy" || action == "up" {
+			h.deployed(p.Name, output)
+		}
 	}
 
 	switch action {

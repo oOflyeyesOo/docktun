@@ -5,9 +5,12 @@ import ManagedServices from '../components/ManagedServices.vue'
 import SystemDiagnostics from '../components/SystemDiagnostics.vue'
 import LocalProxy from '../components/LocalProxy.vue'
 import ProjectBackups from '../components/ProjectBackups.vue'
+import { useRouter } from 'vue-router'
+import { useAuthStore } from '../stores/auth'
 import { useApi } from '../composables/useApi'
 
 const { apiFetch } = useApi()
+const router = useRouter(), auth = useAuthStore()
 
 // Password State
 const form = reactive({ current_password: '', new_password: '', confirm: '' })
@@ -23,7 +26,7 @@ async function changePassword() {
   message.value = null
   try {
     await apiFetch('/api/settings/password', { method: 'POST', body: JSON.stringify(form) })
-    message.value = { type: 'success', text: 'PASSWORD UPDATED SUCCESSFULLY' }
+    auth.logout(); await router.push('/login')
     form.current_password = ''
     form.new_password = ''
     form.confirm = ''

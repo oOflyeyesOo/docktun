@@ -14,13 +14,16 @@ import (
 var upgrader = websocket.Upgrader{}
 
 type Logs struct {
-	hub    *ws.Hub
-	secret string
+	hub      *ws.Hub
+	secret   string
+	validate func(string) error
 }
 
 func NewLogs(hub *ws.Hub, secret string) *Logs {
 	return &Logs{hub: hub, secret: secret}
 }
+
+func (h *Logs) WithSessionValidator(v func(string) error) *Logs { h.validate = v; return h }
 
 func (h *Logs) Stream(w http.ResponseWriter, r *http.Request) {
 	tokenStr := r.URL.Query().Get("token")
@@ -36,6 +39,10 @@ func (h *Logs) Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.validate != nil && h.validate(tokenStr) != nil {
+		http.Error(w, `{"error":"invalid session"}`, 401)
+		return
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -49,15 +56,27 @@ func (h *Logs) Stream(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
+		done := r.Context().Done()
 		for {
 			select {
+			case <-done:
+				return
 			case msg, ok := <-client.Send:
+				if h.validate != nil && h.validate(tokenStr) != nil {
+					conn.Close()
+					return
+				}
+				conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 				if !ok {
 					conn.WriteMessage(websocket.CloseMessage, []byte{})
 					return
 				}
 				conn.WriteMessage(websocket.TextMessage, msg)
 			case <-ticker.C:
+				if h.validate != nil && h.validate(tokenStr) != nil {
+					conn.Close()
+					return
+				}
 				conn.WriteMessage(websocket.PingMessage, nil)
 			}
 		}
