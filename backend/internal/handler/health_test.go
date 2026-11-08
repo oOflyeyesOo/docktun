@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http/httptest"
 	"os"
@@ -65,5 +66,33 @@ func TestHealthCheck(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHealthUsesEffectiveRoutesAndReportsSourceFailure(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	h := NewHealthCheck(filepath.Join(t.TempDir(), "missing-local.yml"))
+	h.activeConfig = func() (string, error) {
+		return "ingress:\n - hostname: remote.test\n   service: http://" + listener.Addr().String() + "\n", nil
+	}
+	w := httptest.NewRecorder()
+	h.Check(w, httptest.NewRequest("GET", "/api/health?force=true", nil))
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	var results []serviceHealth
+	json.Unmarshal(w.Body.Bytes(), &results)
+	if len(results) != 1 || results[0].Hostname != "remote.test" || results[0].Status != "up" {
+		t.Fatal(results)
+	}
+	h.activeConfig = func() (string, error) { return "", fmt.Errorf("API denied") }
+	w = httptest.NewRecorder()
+	h.Check(w, httptest.NewRequest("GET", "/api/health?force=true", nil))
+	if w.Code != 500 {
+		t.Fatal("source failure hidden")
 	}
 }

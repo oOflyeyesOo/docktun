@@ -7,7 +7,7 @@ import { libraryCategories, libraryCategory, librarySource, loadLibraryCatalog, 
 const icons: Record<string, any> = { Box, Globe, Database, Cpu, Activity, Film, HardDrive, Key, Tv, LayoutGrid, Notebook, Code2, Wrench, Home }
 const emit = defineEmits<{ select: [any] }>()
 const { apiFetch } = useApi()
-const bundled = composeTemplates.map(t => ({ ...t, source: 'DockTun', categories: [t.category], bundled: true, documentation: '', unavailable: '', collection: '' }))
+const bundled = composeTemplates.map(t => ({ ...t, source: 'DockTun', categories: [t.category], bundled: true, documentation: '', unavailable: t.unavailable || '', collection: '' }))
 const remote = ref<any[]>([])
 const search = ref(''), source = ref('all'), category = ref('all'), sort = ref('recommended'), url = ref('')
 const includeAdvanced = ref(false), catalogLoading = ref(false), importing = ref('')
@@ -51,6 +51,7 @@ async function catalog(refresh = false) {
   if (active) catalogLoading.value = false
 }
 async function importTemplate(item: any) {
+  if (item.unavailable) { error.value = item.unavailable; return }
   if (item.bundled) {
     emit('select', { name: item.id, compose_content: item.compose, env_content: item.env || '', source_url: 'bundled:' + item.id }); return
   }

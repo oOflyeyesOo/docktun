@@ -1,7 +1,8 @@
-﻿package handler
+package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"docktun/internal/db"
@@ -23,7 +24,7 @@ func (h *Settings) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		CurrentPassword string `json:"current_password"`
 		NewPassword     string `json:"new_password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
 		return
 	}
@@ -38,8 +39,39 @@ func (h *Settings) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newHash, _ := bcrypt.GenerateFromPassword([]byte(req.NewPassword), 12)
-	h.db.Exec(`UPDATE users SET password_hash = ? WHERE id = ?`, string(newHash), userID)
+	if len(req.NewPassword) < 12 || len(req.NewPassword) > 72 {
+		jsonError(w, "password must contain 12–72 bytes", 400)
+		return
+	}
+	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), 12)
+	if err != nil {
+		jsonError(w, "could not hash password", 500)
+		return
+	}
+	tx, err := h.db.Begin()
+	if err != nil {
+		jsonError(w, "could not save password", 500)
+		return
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`UPDATE users SET password_hash=? WHERE id=? AND password_hash=?`, string(newHash), userID, hash)
+	if err == nil {
+		var n int64
+		n, err = result.RowsAffected()
+		if n != 1 {
+			err = fmt.Errorf("password changed; reload and retry")
+		}
+	}
+	if err == nil {
+		_, err = tx.Exec(`UPDATE auth_sessions SET revoked=1 WHERE user_id=?`, userID)
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
+	if err != nil {
+		jsonError(w, "could not save password; reload and retry", 500)
+		return
+	}
 
 	h.audit.Log(userID, "password_change", "", r.RemoteAddr)
 

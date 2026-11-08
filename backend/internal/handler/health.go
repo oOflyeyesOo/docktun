@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"docktun/internal/service"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -17,14 +18,20 @@ import (
 )
 
 type HealthCheck struct {
-	configPath string
-	mu         sync.RWMutex
-	cacheTime  time.Time
-	cacheData  []serviceHealth
+	configPath   string
+	activeConfig func() (string, error)
+	mu           sync.RWMutex
+	cacheTime    time.Time
+	cacheData    []serviceHealth
 }
 
 func NewHealthCheck(configPath string) *HealthCheck {
 	return &HealthCheck{configPath: configPath}
+}
+
+func (h *HealthCheck) WithActiveConfig(api *service.CloudflareAPI, mgr *service.ConfigManager) *HealthCheck {
+	h.activeConfig = func() (string, error) { return api.ActiveConfig(mgr) }
+	return h
 }
 
 type serviceHealth struct {
@@ -54,8 +61,13 @@ func (h *HealthCheck) Check(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data, err := os.ReadFile(h.configPath)
+	if h.activeConfig != nil {
+		var content string
+		content, err = h.activeConfig()
+		data = []byte(content)
+	}
 	if err != nil {
-		jsonError(w, "cannot read config", http.StatusInternalServerError)
+		jsonError(w, "cannot read active tunnel configuration; check Cloudflare API credentials and connectivity", http.StatusInternalServerError)
 		return
 	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {

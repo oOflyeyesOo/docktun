@@ -41,7 +41,7 @@ func TestLogoutRevokesRefreshToken(t *testing.T) {
 	}
 
 	logoutRequest := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
-	logoutRequest.Header.Set("Authorization", "Bearer "+tokens.RefreshToken)
+	logoutRequest.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
 	logout := httptest.NewRecorder()
 	auth.Logout(logout, logoutRequest)
 	if logout.Code != http.StatusOK {

@@ -527,7 +527,7 @@ func replaceManagedService(ctx context.Context, row ManagedService, core updateC
 	if old.State.Paused {
 		return fmt.Errorf("resume the paused service before updating it")
 	}
-	body := updateCreateBody(old, row.Candidate)
+	body := replacementCreateBody(old, row.Candidate, false)
 	body["Env"] = old.Config["Env"]
 	labels := containerLabels(old)
 	labels[serviceImageLabel] = row.Image
@@ -578,6 +578,13 @@ func replaceManagedService(ctx context.Context, row ManagedService, core updateC
 		return rollback(err)
 	}
 	newID = created.ID
+	replacement, inspectErr := inspectUpdateContainer(ctx, newID)
+	if inspectErr != nil {
+		return rollback(inspectErr)
+	}
+	if err = verifyReplacementStorageNetworks(old, replacement); err != nil {
+		return rollback(err)
+	}
 	if old.State.Running {
 		if _, err = updateDocker(ctx, "start", newID); err != nil {
 			return rollback(err)

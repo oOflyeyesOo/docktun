@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"time"
 )
 
 type Setup struct {
@@ -72,12 +71,7 @@ func (h *Setup) save(w http.ResponseWriter, r *http.Request, reconfigure bool) {
 		result, err = h.svc.Reconfigure(req, id, r.RemoteAddr)
 	} else {
 		result, err = h.svc.Complete(req, r.RemoteAddr, func(id int, username string) (string, string, error) {
-			access, err := h.auth.GenerateToken(id, username, 15*time.Minute)
-			if err != nil {
-				return "", "", err
-			}
-			refresh, err := h.auth.GenerateToken(id, username, 7*24*time.Hour)
-			return access, refresh, err
+			return h.auth.Sessions().Issue(id, username)
 		})
 	}
 	if err != nil {

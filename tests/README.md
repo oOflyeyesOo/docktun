@@ -50,3 +50,22 @@ and smoke test is not a physical ARM64 or Synology kernel test.
   migration from an absent legacy TCP rule, permission failures, and local-YAML
   compatibility. It does not use a real Cloudflare account or claim live edge
   reachability. `DOCKTUN_KEEP_TEST_ENGINE=1` retains a successful fixture for UI QA.
+
+## Audit integrity acceptance
+
+With `DOCKTUN_TEST_IMAGE` set to the built image:
+
+```sh
+python3 tests/auth_restore_integration.py
+python3 tests/compose_integration.py
+python3 tests/application_update_integration.py
+python3 tests/transfers_update_integration.py
+```
+
+The application-update scenario uses a disposable PostgreSQL 17 database and
+HTTP app, a loopback-only registry on the Docker engine, two networks and named
+volumes. It verifies application login/database rows after both updates and
+failed-image rollback. It does not migrate database major versions. It only
+controls its uniquely named fixtures and cleans them up afterward. The core
+update scenario independently verifies login, data, aliases, anonymous volumes,
+non-default ports and rollback. Run the listed scripts serially per job.

@@ -178,7 +178,7 @@ load()
           <span>Alerts & Notifications</span>
         </h1>
         <p class="text-xs text-slate-600">
-          Receive realtime alerts for tunnel outages, container crashes, deploy events, and host resource spikes.
+          Receive realtime alerts for tunnel outages, container crashes, deploy events, and Docker workload resource spikes. Checks run every 30 seconds while DockTun is running.
         </p>
       </div>
 
@@ -188,7 +188,7 @@ load()
           class="rounded-full px-2.5 py-1 text-[10px] font-mono font-bold uppercase tracking-wider"
           :class="form.enabled ? 'bg-emerald-50/80 text-emerald-600 border border-emerald-800/60' : 'bg-slate-100 text-slate-600 border border-slate-300'"
         >
-          {{ form.enabled ? 'ALERTS ACTIVE' : 'ALERTS DISABLED' }}
+          {{ form.enabled ? 'MONITORING ENABLED' : 'ALERTS DISABLED' }}
         </span>
 
         <label class="relative inline-flex items-center cursor-pointer">

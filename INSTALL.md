@@ -221,3 +221,43 @@ Navigate to **Settings → Update DockTun → Check for updates → Install upda
 docker compose pull
 docker compose up -d
 ```
+
+
+## Update, session and restore integrity
+
+Container image updates now preserve the actual running Docker definition:
+mounts (including anonymous volumes), environment, entrypoint, restart policy,
+ports and every network/alias. They do not synthesize a one-service Compose
+stack or guess a database host. Mount/network mismatches and failed startup
+checks restore the old container. Stopped containers stay stopped. Source builds
+continue through stack build/deploy. A running container without a Docker
+healthcheck is checked only for stable running state; configure an application
+readiness healthcheck to verify database access. Pin database major versions;
+image replacement is not a database schema migration or database backup.
+
+Core updates refuse an unmounted database directory even when update progress
+has a persistent mount. Keep `DB_PATH` and its sibling signing secret on the
+same persistent writable data directory. The bootstrap environment password is
+used only when no administrator exists: Settings password changes survive
+restarts and updates. No database credentials are guessed or overwritten.
+
+The session-integrity upgrade requires one fresh sign-in for previously issued
+sessions. It preserves accounts, passwords and stored data. New sessions survive
+restarts and core updates; logout revokes the complete session, refresh tokens
+cannot call ordinary APIs, and password changes end all previous sessions.
+
+Project restore requires a new, unused absolute destination. It stages and
+validates the archive before registering the project; it never overwrites an
+existing project folder. Exports preserve executable files and saved Compose
+source lists but omit Git credentials and `.git` history. Re-enter a private
+repository token before Git deployment. Named-volume/database contents remain a
+separate backup responsibility. Existing file-only archives remain importable.
+
+Automatic alerts check Docker state every 30 seconds while DockTun runs. They
+report observed running-to-stopped transitions, recovery, Docker workload CPU
+and memory thresholds, and explicit stack deployment completion. Outages
+shorter than the sampling interval can be missed. Queued outage notifications
+retry while DockTun runs; delivery is not durable across core restarts. The
+manual test remains available. Movie Night is temporarily unavailable in the
+library until its browser image is published and its architecture requirements
+are satisfied; existing deployments are unaffected.

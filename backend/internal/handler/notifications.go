@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Notifications struct {
 	dataPath string
+	mu       sync.Mutex
 }
 
 func NewNotifications(dataPath string) *Notifications {
@@ -75,6 +77,8 @@ func (h *Notifications) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Notifications) Update(w http.ResponseWriter, r *http.Request) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	var cfg notifConfig
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
 		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
@@ -91,9 +95,10 @@ func (h *Notifications) Update(w http.ResponseWriter, r *http.Request) {
 		cfg.Type = "discord"
 	}
 
-	data, _ := json.MarshalIndent(cfg, "", "  ")
-	_ = os.MkdirAll(h.dataPath, 0755)
-	_ = os.WriteFile(h.configFile(), data, 0644)
+	if err := h.saveConfig(cfg); err != nil {
+		jsonError(w, "could not save notification settings", 500)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -209,6 +214,9 @@ func (h *Notifications) Test(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := client.Do(req)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	if err != nil || resp.StatusCode >= 400 {
 		errMsg := "Webhook request failed"
 		if err != nil {
@@ -219,18 +227,14 @@ func (h *Notifications) Test(w http.ResponseWriter, r *http.Request) {
 
 		cfg.LastTestedAt = time.Now().Format(time.RFC3339)
 		cfg.LastStatus = fmt.Sprintf("Error: %s", errMsg)
-		savedData, _ := json.MarshalIndent(cfg, "", "  ")
-		_ = os.WriteFile(h.configFile(), savedData, 0644)
+		h.recordDeliveryStatus(cfg.LastTestedAt, cfg.LastStatus)
 
 		http.Error(w, fmt.Sprintf(`{"error":"Webhook delivery failed: %s"}`, errMsg), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
-
 	cfg.LastTestedAt = time.Now().Format(time.RFC3339)
 	cfg.LastStatus = "Sent successfully (HTTP 200)"
-	savedData, _ := json.MarshalIndent(cfg, "", "  ")
-	_ = os.WriteFile(h.configFile(), savedData, 0644)
+	h.recordDeliveryStatus(cfg.LastTestedAt, cfg.LastStatus)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -239,4 +243,40 @@ func (h *Notifications) Test(w http.ResponseWriter, r *http.Request) {
 		"timestamp":  cfg.LastTestedAt,
 		"status_msg": cfg.LastStatus,
 	})
+}
+
+// Caller holds the settings lock. Replace atomically so monitors never read a
+// truncated JSON file; retain newer settings while updating delivery status.
+func (h *Notifications) saveConfig(cfg notifConfig) error {
+	raw, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err = os.MkdirAll(h.dataPath, 0700); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(h.dataPath, ".notifications-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	if _, err = file.Write(raw); err != nil {
+		file.Close()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), h.configFile())
+}
+func (h *Notifications) recordDeliveryStatus(at, status string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	cfg, err := h.readConfig()
+	if err != nil {
+		return
+	}
+	cfg.LastTestedAt = at
+	cfg.LastStatus = status
+	_ = h.saveConfig(cfg)
 }

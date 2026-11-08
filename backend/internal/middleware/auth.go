@@ -10,12 +10,12 @@ import (
 )
 
 type Auth struct {
-	secret string
+	secret   string
+	validate func(string) (int, string, error)
 }
 
-func NewAuth(secret string) *Auth {
-	return &Auth{secret: secret}
-}
+func NewAuth(secret string) *Auth                                       { return &Auth{secret: secret} }
+func (a *Auth) WithValidator(v func(string) (int, string, error)) *Auth { a.validate = v; return a }
 
 func (a *Auth) Verify(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -29,6 +29,17 @@ func (a *Auth) Verify(next http.Handler) http.Handler {
 			return
 		}
 
+		if a.validate != nil {
+			id, name, err := a.validate(tokenStr)
+			if err != nil {
+				http.Error(w, `{"error":"invalid session"}`, 401)
+				return
+			}
+			ctx := context.WithValue(r.Context(), "user_id", id)
+			ctx = context.WithValue(ctx, "username", name)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
 			return []byte(a.secret), nil
 		}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired())
