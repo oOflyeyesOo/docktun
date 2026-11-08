@@ -19,6 +19,7 @@ import (
 )
 
 type RecoverySettings struct {
+	ActorID       int             `json:"actor_id,omitempty"`
 	RemoteURL     string          `json:"remote_url"`
 	RetainCount   int             `json:"retain_count"`
 	RetainDays    int             `json:"retain_days"`
@@ -45,6 +46,9 @@ func (s *RecoveryService) Settings() (RecoverySettings, error) {
 func (s *RecoveryService) SaveSettings(settings RecoverySettings) error {
 	settings.Selection.Passphrase = ""
 	if settings.ScheduleHours > 0 {
+		if settings.ActorID < 1 {
+			return fmt.Errorf("save the schedule from an authenticated administrator account")
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		for i, selection := range settings.Selection.Databases {
@@ -222,7 +226,7 @@ func (s *RecoveryService) FetchRemote(ctx context.Context, id string) (RecoveryB
 	}
 	return s.Import(response.Body)
 }
-func (s *RecoveryService) ApplyRetention(now time.Time) error {
+func (s *RecoveryService) ApplyRetention(now time.Time, actor ...int) error {
 	settings, err := s.Settings()
 	if err != nil {
 		return err
@@ -277,6 +281,9 @@ func (s *RecoveryService) ApplyRetention(now time.Time) error {
 		if _, e = s.DB.Exec(`UPDATE recovery_backups SET phase='not_local',last_error='Local copy retired by retention; recover from verified external storage' WHERE id=?`, item.id); e != nil {
 			return e
 		}
+		if len(actor) > 0 && actor[0] > 0 {
+			NewAuditLogger(s.DB).Log(actor[0], "recovery_retention", item.id, "system")
+		}
 	}
 	return nil
 }
@@ -289,7 +296,7 @@ func (s *RecoveryService) RunSchedules(ctx context.Context) {
 			return
 		case now := <-ticker.C:
 			settings, err := s.Settings()
-			if err != nil || settings.ScheduleHours == 0 || s.Config.RecoveryMode {
+			if err != nil || settings.ScheduleHours == 0 || settings.ActorID < 1 || s.Config.RecoveryMode {
 				continue
 			}
 			var latest int64
@@ -303,12 +310,15 @@ func (s *RecoveryService) RunSchedules(ctx context.Context) {
 			}
 			request := settings.Selection
 			request.Passphrase = key
-			_, _ = s.StartBackup(request)
+			request.ActorID = settings.ActorID
+			if item, e := s.StartBackup(request); e == nil {
+				NewAuditLogger(s.DB).Log(settings.ActorID, "recovery_scheduled", item.ID, "scheduler")
+			}
 			request.Passphrase = ""
 		}
 	}
 }
-func (s *RecoveryService) afterBackup(id string) {
+func (s *RecoveryService) afterBackup(id string, actor int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	settings, err := s.Settings()
@@ -316,8 +326,15 @@ func (s *RecoveryService) afterBackup(id string) {
 		if err = s.UploadRemote(ctx, id); err != nil {
 			_, _ = s.DB.Exec(`UPDATE recovery_backups SET last_error='Encrypted local backup completed, but remote upload/read-back verification failed' WHERE id=?`, id)
 		}
+		if actor > 0 {
+			action := "recovery_auto_remote_verified"
+			if err != nil {
+				action = "recovery_auto_remote_failed"
+			}
+			NewAuditLogger(s.DB).Log(actor, action, id, "system")
+		}
 	}
-	_ = s.ApplyRetention(time.Now())
+	_ = s.ApplyRetention(time.Now(), actor)
 }
 func (s *RecoveryService) DeleteLocal(id string) error {
 	file, err := s.backupPath(id)

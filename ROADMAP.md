@@ -12,7 +12,7 @@ separate gates. No main-branch merge or public deployment was performed.
 | R1.1 | Update preflight | Staged candidate ID, dependencies/storage and state checks | App/PostgreSQL update and login fixture passed; changed candidates require renewed review |
 | R1.2 | Explicit readiness | Saved per-app HTTP readiness with replacement gate | HTTP failure/redirect/credential tests and existing Docker-health rollback fixtures passed |
 | R1.3 | Database boundaries | Engine/major/series guard; binary version confirmation; containerd metadata fallback | Same-major database update passed; changed-major candidate refused before touching the working database |
-| R1.4 | Durable operations | Transactional leases, worker ownership, interruptions and explicit acknowledgement | Restart and partial-recovery lease regressions; independent core/companion update fixtures passed |
+| R1.4 | Durable operations | Transactional leases, worker ownership, interruptions, acknowledgement and secret-free mutation auditing | Restart and partial-recovery lease regressions; independent core/companion update fixtures passed |
 | R2.1 | Backup levels | Project, database, quiesced named volume and selected instance state | Levels/limits documented; real archive/restore fixture passed |
 | R2.2 | Database exports | PostgreSQL custom dumps and locking MySQL/MariaDB dumps; account/_FILE handling | Native PostgreSQL 17, MySQL 8.4 and MariaDB 11.4 rows restored to explicit empty targets |
 | R2.3 | Encrypted recovery | Authenticated framed encryption, manifest checksums, new-volume extraction, remote read-back, schedules and conservative local retention | Wrong-key/tamper/truncation, paths, remote checksum, retention and one-use download tests passed |

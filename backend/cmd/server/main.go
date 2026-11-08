@@ -222,6 +222,7 @@ func main() {
 
 	r.Group(func(r chi.Router) {
 		r.Use(authMw.Verify)
+		r.Use(handler.AuditMaintenanceMutations(auditSvc))
 		r.Get("/api/recovery/settings", recovery.Settings)
 		r.Put("/api/recovery/settings", recovery.Settings)
 		r.Post("/api/recovery/{id}/remote-upload", recovery.UploadRemote)

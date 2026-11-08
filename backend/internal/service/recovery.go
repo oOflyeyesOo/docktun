@@ -35,6 +35,7 @@ type DatabaseBackupSelection struct {
 	User      string `json:"user"`
 }
 type RecoveryRequest struct {
+	ActorID        int                       `json:"-"`
 	Passphrase     string                    `json:"passphrase"`
 	Instance       bool                      `json:"instance"`
 	Projects       []int                     `json:"projects"`
@@ -150,7 +151,7 @@ func (s *RecoveryService) StartBackup(request RecoveryRequest) (RecoveryBackup, 
 		}
 		_ = s.Operations.Finish(job.ID, err)
 		if err == nil {
-			s.afterBackup(item.ID)
+			s.afterBackup(item.ID, request.ActorID)
 		}
 	}()
 	return item, nil

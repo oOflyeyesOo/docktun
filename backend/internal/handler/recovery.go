@@ -27,6 +27,7 @@ func (h *Recovery) Backup(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid backup selection", 400)
 		return
 	}
+	input.ActorID, _ = r.Context().Value("user_id").(int)
 	item, err := h.Service.StartBackup(input)
 	input.Passphrase = ""
 	if err != nil {
@@ -125,6 +126,7 @@ func (h *Recovery) Settings(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "invalid recovery settings", 400)
 			return
 		}
+		input.ActorID, _ = r.Context().Value("user_id").(int)
 		if err := h.Service.SaveSettings(input); err != nil {
 			jsonError(w, err.Error(), 400)
 			return

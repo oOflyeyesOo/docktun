@@ -95,6 +95,9 @@ For authorization, mount a file containing the Authorization header value and se
 managed recovery-key file and set `DOCKTUN_BACKUP_KEY_FILE`. The key is not saved
 in the database/settings. Scheduled container selections use stable names.
 Keep these files and their Compose mounts separate from exported instance data.
+Schedules retain the administrator who configured them; automatic upload/retention
+actions use that audit identity. Recovery and maintenance requests record actor,
+path and outcome without copying request bodies, query strings or secret values.
 
 Retention respects both minimum age and minimum count. It preserves the newest
 successfully restored archive and never retires a local-only/unuploaded archive
