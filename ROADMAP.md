@@ -1,12 +1,11 @@
 # Roadmap implementation and acceptance ledger
 
-Implementation is complete on the roadmap feature branch, stacked on draft PR #52.
-Review, merging, release publication and external-environment acceptance remain
-separate gates. No main-branch merge or public deployment was performed.
+The roadmap and its audit baseline are merged into main. The first signed stable
+release and physical-device acceptance are separate milestones.
 
 | ID | Deliverable | Implementation | Verified acceptance / remaining gate |
 |---|---|---|---|
-| R0.1 | Audit baseline | #52 is the dependency | Exact-head CI previously passed; human review/merge pending |
+| R0.1 | Audit baseline | #52 merged into main | Backend, frontend and container checks passed before merge |
 | R0.2 | Accurate product documentation | Guides linked from README | Claims distinguish process readiness, data rollback and physical/live-account coverage |
 | R0.3 | Historical published-version upgrade | Reproducible fixture | Genuine published 43a92aa image upgraded; changed password, data, mount and session continuity passed |
 | R1.1 | Update preflight | Staged candidate ID, dependencies/storage and state checks | App/PostgreSQL update and login fixture passed; changed candidates require renewed review |
@@ -40,7 +39,7 @@ these regressions.
 
 ## Review and release gates
 
-1. Review the audit baseline and this stacked roadmap PR; merge only through review.
+1. The audit baseline and roadmap are merged into main through PRs #52 and #53.
 2. Publish the first reviewed release to transition legacy `latest` to signed stable.
    The release job must pass scans, signatures and the actual downloadable installer
    fixture before promoting a channel. No signed-release success is claimed locally.

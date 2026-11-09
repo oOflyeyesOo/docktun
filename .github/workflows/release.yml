@@ -66,8 +66,19 @@ jobs:
             org.opencontainers.image.version=${{ github.event.release.tag_name }}
           provenance: mode=max
           sbom: true
-      - name: Scan exact release digest
+      - name: Scan linux/amd64 image before signing
         uses: aquasecurity/trivy-action@0.35.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          image-ref: ghcr.io/ooflyeyesoo/docktun@${{ steps.build.outputs.digest }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Scan linux/arm64 image before signing
+        uses: aquasecurity/trivy-action@0.35.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
         with:
           image-ref: ghcr.io/ooflyeyesoo/docktun@${{ steps.build.outputs.digest }}
           severity: CRITICAL,HIGH

@@ -11,7 +11,7 @@ RUN pnpm run build
 # ==============================================================================
 # Stage 2: Compile Pure Go Backend Server
 # ==============================================================================
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS backend-builder
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS backend-builder
 WORKDIR /app
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
@@ -26,12 +26,21 @@ RUN cd /zeroconf-src && go test ./... && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TA
 # ==============================================================================
 # Stage 3: Unified DockTun Minimal Runtime (No Nginx, Pure Go + Alpine)
 # ==============================================================================
-FROM ghcr.io/sigstore/cosign/cosign@sha256:0f06154836d2de34f887a5c273506d52ca43edaa1d9e53e6510fa78a48f69c2d AS signature-verifier
+# Rebuild the pinned Cosign source with the patched compiler and HTML parser.
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS signature-verifier
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /cosign
+RUN go mod download github.com/sigstore/cosign/v3@v3.1.4 && \
+    cp -R /go/pkg/mod/github.com/sigstore/cosign/v3@v3.1.4/. . && \
+    chmod -R u+w . && \
+    go get golang.org/x/net@v0.62.0 && \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /cosign-bin ./cmd/cosign
 FROM alpine:3.23
 RUN apk --no-cache add ca-certificates docker-cli docker-cli-compose docker-cli-buildx git tzdata curl && \
     git config --global --add safe.directory '*'
 
-COPY --from=signature-verifier /ko-app/cosign /usr/local/bin/cosign
+COPY --from=signature-verifier /cosign-bin /usr/local/bin/cosign
 WORKDIR /app
 
 # Copy compiled backend binary and built frontend SPA assets
