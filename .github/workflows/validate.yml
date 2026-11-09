@@ -48,6 +48,13 @@ jobs:
       - run: python3 tests/verify_prebuilt_install.py
       - run: python3 tests/release_installer_test.py
       - run: docker build -t docktun:test .
+      - name: Scan the local candidate before merge
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: docktun:test
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
       - run: python3 tests/container_smoke.py
       - run: python3 tests/prebuilt_install_integration.py
       - run: python3 tests/auth_restore_integration.py

@@ -6,9 +6,9 @@
   non-prerelease after exact-source validation, upgrade/recovery fixtures, scan,
   signature verification and installer attachment.
 - Beta (`beta`): the same gates for a published prerelease.
-- Edge (`edge`): validated main builds; scans must pass before signing. These do
-  not move `latest`. Failed scans may leave a version/edge tag present but unsigned;
-  the official updater refuses unverifiable artifacts.
+- Edge (`edge`): validated main builds. Both architecture scans and signature
+  verification must pass before the workflow moves the channel tag. The build
+  first pushes a commit-specific tag for scanning.
 - `sha-<commit>` and release version tags identify source builds. The release job
   refuses to overwrite a release version. No automatic public release is requested
   or performed by this roadmap branch.
@@ -23,7 +23,7 @@ override takes precedence, including for offline/local development. Custom/local
 image overrides use operator-managed trust. Official repository references must
 resolve to an immutable registry digest and pass Cosign verification restricted
 to this repository's release/publish workflow identity and GitHub's OIDC issuer.
-The verifier is included from a pinned multi-platform Cosign image. Docker socket
+The build compiles pinned Cosign source with a patched Go toolchain and HTML parser. Docker socket
 access remains equivalent to broad Docker-host administration.
 
 The release workflow emits a single `compose.yml` using prebuilt immutable image

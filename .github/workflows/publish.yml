@@ -33,6 +33,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          test "$GITHUB_REF" = refs/heads/main
           revision=$(git rev-parse HEAD)
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/validate.yml/runs?head_sha=$revision&status=success" --jq '.workflow_runs | any(.head_sha == "'"$revision"'" and .event == "push")' | grep -qx true
 
@@ -58,7 +59,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/ooflyeyesoo/docktun:edge
             ghcr.io/ooflyeyesoo/docktun:sha-${{ github.event.workflow_run.head_sha || github.sha }}
           labels: |
             org.opencontainers.image.title=DockTun
@@ -71,8 +71,19 @@ jobs:
           provenance: mode=max
           sbom: true
 
-      - name: Scan before signing the edge artifact
+      - name: Scan linux/amd64 image before signing
         uses: aquasecurity/trivy-action@0.35.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          image-ref: ghcr.io/ooflyeyesoo/docktun@${{ steps.build.outputs.digest }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Scan linux/arm64 image before signing
+        uses: aquasecurity/trivy-action@0.35.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
         with:
           image-ref: ghcr.io/ooflyeyesoo/docktun@${{ steps.build.outputs.digest }}
           severity: CRITICAL,HIGH
@@ -85,3 +96,10 @@ jobs:
         env:
           IMAGE: ghcr.io/ooflyeyesoo/docktun@${{ steps.build.outputs.digest }}
         run: cosign sign --yes "$IMAGE"
+
+      - name: Verify signature and promote Edge
+        env:
+          IMAGE: ghcr.io/ooflyeyesoo/docktun@${{ steps.build.outputs.digest }}
+        run: |
+          cosign verify --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/publish.yml@refs/heads/main" --certificate-oidc-issuer https://token.actions.githubusercontent.com "$IMAGE"
+          docker buildx imagetools create -t ghcr.io/ooflyeyesoo/docktun:edge "$IMAGE"
