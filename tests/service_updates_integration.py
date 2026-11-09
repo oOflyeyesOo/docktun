@@ -61,6 +61,7 @@ def wait_job(phase):
     return eventually(check, 240)
 
 try:
+    docker('pull', 'alpine:3.23')
     docker('run', '-d', '--privileged', '--name', engine, '-e', 'DOCKER_TLS_CERTDIR=', '-p', '127.0.0.1::3001', 'docker:29-dind')
     eventually(lambda: inner('info'))
     with tempfile.TemporaryDirectory() as directory:
