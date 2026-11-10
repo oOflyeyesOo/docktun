@@ -93,9 +93,8 @@ func main() {
 
 	cfdSvc := service.NewCloudflared(cfg, hub)
 	cfdSvc.Logs()
-	// Stage optional companions without starting them. Existing running providers
-	// are left alone; enabling one never disables another.
-	if !cfg.RecoveryMode && os.Getenv("DOCKTUN_PREPARE_PROVIDERS") != "false" {
+	// Optional companions are created on demand unless the operator opts into staging.
+	if !cfg.RecoveryMode && os.Getenv("DOCKTUN_PREPARE_PROVIDERS") == "true" {
 		providers := service.NewProviderContainers(cfg)
 		for _, name := range []string{"cloudflare", "tailscale", "wireguard"} {
 			go func(provider string) {

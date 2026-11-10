@@ -125,7 +125,14 @@ func managedServiceKind(c, core updateContainer) string {
 	// Older installers created WireGuard without provider labels. Require the
 	// exact companion name, image family and shared persistent state; a name or
 	// Compose project alone is not evidence that DockTun owns a user's VPN.
-	if name == "docktun-wireguard" && (image == "lscr.io/linuxserver/wireguard" || strings.HasPrefix(image, "lscr.io/linuxserver/wireguard:") || strings.HasPrefix(image, "lscr.io/linuxserver/wireguard@")) {
+	wireguardImage, _, _ := strings.Cut(image, "@")
+	wireguardImage, _, _ = strings.Cut(wireguardImage, ":")
+	switch wireguardImage {
+	case "lscr.io/linuxserver/wireguard", "linuxserver/wireguard", "docker.io/linuxserver/wireguard":
+	default:
+		wireguardImage = ""
+	}
+	if name == "docktun-wireguard" && wireguardImage != "" {
 		directory := filepath.Join(filepath.Dir(coreEnvironment(core, "DB_PATH", "/app/data/app.db")), "wireguard")
 		expected, err := providerMount(core, directory, "/config", false)
 		if err == nil {

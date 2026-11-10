@@ -1,5 +1,5 @@
 # DockTun prebuilt-image installer. No source checkout or Dockerfile required.
-# Optional providers are prepared stopped by DockTun; enable them in the UI.
+# Enable optional providers in the UI when needed.
 # Save as compose.yml and run: docker compose up -d
 name: docktun
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { applicationContainers, matchesServiceID } from '../lib/managed-services.mjs'
+import { applicationContainers, applicationProjects, matchesServiceID } from '../lib/managed-services.mjs'
 import { createProjectFileEditor } from '../lib/project-file-editor.mjs'
 import { settingsEqual, syncExposureDraft } from '../lib/exposure-draft.mjs'
 import { defaultComposeExample } from '../lib/compose-templates.mjs'
@@ -155,7 +155,7 @@ interface FileItem {
 }
 
 const containers = ref<ContainerItem[]>([])
-const managedServices = ref<Array<{id: string; name: string}>>([])
+const managedServices = ref<Array<{id: string; name: string; kind: string}>>([])
 const registeredProjects = ref<Array<{id: number; name: string; path: string}>>([])
 const serviceInventoryError = ref('')
 let inventoryReady = false
@@ -981,7 +981,7 @@ async function fetchContainers() {
       apiFetch<any[]>('/api/projects').catch(() => []),
     ])
     if (maintenance) { managedServices.value = maintenance.services || []; serviceInventoryError.value = '' }
-    if (Array.isArray(projectsList)) { registeredProjects.value = projectsList }
+    if (Array.isArray(projectsList)) { registeredProjects.value = applicationProjects(projectsList, data || [], managedServices.value) }
     containers.value = applicationContainers(data || [], managedServices.value)
     inventoryReady = true
     containers.value.forEach(refreshExposureDraft)
