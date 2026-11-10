@@ -69,7 +69,7 @@ try:
         inner('network', 'create', network.replace('.', 'X'))
     inner('run', '-d', '--name', 'docktun', '--network', network, '-p', '3001:3001',
           '-v', 'test-app:/app/data', '-v', 'scoped-cloudflare:/etc/cloudflared',
-          '-v', '/var/run/docker.sock:/var/run/docker.sock', '-e', 'DOCKER_NETWORK=' + network, image)
+          '-v', '/var/run/docker.sock:/var/run/docker.sock', '-e', 'DOCKTUN_PREPARE_PROVIDERS=true', '-e', 'DOCKER_NETWORK=' + network, image)
     base = 'http://' + docker('port', engine, '3001/tcp')
     for _ in range(90):
         try:

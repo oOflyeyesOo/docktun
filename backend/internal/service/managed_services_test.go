@@ -24,9 +24,11 @@ func TestLegacyWireGuardRequiresSharedState(t *testing.T) {
 			if err := json.Unmarshal([]byte(`{"Mounts":[`+tc.providerMount+`]}`), &provider); err != nil {
 				t.Fatal(err)
 			}
-			provider.Config["Image"] = "lscr.io/linuxserver/wireguard:latest"
-			if got := managedServiceKind(provider, core); (got == "wireguard") != tc.owned {
-				t.Fatalf("classification = %q, owned = %v", got, tc.owned)
+			for _, image := range []string{"lscr.io/linuxserver/wireguard:latest", "linuxserver/wireguard:latest", "docker.io/linuxserver/wireguard@sha256:legacy"} {
+				provider.Config["Image"] = image
+				if got := managedServiceKind(provider, core); (got == "wireguard") != tc.owned {
+					t.Fatalf("%s classification = %q, owned = %v", image, got, tc.owned)
+				}
 			}
 			provider.Config["Image"] = "unrelated/wireguard:latest"
 			if managedServiceKind(provider, core) != "" {

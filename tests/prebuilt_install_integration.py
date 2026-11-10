@@ -43,6 +43,8 @@ try:
  before=json.loads(inner('inspect','docktun'))[0]
  assert next(m for m in before['Mounts'] if m['Destination']=='/app/data')['Type']=='volume'
  assert inner('inspect','--format','{{.State.Running}}','docktun-zeroconf')=='true'
+ installed = set(inner('ps','-a','--format','{{.Names}}').splitlines())
+ assert not installed.intersection({'docktun-wireguard', 'docktun-tailscale', 'docktun-cloudflared'}), installed
  inner('compose','-f','/installer/compose.yml','up','-d','--force-recreate')
  wait(lambda:request('/healthz'));request('/api/projects')
  token=request('/auth/login',{'username':'owner','password':'fresh-installer-fixture-password'})['access_token']
