@@ -2,14 +2,17 @@
 import { applicationContainers, applicationProjects, matchesServiceID } from '../lib/managed-services.mjs'
 import { createProjectFileEditor } from '../lib/project-file-editor.mjs'
 import { settingsEqual, syncExposureDraft } from '../lib/exposure-draft.mjs'
-import { defaultComposeExample } from '../lib/compose-templates.mjs'
 import { getPrimaryPort, cleanContainerName, hasLocalWebLink, localAddress } from '../lib/containerPorts.mjs'
 import { containerStack, stackProjectID } from '../lib/container-stacks.mjs'
-import ContainerExposure from "../components/ContainerExposure.vue"
-import TemplateFiles from '../components/TemplateFiles.vue'
-import TemplateSetup from '../components/TemplateSetup.vue'
-import ComposeStorageReview from '../components/ComposeStorageReview.vue'
-import CommunityTemplates from '../components/CommunityTemplates.vue'
+import ContainerInspectorModal from '../components/containers/modals/ContainerInspectorModal.vue'
+import ViewDensityToggle from '../components/containers/table/ViewDensityToggle.vue'
+import ContainersTable from '../components/containers/table/ContainersTable.vue'
+import StackOutputModal from '../components/containers/modals/StackOutputModal.vue'
+import StackDeployModal from '../components/containers/modals/StackDeployModal.vue'
+import StackHistoryModal from '../components/containers/modals/StackHistoryModal.vue'
+import StackDeleteModal from '../components/containers/modals/StackDeleteModal.vue'
+import ContainerUpdateModal from '../components/containers/modals/ContainerUpdateModal.vue'
+import StackLaunchModal from '../components/containers/modals/StackLaunchModal.vue'
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, toRefs, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -146,13 +149,6 @@ interface ContainerDetail extends ContainerItem {
   exit_code?: number
 }
 
-interface FileItem {
-  name: string
-  path: string
-  is_dir: boolean
-  size: number
-  mod_time: string
-}
 
 const containers = ref<ContainerItem[]>([])
 const managedServices = ref<Array<{id: string; name: string; kind: string}>>([])
@@ -265,80 +261,22 @@ function getExpose(id?: string): ExposureSettings {
 // Container Detail & Control Center State
 // ==========================================
 const selectedContainer = ref<ContainerDetail | null>(null)
-const selectedTab = ref<'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs' | 'exec'>('overview')
+const selectedTab = ref<'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs' | 'exec' | 'inspect'>('overview')
 const detailLoading = ref(false)
 const networkActionLoading = ref(false)
 const projectScaffolding = ref(false)
 
-// Exec / Terminal state
-const execCmd = ref('')
-const execOutput = ref('')
-const execLoading = ref(false)
-const execExitCode = ref<number | null>(null)
-const execHistory = ref<string[]>([])
-
-
 // Compose state
 const composeEditor = reactive(createProjectFileEditor('Compose', 'docker-compose.yml'))
 const { filename: composeFilename, content: composeContent, loading: composeLoading, saving: composeSaving, message: composeMsg } = toRefs(composeEditor)
-const envEditor = reactive(createProjectFileEditor('.env'))
-const { content: envContent, loading: envLoading, saving: envSaving, message: envMsg } = toRefs(envEditor)
 const projectFileAccess = ref<{ path: string; resolved_path?: string; available: boolean; writable: boolean; reason?: string } | null>(null)
 const projectFilesWritable = computed(() => !!projectFileAccess.value?.available && !!projectFileAccess.value?.writable)
 let selectionRevision = 0
-let filesRevision = 0
 function resetProjectEditors() {
   projectFileAccess.value = null
   composeEditor.invalidate()
-  envEditor.invalidate()
-  filesRevision++
-  fileList.value = []
-  editingFile.value = null
-  editingFileSaving.value = false
-  editingFileMsg.value = ''
-  filesLoading.value = false
-  showNewItemModal.value = false
-  showGitSettings.value = false
   currentProject.value = null
 }
-
-// Files state
-const currentDir = ref('')
-const fileList = ref<FileItem[]>([])
-const filesLoading = ref(false)
-const editingFile = ref<{ projectId: number; path: string; content: string } | null>(null)
-const editingFileSaving = ref(false)
-const editingFileMsg = ref('')
-const showNewItemModal = ref(false)
-const newItemName = ref('')
-const newItemIsDir = ref(false)
-
-// Logs state in Control Center
-const modalLogsText = ref('')
-const modalLogsLoading = ref(false)
-const modalLogsTail = ref(200)
-const modalLogsWrap = ref(true)
-const modalLogsAutoRefresh = ref(false)
-const modalLogsTimestamps = ref(false)
-const modalLogsFilter = ref('')
-let modalLogsTimer: any = null
-
-const filteredModalLogs = computed(() => {
-  if (!modalLogsText.value) return ''
-  if (!modalLogsFilter.value.trim()) return modalLogsText.value
-  const query = modalLogsFilter.value.toLowerCase()
-  return modalLogsText.value
-    .split('\n')
-    .filter((line) => line.toLowerCase().includes(query))
-    .join('\n')
-})
-
-const matchingLinesCount = computed(() => {
-  if (!modalLogsText.value || !modalLogsFilter.value.trim()) return null
-  const total = modalLogsText.value.split('\n').length
-  const matched = filteredModalLogs.value ? filteredModalLogs.value.split('\n').length : 0
-  return { matched, total }
-})
 
 const disconnectingNetwork = ref<Record<string, boolean>>({})
 
@@ -356,37 +294,12 @@ function copyToClipboard(key: string, text: string) {
 // Launch Modal & Unified Stack State
 // ==========================================
 const showLaunchModal = ref(false)
-const launchTab = ref<'compose' | 'templates' | 'dockerrun' | 'gitstack'>('compose')
 
-// Direct Compose Stack State
-
-
-const composeDeployForm = ref({
-  name: '',
-  path: '',
-  compose_content: '',
-  env_content: '',
-  show_env: false,
-})
-const composeDeploying = ref(false)
-const composeStorageReady = ref(false)
-const composeTemplateSource = ref('')
-const composeProjectSource = ref('')
-const composeFiles = ref<Record<string, any>>({})
-const composeFilesDirty = ref(false)
-const composeCompatibility = ref(true)
-async function applyTemplateFiles(files: Record<string, any>) {
-  composeFiles.value = files; composeFilesDirty.value = false
-  await nextTick(); await composeReview.value?.review()
+function onStackDeployed(payload: { projectId: number; name: string }) {
+  fetchContainers()
+  startStackOutputPolling(payload.projectId, `Deploying Compose Stack: ${payload.name}`)
 }
-const composeReview = ref<any>(null)
-const composeSetupDirty = ref(false)
-async function applyTemplateSetup(result: any) {
-  composeDeployForm.value.compose_content = result.compose_content
-  composeDeployForm.value.env_content = result.env_content
-  await nextTick()
-  await composeReview.value?.review()
-}
+
 // Cloudflare Settings Cache for Zero Trust
 const cfSettings = ref<{ has_token: boolean; masked_token?: string; api_token?: string } | null>(null)
 async function fetchCfSettings() {
@@ -398,83 +311,6 @@ async function fetchCfSettings() {
     }
   } catch {}
 }
-
-function selectCommunityTemplate(template: any) {
-  composeDeployForm.value.name = template.name
-  composeDeployForm.value.path = ''
-  composeDeployForm.value.compose_content = template.compose_content
-  composeDeployForm.value.env_content = template.env_content || ''
-  composeDeployForm.value.show_env = true
-  composeTemplateSource.value = template.source_url
-  composeProjectSource.value = template.project_source || ''
-  composeFiles.value = {}; composeFilesDirty.value = false
-  launchTab.value = 'compose'
-}
-
-function insertComposeSnippet(type: 'network' | 'restart' | 'ports' | 'volumes' | string) {
-  const snippets: Record<string, string> = {
-    network: '    networks:\n      - cloudflared\n\nnetworks:\n  cloudflared:\n    external: true',
-    restart: '    restart: unless-stopped',
-    ports: '    ports:\n      - "8080:80"',
-    volumes: '    volumes:\n      - ./data:/data',
-  }
-  const content = snippets[type] || type
-  composeDeployForm.value.compose_content += '\n' + content
-}
-
-async function deployComposeStack() {
-  if (composeTemplateSource.value && (composeSetupDirty.value || composeFilesDirty.value)) { alert('Apply the app setup settings before deploying'); return }
-  if (isPastedDockerRun.value) {
-    convertComposeDockerRun()
-  }
-  const name = composeDeployForm.value.name.trim()
-  if (!name) {
-    alert('Stack name is required.')
-    return
-  }
-  if (!composeDeployForm.value.compose_content.trim()) {
-    alert('docker-compose.yml content cannot be empty.')
-    return
-  }
-  if (!composeStorageReady.value) { alert('Review storage after editing this stack before deploying.'); return }
-  composeDeploying.value = true
-  try {
-    const res: any = await apiFetch('/api/projects', {
-      method: 'POST',
-      body: JSON.stringify({
-        name: name,
-        path: composeDeployForm.value.path.trim(),
-        compose_content: composeDeployForm.value.compose_content,
-        env_content: composeDeployForm.value.env_content,
-        auto_start: true,
-        review_storage: true,
-        template_source: composeTemplateSource.value,
-        files: composeFiles.value,
-        compatibility: Boolean(composeTemplateSource.value) && composeCompatibility.value,
-      }),
-    })
-    showLaunchModal.value = false
-    await fetchContainers()
-    if (res.id) {
-      startStackOutputPolling(res.id, `Deploying Compose Stack: ${name}`)
-    }
-  } catch (err: any) {
-    alert('Failed to deploy Compose stack: ' + (err.message || err))
-  } finally {
-    composeDeploying.value = false
-  }
-}
-
-// Docker Run State
-const defaultExampleCmd = 'docker run -d --name my-app -p 8080:80 nginx:alpine'
-const dockerRunCmd = ref('')
-const dockerRunMode = ref<'compose' | 'direct'>('compose')
-const dockerRunCloudflared = ref(false)
-const dockerRunCreateProject = ref(true)
-const dockerRunCustomName = ref('')
-const dockerRunLoading = ref(false)
-const dockerRunJob = ref<any>(null)
-const dockerRunLines = ref<string[]>([])
 
 // Backdrop tracking to prevent modal from force-closing on text selection drag
 let backdropMouseDown = false
@@ -494,162 +330,6 @@ function onBackdropClick(e: MouseEvent, closeFn: () => void) {
   backdropMouseDown = false
 }
 
-function onLaunchModalBackdropClick() {
-  // Prevent accidental dismissal if the user has typed or pasted anything in the launch modal
-  if (!composeDeployForm.value.compose_content.trim() && !dockerRunCmd.value.trim()) {
-    showLaunchModal.value = false
-  }
-}
-
-function convertDockerRunToComposeYaml(cmd: string): { name: string; yaml: string } {
-  const cleanCmd = cmd.replace(/\\\r?\n/g, ' ').replace(/\s+/g, ' ').trim()
-  const tokens = cleanCmd.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || []
-
-  let name = ''
-  let image = ''
-  const ports: string[] = []
-  const volumes: string[] = []
-  const env: string[] = []
-  let restart = 'unless-stopped'
-  let network = 'cloudflared'
-  let privileged = false
-
-  let i = 0
-  if (tokens[0] === 'docker' || tokens[0] === 'podman') i++
-  if (tokens[i] === 'run' || tokens[i] === 'create') i++
-
-  for (; i < tokens.length; i++) {
-    const rawT = tokens[i]
-    const t = rawT.replace(/^["']|["']$/g, '')
-    if (t === '--name' && i + 1 < tokens.length) {
-      name = tokens[++i].replace(/^["']|["']$/g, '')
-    } else if (t.startsWith('--name=')) {
-      name = t.substring(7).replace(/^["']|["']$/g, '')
-    } else if ((t === '-p' || t === '--publish') && i + 1 < tokens.length) {
-      ports.push(tokens[++i].replace(/^["']|["']$/g, ''))
-    } else if (t.startsWith('-p=') || t.startsWith('--publish=')) {
-      ports.push(t.substring(t.indexOf('=') + 1).replace(/^["']|["']$/g, ''))
-    } else if ((t === '-v' || t === '--volume') && i + 1 < tokens.length) {
-      volumes.push(tokens[++i].replace(/^["']|["']$/g, ''))
-    } else if (t.startsWith('-v=') || t.startsWith('--volume=')) {
-      volumes.push(t.substring(t.indexOf('=') + 1).replace(/^["']|["']$/g, ''))
-    } else if ((t === '-e' || t === '--env') && i + 1 < tokens.length) {
-      env.push(tokens[++i].replace(/^["']|["']$/g, ''))
-    } else if (t.startsWith('-e=') || t.startsWith('--env=')) {
-      env.push(t.substring(t.indexOf('=') + 1).replace(/^["']|["']$/g, ''))
-    } else if (t === '--restart' && i + 1 < tokens.length) {
-      restart = tokens[++i].replace(/^["']|["']$/g, '')
-    } else if (t.startsWith('--restart=')) {
-      restart = t.substring(10).replace(/^["']|["']$/g, '')
-    } else if (t === '--privileged') {
-      privileged = true
-    } else if ((t === '--network' || t === '--net') && i + 1 < tokens.length) {
-      network = tokens[++i].replace(/^["']|["']$/g, '')
-    } else if (t.startsWith('--network=') || t.startsWith('--net=')) {
-      network = t.substring(t.indexOf('=') + 1).replace(/^["']|["']$/g, '')
-    } else if (!t.startsWith('-')) {
-      image = t
-    }
-  }
-
-  if (!name && image) {
-    const parts = image.split('/')
-    const imgPart = parts[parts.length - 1].split(':')[0]
-    name = imgPart || 'app'
-  }
-  if (!name) name = 'app'
-
-  let yaml = `services:\n  ${name}:\n    image: ${image || 'nginx:alpine'}\n    container_name: ${name}\n    restart: ${restart}\n`
-  if (privileged) yaml += '    privileged: true\n'
-  if (ports.length) {
-    yaml += '    ports:\n'
-    ports.forEach((p) => (yaml += `      - "${p}"\n`))
-  }
-  if (volumes.length) {
-    yaml += '    volumes:\n'
-    volumes.forEach((v) => (yaml += `      - "${v}"\n`))
-  }
-  if (env.length) {
-    yaml += '    environment:\n'
-    env.forEach((e) => (yaml += `      - ${e}\n`))
-  }
-  if (network && network !== 'host' && network !== 'none' && network !== 'bridge') {
-    yaml += `    networks:\n      - ${network}\n\nnetworks:\n  ${network}:\n    external: true\n`
-  }
-
-  const namedVols = volumes
-    .map((v) => v.split(':')[0])
-    .filter((v) => v && !v.startsWith('/') && !v.startsWith('./') && !v.startsWith('../') && !v.startsWith('~') && !v.includes('\\'))
-  if (namedVols.length) {
-    yaml += '\nvolumes:\n'
-    const seen = new Set<string>()
-    namedVols.forEach((nv) => {
-      if (!seen.has(nv)) {
-        seen.add(nv)
-        yaml += `  ${nv}:\n    name: ${nv}\n`
-      }
-    })
-  }
-
-  return { name, yaml }
-}
-
-const isPastedDockerRun = computed(() => {
-  const c = composeDeployForm.value.compose_content.trim()
-  if (!c) return false
-  if (c.startsWith('services:') || c.startsWith('version:')) return false
-  const lower = c.toLowerCase()
-  return (
-    lower.startsWith('docker run') ||
-    lower.startsWith('docker create') ||
-    lower.startsWith('docker pull') ||
-    lower.startsWith('run -') ||
-    (c.includes('--name') && c.includes('-p ') && !c.includes(':'))
-  )
-})
-
-function convertComposeDockerRun() {
-  const result = convertDockerRunToComposeYaml(composeDeployForm.value.compose_content)
-  composeDeployForm.value.compose_content = result.yaml
-  if (!composeDeployForm.value.name.trim() || composeDeployForm.value.name === 'my-stack') {
-    composeDeployForm.value.name = result.name
-  }
-}
-
-function onComposeFocus() {
-  if (composeDeployForm.value.compose_content.trim() === defaultComposeExample.trim()) {
-    composeDeployForm.value.compose_content = ''
-  }
-}
-
-function onComposePaste() {
-  if (composeDeployForm.value.compose_content.trim() === defaultComposeExample.trim()) {
-    composeDeployForm.value.compose_content = ''
-  }
-}
-
-function onDockerRunFocus() {
-  if (dockerRunCmd.value.trim() === defaultExampleCmd.trim()) {
-    dockerRunCmd.value = ''
-  }
-}
-
-function onDockerRunPaste() {
-  if (dockerRunCmd.value.trim() === defaultExampleCmd.trim()) {
-    dockerRunCmd.value = ''
-  }
-}
-
-// Git / Compose Stack Creator State
-const newProjectForm = ref({
-  name: '',
-  path: '',
-  repo_url: '',
-  git_username: '',
-  git_token: '',
-})
-const newProjectSaving = ref(false)
-
 // Active Project Metadata in Control Center
 const currentProject = ref<{
   id: number
@@ -660,7 +340,6 @@ const currentProject = ref<{
   git_token: string
 } | null>(null)
 const projectGitSaving = ref(false)
-const showGitSettings = ref(false)
 
 // Stack Operations & Output Polling
 const stackActionLoading = ref<Record<number, boolean>>({})
@@ -800,9 +479,20 @@ function expandAllStacks() {
   localStorage.setItem('docktun_collapsed_stacks', '{}')
 }
 
+// View Density Mode (table vs grid)
+const viewMode = ref<'table' | 'grid'>((localStorage.getItem('docktun:view_mode') as 'table' | 'grid') || 'table')
+
 // Batch Multi-Select State
 const selectedContainerIds = ref<Record<string, boolean>>({})
 const batchLoading = ref(false)
+
+function toggleSelectContainer(id: string, selected: boolean) {
+  if (selected) {
+    selectedContainerIds.value[id] = true
+  } else {
+    delete selectedContainerIds.value[id]
+  }
+}
 
 const selectedCount = computed(() => {
   return Object.values(selectedContainerIds.value).filter(Boolean).length
@@ -813,8 +503,8 @@ const allSelected = computed(() => {
   return filteredContainers.value.every((c) => selectedContainerIds.value[c.id])
 })
 
-function toggleSelectAll() {
-  if (allSelected.value) {
+function toggleSelectAll(selected?: boolean) {
+  if (selected === false || (selected === undefined && allSelected.value)) {
     selectedContainerIds.value = {}
   } else {
     const next: Record<string, boolean> = {}
@@ -1195,7 +885,7 @@ async function saveExposure(container: ContainerItem) {
 // ==========================================
 // Control Center Modal Logic
 // ==========================================
-async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs' | 'exec' = 'overview') {
+async function openContainerModal(c: ContainerItem, tab: 'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs' | 'exec' | 'inspect' = 'overview') {
   const selection = ++selectionRevision
   resetProjectEditors()
   selectedContainer.value = { ...c } as ContainerDetail
@@ -1244,17 +934,10 @@ function closeContainerModal() {
   selectionRevision++
   resetProjectEditors()
   selectedContainer.value = null
-  editingFile.value = null
   composeMsg.value = ''
-  envMsg.value = ''
-  editingFileMsg.value = ''
-  if (modalLogsTimer) {
-    clearInterval(modalLogsTimer)
-    modalLogsTimer = null
-  }
 }
 
-function handleTabChange(tab: 'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs' | 'exec') {
+function handleTabChange(tab: 'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs' | 'exec' | 'inspect') {
   selectedTab.value = tab
   if (!selectedContainer.value) return
 
@@ -1263,18 +946,12 @@ function handleTabChange(tab: 'overview' | 'access' | 'compose' | 'env' | 'files
       loadContainerCompose(selectedContainer.value.project_id)
       loadProjectInfo(selectedContainer.value.project_id)
     }
-  } else if (tab === 'env') {
-    if (selectedContainer.value.project_id) {
-      loadContainerEnv(selectedContainer.value.project_id)
-    }
-  } else if (tab === 'files') {
-    if (selectedContainer.value.project_id) {
-      loadContainerFiles(selectedContainer.value.project_id, '')
-    }
-  } else if (tab === 'logs') {
-    fetchModalLogs()
   }
 }
+
+watch(selectedTab, (newTab) => {
+  handleTabChange(newTab)
+})
 
 async function toggleCloudflaredNetwork() {
   if (!selectedContainer.value) return
@@ -1307,10 +984,6 @@ async function scaffoldProject() {
       await fetchContainers()
       if (selectedTab.value === 'compose') {
         await loadContainerCompose(res.project_id)
-      } else if (selectedTab.value === 'env') {
-        await loadContainerEnv(res.project_id)
-      } else if (selectedTab.value === 'files') {
-        await loadContainerFiles(res.project_id, '')
       }
     }
   } catch (e: any) {
@@ -1432,10 +1105,10 @@ function openDeployPrompt(projectId: number, projectName: string) {
   deployBranchName.value = 'main'
 }
 
-async function confirmDeploy() {
+async function confirmDeploy(optionalBranch?: string) {
   if (!showDeployPromptModal.value) return
   const pId = showDeployPromptModal.value.projectId
-  const branch = deployBranchName.value.trim() || 'main'
+  const branch = (typeof optionalBranch === 'string' && optionalBranch.trim()) ? optionalBranch.trim() : (deployBranchName.value.trim() || 'main')
   showDeployPromptModal.value = null
 
   stackActionLoading.value[pId] = true
@@ -1509,240 +1182,8 @@ async function confirmDeleteStack() {
 
 function openLaunchModal() {
   showLaunchModal.value = true
-  dockerRunLines.value = []
-  dockerRunJob.value = null
 }
 
-function insertDockerSnippet(snip: string) {
-  if (dockerRunCmd.value.trim() === defaultExampleCmd.trim()) {
-    dockerRunCmd.value = ''
-  }
-  dockerRunCmd.value = (dockerRunCmd.value.trim() + ' ' + snip).trim()
-}
-
-async function runDockerCommand() {
-  if (!dockerRunCmd.value.trim()) return
-  dockerRunLoading.value = true
-  dockerRunLines.value = []
-  dockerRunJob.value = null
-
-  try {
-    const res: any = await apiFetch('/api/docker/run', {
-      method: 'POST',
-      body: JSON.stringify({
-        command: dockerRunCmd.value.trim(),
-        mode: dockerRunMode.value,
-        connect_cloudflared: dockerRunCloudflared.value,
-        create_project: dockerRunCreateProject.value,
-        project_name: dockerRunCustomName.value.trim(),
-      }),
-    })
-
-    const jobId = res.job_id
-    const poll = setInterval(async () => {
-      try {
-        const job: any = await apiFetch(`/api/docker/run/output/${jobId}`)
-        dockerRunJob.value = job
-        dockerRunLines.value = job.lines || job.output || []
-        if (job.done || job.status === 'completed' || job.status === 'failed') {
-          clearInterval(poll)
-          dockerRunLoading.value = false
-          await fetchContainers()
-        }
-      } catch {
-        clearInterval(poll)
-        dockerRunLoading.value = false
-      }
-    }, 1000)
-  } catch (e: any) {
-    dockerRunLoading.value = false
-    alert(e.message || 'Failed to execute Docker run')
-  }
-}
-
-async function submitNewProject() {
-  if (!newProjectForm.value.name.trim() || !newProjectForm.value.path.trim()) {
-    alert('Stack name and folder path are required.')
-    return
-  }
-  newProjectSaving.value = true
-  try {
-    await apiFetch('/api/projects', {
-      method: 'POST',
-      body: JSON.stringify(newProjectForm.value),
-    })
-    showLaunchModal.value = false
-    newProjectForm.value = { name: '', path: '', repo_url: '', git_username: '', git_token: '' }
-    await fetchContainers()
-    alert('Stack created successfully!')
-  } catch (e: any) {
-    alert('Failed to create stack: ' + (e.message || e))
-  } finally {
-    newProjectSaving.value = false
-  }
-}
-
-// --- .env Functions ---
-async function loadContainerEnv(projectId: number) {
-  await envEditor.load(projectId, async (id) => {
-    await loadProjectFileAccess(id)
-    return apiFetch(`/api/projects/${id}/env`)
-  })
-}
-
-async function saveContainerEnv(restart = false) {
-  if (!projectFilesWritable.value || selectedContainer.value?.project_id !== envEditor.projectId) return
-  const saved = await envEditor.save(
-    (id, body) => apiFetch(`/api/projects/${id}/env`, { method: 'PUT', body: JSON.stringify({ content: body.content }) }),
-    restart ? (id) => apiFetch(`/api/projects/${id}/action/restart`, { method: 'POST' }) : undefined,
-  )
-  if (saved && restart) await fetchContainers()
-}
-
-// --- Files Functions ---
-async function loadContainerFiles(projectId: number, path = '') {
-  const revision = ++filesRevision
-  const selection = selectionRevision
-  filesLoading.value = true
-  currentDir.value = path
-  fileList.value = []
-  editingFileMsg.value = ''
-  editingFile.value = null
-  try {
-    await loadProjectFileAccess(projectId)
-    const res: any = await apiFetch(`/api/projects/${projectId}/files?path=${encodeURIComponent(path)}`)
-    if (revision === filesRevision && selection === selectionRevision) fileList.value = res || []
-  } catch (e: any) {
-    if (revision === filesRevision && selection === selectionRevision) {
-      fileList.value = []
-      editingFileMsg.value = 'Failed to list files: ' + e.message
-    }
-  } finally {
-    if (revision === filesRevision && selection === selectionRevision) filesLoading.value = false
-  }
-}
-
-async function openContainerFile(f: FileItem) {
-  const projectId = selectedContainer.value?.project_id
-  if (!projectId) return
-  if (f.is_dir) {
-    loadContainerFiles(projectId, f.path)
-    return
-  }
-  const revision = ++filesRevision
-  const selection = selectionRevision
-  editingFile.value = null
-  editingFileMsg.value = ''
-  filesLoading.value = true
-  try {
-    const res: any = await apiFetch(`/api/projects/${projectId}/file?path=${encodeURIComponent(f.path)}`)
-    if (revision === filesRevision && selection === selectionRevision) editingFile.value = { projectId, path: f.path, content: res.content || '' }
-  } catch (e: any) {
-    if (revision === filesRevision && selection === selectionRevision) editingFileMsg.value = 'Failed to read file: ' + e.message
-  } finally {
-    if (revision === filesRevision && selection === selectionRevision) filesLoading.value = false
-  }
-}
-
-async function saveCurrentContainerFile() {
-  const file = editingFile.value
-  if (!projectFilesWritable.value || !file || selectedContainer.value?.project_id !== file.projectId || editingFileSaving.value) return
-  const selection = selectionRevision
-  const revision = filesRevision
-  editingFileSaving.value = true
-  editingFileMsg.value = ''
-  try {
-    await apiFetch(`/api/projects/${file.projectId}/file`, {
-      method: 'PUT', body: JSON.stringify({ path: file.path, content: file.content }),
-    })
-    if (selection === selectionRevision && revision === filesRevision) editingFileMsg.value = 'File saved successfully!'
-  } catch (e: any) {
-    if (selection === selectionRevision && revision === filesRevision) editingFileMsg.value = 'Save failed: ' + e.message
-  } finally {
-    if (selection === selectionRevision) editingFileSaving.value = false
-  }
-}
-
-async function createContainerFileItem() {
-  if (!projectFilesWritable.value || !selectedContainer.value?.project_id || !newItemName.value) return
-  const targetPath = currentDir.value ? `${currentDir.value}/${newItemName.value}` : newItemName.value
-  const projectId = selectedContainer.value.project_id
-  const directory = currentDir.value
-  const selection = selectionRevision
-  try {
-    await apiFetch(`/api/projects/${projectId}/file`, {
-      method: 'POST',
-      body: JSON.stringify({
-        path: targetPath,
-        is_dir: newItemIsDir.value,
-        content: '',
-      }),
-    })
-    if (selection !== selectionRevision) return
-    showNewItemModal.value = false
-    newItemName.value = ''
-    if (selection === selectionRevision) loadContainerFiles(projectId, directory)
-  } catch (e: any) {
-    alert('Create failed: ' + e.message)
-  }
-}
-
-async function deleteContainerFile(path: string) {
-  if (!projectFilesWritable.value || !selectedContainer.value?.project_id) return
-  if (!confirm(`Delete ${path}?`)) return
-  const projectId = selectedContainer.value.project_id
-  const directory = currentDir.value
-  const selection = selectionRevision
-  try {
-    await apiFetch(`/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`, {
-      method: 'DELETE',
-    })
-    if (selection === selectionRevision) loadContainerFiles(projectId, directory)
-  } catch (e: any) {
-    alert('Delete failed: ' + e.message)
-  }
-}
-
-// --- Logs Functions ---
-async function fetchModalLogs() {
-  if (!selectedContainer.value) return
-  modalLogsLoading.value = true
-  try {
-    const res = await apiFetch<{ logs: string }>(
-      `/api/docker/containers/${selectedContainer.value.id}/logs?tail=${modalLogsTail.value}&timestamps=${modalLogsTimestamps.value}`
-    )
-    modalLogsText.value = res.logs || 'No logs recorded.'
-  } catch (error: any) {
-    modalLogsText.value = 'Failed to load logs: ' + error.message
-  } finally {
-    modalLogsLoading.value = false
-  }
-}
-
-async function runContainerExec() {
-  if (!selectedContainer.value || !execCmd.value.trim() || execLoading.value) return
-  const cmd = execCmd.value.trim()
-  execLoading.value = true
-  execOutput.value = `// EXECUTING: ${cmd}...\n`
-  execExitCode.value = null
-  if (!execHistory.value.includes(cmd)) {
-    execHistory.value.unshift(cmd)
-    if (execHistory.value.length > 8) execHistory.value.pop()
-  }
-  try {
-    const res: any = await apiFetch(`/api/docker/containers/${selectedContainer.value.id}/exec`, {
-      method: 'POST',
-      body: JSON.stringify({ command: cmd }),
-    })
-    execOutput.value = res.output || '(Command completed with no output)'
-    execExitCode.value = res.exit_code
-  } catch (err: any) {
-    execOutput.value = `ERROR: ${err.message || err}`
-    execExitCode.value = 1
-  } finally {
-    execLoading.value = false
-  }
-}
 
 async function disconnectFromCloudflared(container: any) {
   if (!container) return
@@ -1777,19 +1218,6 @@ async function disconnectContainerNetwork(container: ContainerItem, network: str
   finally { delete disconnectingNetwork.value[container.id] }
 }
 
-watch(modalLogsAutoRefresh, (enabled) => {
-  if (modalLogsTimer) {
-    clearInterval(modalLogsTimer)
-    modalLogsTimer = null
-  }
-  if (enabled) {
-    modalLogsTimer = setInterval(() => {
-      if (selectedTab.value === 'logs' && selectedContainer.value) {
-        fetchModalLogs()
-      }
-    }, 3000)
-  }
-})
 
 // Extract first published port if any
 let timer: any = null
@@ -1887,7 +1315,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
-  if (modalLogsTimer) clearInterval(modalLogsTimer)
   if (stackPollTimer) clearInterval(stackPollTimer)
 })
 </script>
@@ -2053,8 +1480,11 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <!-- Controls: Grouping, Selection & Search -->
+      <!-- Controls: Density, Grouping, Selection & Search -->
       <div class="flex flex-wrap items-center gap-2">
+        <!-- View Density Toggle (Table vs Grid) -->
+        <ViewDensityToggle v-model="viewMode" />
+
         <!-- Group by Stack Toggle -->
         <button
           @click="toggleGroupByStack"
@@ -2172,15 +1602,46 @@ onUnmounted(() => {
       </div>
     </transition>
 
-    <!-- Empty state -->
-    <div v-if="filteredContainers.length === 0 && !loading" class="cyber-card py-12 text-center text-slate-600">
-      <Server class="mx-auto h-8 w-8 text-slate-600 mb-2" />
-      <p class="text-sm font-medium text-slate-700">No containers match the current filter.</p>
-      <p class="mt-1 text-xs text-slate-500">Try adjusting your search terms or status filters.</p>
-    </div>
+    <!-- High-Density Table View -->
+    <ContainersTable
+      v-if="viewMode === 'table'"
+      :groups="containerGroups"
+      :flat-containers="filteredContainers"
+      :group-by-stack="groupByStack"
+      :selected-container-ids="selectedContainerIds"
+      :collapsed-stacks="collapsedStacks"
+      :action-loading="actionLoading"
+      :stack-action-loading="stackActionLoading"
+      :checking-single-update="checkingSingleUpdate"
+      :updating-container="updatingContainer"
+      @toggle-select="toggleSelectContainer"
+      @toggle-select-all="toggleSelectAll"
+      @toggle-select-stack="toggleSelectStack"
+      @toggle-collapse="toggleStackCollapse"
+      @expand-all-stacks="expandAllStacks"
+      @collapse-all-stacks="collapseAllStacks"
+      @action="runAction"
+      @stack-action="runStackAction"
+      @open-compose="(group) => group.containers.length > 0 ? openContainerModal(group.containers[0], 'compose') : openStackComposeModal(group.projectId, group.name, group.projectPath)"
+      @deploy-stack="openDeployPrompt"
+      @stack-history="openStackHistory"
+      @delete-stack="openDeleteStackPrompt"
+      @open-inspector="(c, tab) => openContainerModal(c, tab || 'overview')"
+      @check-update="checkSingleUpdate"
+      @confirm-update="confirmUpdate"
+    />
 
-    <!-- Containers List (Grouped by Compose Stack or Flat List) -->
-    <div class="space-y-6">
+    <!-- Cards Grid View (viewMode === 'grid') -->
+    <template v-else>
+      <!-- Empty state -->
+      <div v-if="filteredContainers.length === 0 && !loading" class="cyber-card py-12 text-center text-slate-600">
+        <Server class="mx-auto h-8 w-8 text-slate-600 mb-2" />
+        <p class="text-sm font-medium text-slate-700">No containers match the current filter.</p>
+        <p class="mt-1 text-xs text-slate-500">Try adjusting your search terms or status filters.</p>
+      </div>
+
+      <!-- Containers List (Grouped by Compose Stack or Flat List) -->
+      <div class="space-y-6">
       <div
         v-for="group in containerGroups"
         :key="group.key"
@@ -2686,1813 +2147,118 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+    </template>
 
     <!-- ======================================================== -->
     <!-- CONTAINER CONTROL CENTER (MODAL / FULL INSPECTOR)        -->
     <!-- ======================================================== -->
-    <div
+    <ContainerInspectorModal
       v-if="selectedContainer"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-2 sm:p-4 backdrop-blur-md"
-      @mousedown="onBackdropMouseDown"
-      @click="onBackdropClick($event, closeContainerModal)"
-    >
-      <div
-        class="flex max-h-[92vh] w-full max-w-5xl flex-col rounded-xl border border-slate-300 bg-white shadow-sm overflow-hidden"
-        @mousedown.stop
-        @mouseup.stop
-        @click.stop
-      >
-        <!-- Modal Top Bar -->
-        <div class="flex flex-wrap items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-3 gap-3">
-          <div class="flex items-center gap-3">
-            <span
-              class="relative flex h-3 w-3"
-              :title="selectedContainer.running ? 'Running' : 'Stopped'"
-            >
-              <span
-                v-if="selectedContainer.running"
-                class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"
-              ></span>
-              <span
-                class="relative inline-flex h-3 w-3 rounded-full"
-                :class="selectedContainer.running ? 'bg-emerald-500' : 'bg-slate-300'"
-              ></span>
-            </span>
-
-            <div>
-              <div class="flex items-center gap-2">
-                <h2 class="text-base font-bold text-slate-900 font-mono">{{ selectedContainer.name }}</h2>
-                <span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-mono text-slate-600">
-                  {{ selectedContainer.id.slice(0, 12) }}
-                </span>
-                <button
-                  @click="copyToClipboard('cid', selectedContainer.id)"
-                  class="text-slate-500 hover:text-slate-700"
-                  title="Copy full Container ID"
-                >
-                  <Check v-if="copiedKey === 'cid'" class="h-3 w-3 text-emerald-600" />
-                  <Copy v-else class="h-3 w-3" />
-                </button>
-              </div>
-              <p class="text-[11px] text-slate-600 font-mono truncate max-w-md">{{ selectedContainer.image }}</p>
-            </div>
-          </div>
-
-          <!-- Top Quick Actions -->
-          <div class="flex items-center gap-2">
-            <button
-              v-if="!selectedContainer.running"
-              @click="runAction(selectedContainer, 'start')"
-              :disabled="!!actionLoading[selectedContainer.id]"
-              class="cyber-btn flex items-center gap-1.5 text-xs text-emerald-700"
-            >
-              <Play class="h-3 w-3 fill-current" />
-              <span>Start</span>
-            </button>
-            <button
-              v-if="selectedContainer.running"
-              @click="runAction(selectedContainer, 'stop')"
-              :disabled="!!actionLoading[selectedContainer.id]"
-              class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-700"
-            >
-              <Square class="h-3 w-3 fill-current" />
-              <span>Stop</span>
-            </button>
-            <button
-              @click="runAction(selectedContainer, 'restart')"
-              :disabled="!!actionLoading[selectedContainer.id]"
-              class="cyber-btn-secondary flex items-center gap-1.5 text-xs"
-            >
-              <RotateCcw class="h-3 w-3" :class="actionLoading[selectedContainer.id] === 'restart' ? 'animate-spin' : ''" />
-              <span>Restart</span>
-            </button>
-            <button
-              @click="closeContainerModal"
-              class="rounded-lg p-1 text-slate-600 hover:bg-slate-100 hover:text-slate-800"
-            >
-              <X class="h-5 w-5" />
-            </button>
-          </div>
-        </div>
-
-        <!-- Modal Navigation Tabs -->
-        <div class="flex items-center gap-1 overflow-x-auto border-b border-slate-200 bg-slate-50/80 px-4 py-2 text-xs">
-          <button
-            @click="handleTabChange('overview')"
-            class="flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium transition-colors whitespace-nowrap"
-            :class="selectedTab === 'overview' ? 'bg-cyan-50/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
-          >
-            <Activity class="h-3.5 w-3.5" />
-            <span>Overview</span>
-          </button>
-
-          <button
-            @click="handleTabChange('access')"
-            class="flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium transition-colors whitespace-nowrap"
-            :class="selectedTab === 'access' ? 'bg-cyan-50/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
-          >
-            <Globe class="h-3.5 w-3.5" />
-            <span>Access & Networks</span>
-            <span
-              v-if="selectedContainer.connected_to_cloudflared"
-              class="h-1.5 w-1.5 rounded-full bg-emerald-400"
-              title="Cloudflared network connected"
-            ></span>
-          </button>
-
-          <button
-            @click="handleTabChange('compose')"
-            class="flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium transition-colors whitespace-nowrap"
-            :class="selectedTab === 'compose' ? 'bg-cyan-50/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
-          >
-            <FileCode class="h-3.5 w-3.5" />
-            <span>Compose</span>
-            <span
-              v-if="selectedContainer.project_id"
-              class="rounded bg-cyan-100/60 px-1 py-0.2 text-[9px] text-cyan-700 font-mono"
-            >
-              stack
-            </span>
-          </button>
-
-          <button
-            @click="handleTabChange('env')"
-            class="flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium transition-colors whitespace-nowrap"
-            :class="selectedTab === 'env' ? 'bg-cyan-50/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
-          >
-            <Sliders class="h-3.5 w-3.5" />
-            <span>Environment (.env)</span>
-          </button>
-
-          <button
-            @click="handleTabChange('files')"
-            class="flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium transition-colors whitespace-nowrap"
-            :class="selectedTab === 'files' ? 'bg-cyan-50/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
-          >
-            <FolderOpen class="h-3.5 w-3.5" />
-            <span>Files & Storage</span>
-          </button>
-
-          <button
-            @click="handleTabChange('logs')"
-            class="flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium transition-colors whitespace-nowrap"
-            :class="selectedTab === 'logs' ? 'bg-cyan-50/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
-          >
-            <ScrollText class="h-3.5 w-3.5" />
-            <span>Realtime Logs</span>
-          </button>
-
-          <button
-            @click="handleTabChange('exec')"
-            class="flex items-center gap-2 rounded-lg px-3 py-1.5 font-medium transition-colors whitespace-nowrap"
-            :class="selectedTab === 'exec' ? 'bg-cyan-50/60 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
-          >
-            <Terminal class="h-3.5 w-3.5" />
-            <span>Terminal (Exec)</span>
-          </button>
-        </div>
-
-        <!-- Tab Body Container -->
-        <div class="flex-1 overflow-y-auto p-5 text-slate-800">
-          <AppReliability v-if="selectedTab==='overview'" class="mb-4" :container-id="selectedContainer.id" :container-name="selectedContainer.name" />
-          <div v-if="['compose', 'env', 'files'].includes(selectedTab) && projectFileAccess" class="mb-4 rounded-lg border p-3 text-sm" :class="projectFileAccess.available && projectFileAccess.writable ? 'border-slate-200 bg-slate-50' : 'border-amber-300 bg-amber-50'" role="status">
-            <p v-if="!projectFileAccess.available" class="font-semibold">Stack files are unavailable in DockTun</p>
-            <p v-else-if="!projectFileAccess.writable" class="font-semibold">Stack files are read-only</p>
-            <p v-if="projectFileAccess.reason">{{ projectFileAccess.reason }}</p>
-            <p v-if="projectFileAccess.resolved_path && projectFileAccess.resolved_path !== projectFileAccess.path" class="break-all text-xs">Host folder {{ projectFileAccess.path }} is available at {{ projectFileAccess.resolved_path }} inside DockTun.</p>
-            <p v-if="!projectFileAccess.available" class="mt-1 text-xs">Container start, stop, logs, and exposure controls remain available. Add the folder mount to DockTun and recreate DockTun to enable file management.</p>
-          </div>
-          <!-- Loading indicator -->
-          <div v-if="detailLoading" class="flex items-center justify-center py-16 text-slate-600 text-sm">
-            <RotateCcw class="h-5 w-5 animate-spin mr-2 text-cyan-600" />
-            <span>Loading container telemetry & metadata…</span>
-          </div>
-
-          <!-- ============================================== -->
-          <!-- TAB 1: OVERVIEW & TELEMETRY                    -->
-          <!-- ============================================== -->
-          <div v-else-if="selectedTab === 'overview'" class="space-y-5">
-            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4 text-xs space-y-2">
-              <h3 class="font-bold text-slate-800">Stack membership</h3>
-              <template v-if="selectedContainer.compose_project">
-                <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
-                  <dt class="text-slate-500">Compose project</dt><dd class="font-mono break-all">{{ selectedContainer.compose_project }}</dd>
-                  <dt class="text-slate-500">Service</dt><dd class="font-mono break-all">{{ selectedContainer.compose_service || 'Not reported by Docker' }}</dd>
-                  <dt class="text-slate-500">Source folder</dt><dd class="font-mono break-all">{{ selectedContainer.compose_working_dir || 'Not reported by Docker' }}</dd>
-                  <dt class="text-slate-500">Compose files</dt><dd class="font-mono break-all">{{ selectedContainer.compose_sources?.join(', ') || (selectedContainer.compose_config_files === '-' ? 'Streamed input; original files not recorded' : selectedContainer.compose_config_files) || 'Not reported by Docker' }}</dd>
-                </dl>
-                <p class="text-slate-500">Docker reports this membership. Container names and shared networks do not place services in the same stack. Different Compose projects stay separate.</p>
-                <p v-if="selectedContainer.compose_source_error" class="text-amber-700">{{ selectedContainer.compose_source_error }}</p>
-              </template>
-              <p v-else class="text-slate-500">Docker reports no Compose project for this container. It is standalone; its name does not associate it with another stack.</p>
-            </div>
-            <!-- Telemetry Gauges -->
-            <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <!-- CPU (Click to view full Metrics) -->
-              <router-link
-                :to="`/metrics?container=${encodeURIComponent(selectedContainer.name)}`"
-                class="rounded-lg border border-slate-200 bg-slate-50 p-3 hover:border-cyan-400 hover:shadow-xs transition group block"
-                :title="`Open live telemetry in Metrics for ${selectedContainer.name}`"
-              >
-                <div class="flex items-center justify-between text-xs text-slate-600 mb-1">
-                  <span class="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-[10px] group-hover:text-cyan-600 transition">
-                    <Cpu class="h-3.5 w-3.5 text-cyan-600" /> CPU Usage &rarr;
-                  </span>
-                  <span class="font-mono text-cyan-600 font-bold">{{ selectedContainer.cpu || '0.0%' }}</span>
-                </div>
-                <div class="h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    class="h-full bg-cyan-400 transition-all duration-300"
-                    :style="{ width: `${parseCpuPercent(selectedContainer.cpu)}%` }"
-                  ></div>
-                </div>
-              </router-link>
-
-              <!-- RAM -->
-              <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div class="flex items-center justify-between text-xs text-slate-600 mb-1">
-                  <span class="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-[10px]">
-                    <Layers class="h-3.5 w-3.5 text-emerald-600" /> Memory
-                  </span>
-                  <span class="font-mono text-emerald-600 font-bold truncate max-w-[90px]">
-                    {{ parseMemoryUsage(selectedContainer.memory).used }}
-                  </span>
-                </div>
-                <div class="text-[10px] text-slate-500 font-mono truncate">
-                  Limit: {{ parseMemoryUsage(selectedContainer.memory).total || 'Unlimited' }}
-                </div>
-              </div>
-
-              <!-- Network I/O -->
-              <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div class="flex items-center justify-between text-xs text-slate-600 mb-1">
-                  <span class="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-[10px]">
-                    <ArrowUpDown class="h-3.5 w-3.5 text-violet-400" /> Net Traffic
-                  </span>
-                </div>
-                <div class="font-mono text-xs text-slate-800 truncate">
-                  {{ selectedContainer.network || '0B / 0B' }}
-                </div>
-              </div>
-
-              <!-- Disk / Block I/O -->
-              <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <div class="flex items-center justify-between text-xs text-slate-600 mb-1">
-                  <span class="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-[10px]">
-                    <HardDrive class="h-3.5 w-3.5 text-amber-600" /> Block I/O
-                  </span>
-                  <span class="text-[10px] text-slate-500 font-mono">{{ selectedContainer.pids || 0 }} pids</span>
-                </div>
-                <div class="font-mono text-xs text-slate-800 truncate">
-                  {{ selectedContainer.block_io || '0B / 0B' }}
-                </div>
-              </div>
-            </div>
-
-            <!-- Image & Remote Registry Updates Card -->
-            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
-              <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-2">
-                  <Sparkles class="h-4 w-4 text-amber-600" /> Container Image & Registry Updates
-                </h3>
-                <div class="flex items-center gap-2">
-                  <button
-                    @click="checkSingleUpdate(selectedContainer)"
-                    :disabled="!!checkingSingleUpdate[selectedContainer.id]"
-                    class="cyber-btn-secondary flex items-center gap-1.5 text-xs text-amber-700 hover:border-amber-500/50"
-                  >
-                    <RotateCcw class="h-3 w-3" :class="checkingSingleUpdate[selectedContainer.id] ? 'animate-spin' : ''" />
-                    <span>{{ checkingSingleUpdate[selectedContainer.id] ? 'Checking…' : 'Check for Update' }}</span>
-                  </button>
-                  <button
-                    v-if="selectedContainer.update_available"
-                    @click="confirmUpdate(selectedContainer)"
-                    :disabled="!!updatingContainer[selectedContainer.id]"
-                    class="cyber-btn flex items-center gap-1.5 text-xs text-amber-200 border-amber-500 bg-amber-50/70 hover:bg-amber-100"
-                  >
-                    <ArrowUpCircle class="h-3.5 w-3.5 text-amber-600" :class="updatingContainer[selectedContainer.id] ? 'animate-spin' : ''" />
-                    <span>{{ updatingContainer[selectedContainer.id] ? 'Updating…' : 'Update to Latest' }}</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono">
-                <div>
-                  <span class="text-slate-500">Image Tag:</span>
-                  <span class="ml-2 text-cyan-700 font-bold">{{ selectedContainer.image }}</span>
-                </div>
-                <div>
-                  <span class="text-slate-500">Registry Status:</span>
-                  <span v-if="selectedContainer.update_available" class="ml-2 inline-flex items-center gap-1 text-amber-600 font-bold animate-pulse">
-                    <ArrowUpCircle class="h-3.5 w-3.5" />
-                    Update Available on Registry
-                  </span>
-                  <span v-else-if="selectedContainer.update_error && (selectedContainer.update_error.includes('built locally') || selectedContainer.update_error.includes('Local'))" class="ml-2 inline-flex items-center gap-1 text-cyan-700 font-semibold">
-                    <Info class="h-3.5 w-3.5" />
-                    Local / Git Managed
-                  </span>
-                  <span v-else-if="selectedContainer.update_checked_at && !selectedContainer.update_error" class="ml-2 inline-flex items-center gap-1 text-emerald-600 font-bold">
-                    <CheckCircle2 class="h-3.5 w-3.5" />
-                    Up to Date
-                  </span>
-                  <span v-else class="ml-2 text-slate-500">
-                    Not checked yet
-                  </span>
-                </div>
-                <div v-if="selectedContainer.current_digest" class="truncate">
-                  <span class="text-slate-500">Current Digest:</span>
-                  <span class="ml-2 text-slate-700 truncate" :title="selectedContainer.current_digest">{{ selectedContainer.current_digest.substring(0, 19) }}…</span>
-                </div>
-                <div v-if="selectedContainer.latest_digest" class="truncate">
-                  <span class="text-slate-500">Latest Remote Digest:</span>
-                  <span class="ml-2 text-amber-700 truncate" :title="selectedContainer.latest_digest">{{ selectedContainer.latest_digest.substring(0, 19) }}…</span>
-                </div>
-                <div v-if="selectedContainer.update_checked_at" class="md:col-span-2 text-slate-500 text-[11px]">
-                  Last checked: {{ selectedContainer.update_checked_at }}
-                </div>
-                <div v-if="selectedContainer.update_error" class="md:col-span-2 text-[11px]" :class="(selectedContainer.update_error.includes('built locally') || selectedContainer.update_error.includes('Local')) ? 'text-cyan-700/90' : 'text-amber-600/90'">
-                  Notice: {{ selectedContainer.update_error }}
-                </div>
-              </div>
-            </div>
-
-            <!-- Specifications Table -->
-            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
-              <h3 class="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-2">
-                <Info class="h-4 w-4 text-cyan-600" /> Container Specifications
-              </h3>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono">
-                <div>
-                  <span class="text-slate-500">Status / Uptime:</span>
-                  <span class="ml-2 text-slate-800">{{ selectedContainer.uptime || selectedContainer.status }}</span>
-                </div>
-                <div>
-                  <span class="text-slate-500">Restart Count:</span>
-                  <span class="ml-2 text-slate-800">{{ selectedContainer.restart_count || 0 }}</span>
-                </div>
-                <div>
-                  <span class="text-slate-500">IP Address:</span>
-                  <span class="ml-2 text-slate-800">{{ selectedContainer.ip_address || 'Host / Dynamic' }}</span>
-                </div>
-                <div>
-                  <span class="text-slate-500">Gateway:</span>
-                  <span class="ml-2 text-slate-800">{{ selectedContainer.gateway || '—' }}</span>
-                </div>
-                <div class="md:col-span-2 space-y-2">
-                  <span class="text-slate-500">Docker network attachments:</span>
-                  <div v-for="network in selectedContainer.networks || []" :key="network" class="flex items-center justify-between gap-3 rounded border border-slate-200 bg-white p-2">
-                    <code class="break-all">{{ network }}</code>
-                    <span v-if="selectedContainer.exposure?.tailscale_node === network" class="text-xs text-slate-500">Managed in Access</span>
-                    <button v-else-if="network !== 'host' && network !== 'none'" class="cyber-btn-secondary text-xs" :disabled="disconnectingNetwork[selectedContainer.id]" @click="disconnectContainerNetwork(selectedContainer, network)">Disconnect</button>
-                  </div>
-                  <p class="text-xs text-slate-500">Disconnect a network only when this container no longer needs it. Active Tailscale app networks are managed in Access.</p>
-                </div>
-                <div class="md:col-span-2">
-                  <span class="text-slate-500">Command:</span>
-                  <span class="ml-2 text-slate-700 break-all">{{ selectedContainer.command || '—' }}</span>
-                </div>
-                <div class="md:col-span-2">
-                  <span class="text-slate-500">Published Ports:</span>
-                  <span class="ml-2 text-cyan-700">{{ selectedContainer.ports || 'None (Internal only)' }}</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- Volumes & Mounts -->
-            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
-              <h3 class="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-2">
-                <HardDrive class="h-4 w-4 text-amber-600" /> Volumes & Mounts
-              </h3>
-              <div v-if="selectedContainer.mounts && selectedContainer.mounts.length > 0" class="space-y-2">
-                <div
-                  v-for="(m, i) in selectedContainer.mounts"
-                  :key="i"
-                  class="flex flex-col sm:flex-row sm:items-center justify-between rounded border border-slate-200/80 bg-white/60 p-2.5 text-xs font-mono gap-1"
-                >
-                  <div class="flex items-center gap-2 truncate">
-                    <span class="text-cyan-600 truncate" :title="m.source">{{ m.source }}</span>
-                    <span class="text-slate-500">➔</span>
-                    <span class="text-emerald-600 truncate" :title="m.destination">{{ m.destination }}</span>
-                  </div>
-                  <span class="text-[10px] rounded px-1.5 py-0.5 bg-slate-100 text-slate-600 self-start sm:self-auto">
-                    {{ m.mode || (m.rw ? 'Read/Write' : 'Read-Only') }}
-                  </span>
-                </div>
-              </div>
-              <p v-else class="text-xs text-slate-500">No persistent volume mounts mapped to this container.</p>
-            </div>
-
-            <!-- Environment Variables Table -->
-            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
-              <div class="flex items-center justify-between">
-                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-2">
-                  <Sliders class="h-4 w-4 text-violet-400" /> Environment Variables ({{ selectedContainer.env?.length || 0 }})
-                </h3>
-              </div>
-              <div v-if="selectedContainer.env && selectedContainer.env.length > 0" class="max-h-56 overflow-y-auto space-y-1 font-mono text-xs">
-                <div
-                  v-for="(e, i) in selectedContainer.env"
-                  :key="i"
-                  class="rounded bg-white/80 px-2 py-1 text-slate-700 break-all hover:bg-slate-100/60"
-                >
-                  {{ e }}
-                </div>
-              </div>
-              <p v-else class="text-xs text-slate-500">No custom environment variables found.</p>
-            </div>
-          </div>
-
-          <!-- ============================================== -->
-          <!-- TAB 2: ACCESS & NETWORKS                       -->
-          <!-- ============================================== -->
-          <div v-else-if="selectedTab === 'access'" class="space-y-5">
-            <!-- 1. PRIMARY LOCAL ACCESS (mDNS .local) -->
-            <div class="cyber-card space-y-3.5 border-indigo-200 bg-gradient-to-br from-indigo-50/60 to-white">
-              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-indigo-100 pb-3">
-                <div class="flex items-center gap-2">
-                  <Wifi class="h-4 w-4 text-indigo-600" />
-                  <div>
-                    <h3 class="text-sm font-bold text-slate-900">Local LAN Access (mDNS)</h3>
-                    <p class="text-xs text-slate-500">
-                      Local hostnames are advertised when DockTun's local proxy is running. Web services use the portless gateway; other protocols require a published host port and a compatible client.
-                    </p>
-                  </div>
-                </div>
-                <span class="rounded bg-indigo-100 px-2 py-0.5 text-[10px] font-mono font-semibold text-indigo-700">
-                  Automatic .local
-                </span>
-              </div>
-
-              <!-- Local URL Box -->
-              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border border-indigo-100 bg-white p-3.5 shadow-xs">
-                <div class="space-y-0.5">
-                  <div class="text-[10px] uppercase tracking-wider font-semibold text-indigo-600">Local LAN Address</div>
-                  <div class="font-mono text-sm font-bold text-slate-900">
-                    {{ localAddress(selectedContainer) }}
-                  </div>
-                </div>
-
-                <div class="flex items-center gap-2">
-                  <a
-                    v-if="hasLocalWebLink(selectedContainer.ports)"
-                    :href="localAddress(selectedContainer)"
-                    target="_blank"
-                    rel="noopener"
-                    class="cyber-btn flex items-center gap-1.5 text-xs text-white bg-indigo-600 hover:bg-indigo-700"
-                  >
-                    <span>Open</span>
-                    <ExternalLink class="h-3 w-3" />
-                  </a>
-                  <button
-                    @click="copyToClipboard('mdns', localAddress(selectedContainer))"
-                    class="cyber-btn-secondary text-xs flex items-center gap-1.5"
-                    title="Copy local mDNS address"
-                  >
-                    <Check v-if="copiedKey === 'mdns'" class="h-3 w-3 text-emerald-600" />
-                    <Copy v-else class="h-3 w-3" />
-                    <span>{{ copiedKey === 'mdns' ? 'Copied' : 'Copy' }}</span>
-                  </button>
-                </div>
-              </div>
-
-              <!-- Internal Network & Ports Info -->
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-xs text-slate-600">
-                <div class="rounded border border-slate-200 bg-slate-50/80 p-2">
-                  <span class="text-slate-500 text-[11px] block">Published host ports:</span>
-                  <span class="font-mono font-semibold text-slate-800">{{ selectedContainer.ports || 'None' }}</span>
-                </div>
-                <div class="rounded border border-slate-200 bg-slate-50/80 p-2">
-                  <span class="text-slate-500 text-[11px] block">Docker networks:</span>
-                  <span class="font-mono font-semibold text-slate-800 truncate block">{{ selectedContainer.networks?.join(', ') || 'bridge' }}</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- 2. REMOTE EXPOSURE (Cloudflare, Tailscale, WireGuard) -->
-            <ContainerExposure :container="selectedContainer" :settings="getExpose(selectedContainer.id)" :saving="exposeSaving[selectedContainer.id]" :message="exposeMsg[selectedContainer.id]" @save="saveExposure(selectedContainer)" />
-          </div>
-
-          <!-- ============================================== -->
-          <!-- TAB 3: COMPOSE (docker-compose.yml)            -->
-          <!-- ============================================== -->
-          <div v-else-if="selectedTab === 'compose'" class="space-y-4">
-            <!-- If Container is Linked to a Project -->
-            <div v-if="selectedContainer.project_id" class="space-y-4">
-              <div class="flex flex-col gap-3 border-b border-slate-200 pb-3">
-                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <h3 class="text-sm font-bold text-slate-900 flex items-center gap-2">
-                      <FileCode class="h-4 w-4 text-cyan-600" />
-                      <span>Stack Compose: {{ selectedContainer.project_name || selectedContainer.name }}</span>
-                    </h3>
-                    <p class="text-xs text-slate-600 font-mono">
-                      {{ selectedContainer.project_path }}/{{ composeFilename }}
-                    </p>
-                  </div>
-
-                  <!-- Stack Action Buttons -->
-                  <div class="flex flex-wrap items-center gap-1.5">
-                    <span v-if="composeMsg" class="text-xs font-medium mr-1" :class="composeEditor.error ? 'text-red-600' : 'text-emerald-600'">
-                      {{ composeMsg }}
-                    </span>
-
-                    <button
-                      @click="runStackAction(selectedContainer.project_id, 'up')"
-                      :disabled="!!stackActionLoading[selectedContainer.project_id] || !projectFileAccess?.available"
-                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-emerald-600 hover:border-emerald-500/60 hover:bg-emerald-50/30"
-                      title="docker compose up -d"
-                    >
-                      <Play class="h-3 w-3 fill-current" />
-                      <span>Stack Up</span>
-                    </button>
-
-                    <button
-                      @click="runStackAction(selectedContainer.project_id, 'down')"
-                      :disabled="!!stackActionLoading[selectedContainer.project_id] || !projectFileAccess?.available"
-                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-amber-600 hover:border-amber-500/60 hover:bg-amber-50/30"
-                      title="docker compose down"
-                    >
-                      <Square class="h-3 w-3 fill-current" />
-                      <span>Stack Down</span>
-                    </button>
-
-                    <button
-                      @click="runStackAction(selectedContainer.project_id, 'restart')"
-                      :disabled="!!stackActionLoading[selectedContainer.project_id] || !projectFileAccess?.available"
-                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-cyan-700 hover:border-cyan-500/60 hover:bg-cyan-50/30"
-                      title="docker compose restart"
-                    >
-                      <RotateCcw class="h-3 w-3" :class="stackActionLoading[selectedContainer.project_id] ? 'animate-spin' : ''" />
-                      <span>Restart</span>
-                    </button>
-
-                    <button
-                      @click="openDeployPrompt(selectedContainer.project_id, selectedContainer.project_name || selectedContainer.name)"
-                      :disabled="!!stackActionLoading[selectedContainer.project_id] || !projectFilesWritable"
-                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-violet-300 hover:border-violet-500/60 hover:bg-violet-950/30"
-                      title="Git pull & docker compose up -d --build"
-                    >
-                      <Rocket class="h-3 w-3 text-violet-400" />
-                      <span>Deploy / Pull</span>
-                    </button>
-
-                    <button
-                      @click="openStackHistory(selectedContainer.project_id, selectedContainer.project_name || selectedContainer.name)"
-                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-slate-700"
-                      title="View deployment & stack action history"
-                    >
-                      <History class="h-3 w-3 text-slate-600" />
-                      <span>History</span>
-                    </button>
-
-                    <button
-                      v-if="selectedContainer.project_name !== 'docktun'"
-                      @click="openDeleteStackPrompt(selectedContainer.project_id, selectedContainer.project_name || selectedContainer.name, selectedContainer.project_path)"
-                      :disabled="!!stackActionLoading[selectedContainer.project_id]"
-                      class="cyber-btn-secondary text-xs flex items-center gap-1 text-rose-600 hover:border-rose-400 hover:bg-rose-50/50"
-                      title="Delete this stack"
-                    >
-                      <Trash2 class="h-3 w-3" />
-                      <span>Delete Stack</span>
-                    </button>
-
-                    <button
-                      @click="saveContainerCompose(false)"
-                      :disabled="composeSaving || composeLoading || !composeEditor.loaded || !projectFilesWritable"
-                      class="cyber-btn text-xs flex items-center gap-1 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
-                      title="Save edits to docker-compose.yml"
-                    >
-                      <Save class="h-3 w-3" />
-                      <span>Save YAML</span>
-                    </button>
-                  </div>
-                </div>
-
-                <!-- Collapsible Git Continuous Deployment Configuration -->
-                <div class="rounded-lg border border-slate-200 bg-slate-50/70 p-3 text-xs space-y-2">
-                  <div class="flex items-center justify-between cursor-pointer" @click="showGitSettings = !showGitSettings">
-                    <div class="flex items-center gap-2">
-                      <GitBranch class="h-3.5 w-3.5 text-violet-400" />
-                      <span class="font-semibold text-slate-800">Git Repository & Auto-Deploy</span>
-                      <span v-if="currentProject?.repo_url" class="rounded bg-violet-950/80 border border-violet-800/60 px-1.5 py-0.2 font-mono text-[10px] text-violet-300 truncate max-w-xs">
-                        {{ currentProject.repo_url }}
-                      </span>
-                    </div>
-                    <span class="text-[11px] text-slate-500 font-mono">{{ showGitSettings ? 'Hide ▲' : 'Configure Git ▼' }}</span>
-                  </div>
-
-                  <div v-if="showGitSettings && currentProject" class="pt-2 border-t border-slate-200 space-y-2.5">
-                    <div class="grid gap-2.5 sm:grid-cols-3">
-                      <div class="sm:col-span-3">
-                        <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600 mb-1">Git Repository URL</label>
-                        <input v-model="currentProject.repo_url" class="cyber-input text-xs font-mono" placeholder="https://github.com/owner/repository.git" />
-                      </div>
-                      <div>
-                        <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600 mb-1">Git Username (Optional)</label>
-                        <input v-model="currentProject.git_username" class="cyber-input text-xs font-mono" placeholder="oauth2 or username" />
-                      </div>
-                      <div>
-                        <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600 mb-1">Git Token / PAT (Masked)</label>
-                        <input v-model="currentProject.git_token" type="password" class="cyber-input text-xs font-mono" placeholder="ghp_••••••••••••" />
-                      </div>
-                      <div class="flex items-end">
-                        <button
-                          @click="saveProjectGit"
-                          :disabled="projectGitSaving"
-                          class="cyber-btn w-full text-xs flex items-center justify-center gap-1.5"
-                        >
-                          <Save class="h-3.5 w-3.5" />
-                          <span>{{ projectGitSaving ? 'Saving…' : 'Save Git Settings' }}</span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Compose Code Editor -->
-              <div class="relative">
-                <textarea
-                  v-model="composeContent"
-                  :readonly="!projectFilesWritable"
-                  :disabled="!composeEditor.loaded || composeSaving"
-                  rows="18"
-                  spellcheck="false"
-                  :placeholder="composeLoading ? 'Loading Compose file…' : composeEditor.loaded ? 'Enter Compose YAML' : 'Compose file unavailable. See the error above.'"
-                  class="w-full rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-xs text-slate-800 focus:border-cyan-500 focus:outline-none leading-relaxed"
-                ></textarea>
-              </div>
-            </div>
-
-            <!-- If Container is Standalone (Offer Scaffolding) -->
-            <div v-else class="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center space-y-4">
-              <Code2 class="mx-auto h-10 w-10 text-cyan-600" />
-              <div class="max-w-md mx-auto space-y-1">
-                <h3 class="text-base font-bold text-slate-900">Standalone Container</h3>
-                <p class="text-xs text-slate-600">
-                  This container was created standalone (e.g. via <code class="text-cyan-700">docker run</code>)
-                  and is not currently tracked by a Compose project.
-                </p>
-                <p class="text-xs text-slate-500">
-                  DockTun can automatically generate a clean <code class="text-slate-700">docker-compose.yml</code>
-                  mirroring this container's image, volume mounts, environment variables, and ports, and link it as a project.
-                </p>
-              </div>
-
-              <div class="pt-2">
-                <button
-                  @click="scaffoldProject"
-                  :disabled="projectScaffolding"
-                  class="cyber-btn flex items-center gap-2 mx-auto text-xs text-cyan-700 border-cyan-500 bg-cyan-50/60 hover:bg-cyan-100/60 px-5 py-2.5"
-                >
-                  <RotateCcw v-if="projectScaffolding" class="h-4 w-4 animate-spin" />
-                  <Plus v-else class="h-4 w-4" />
-                  <span>{{ projectScaffolding ? 'Scaffolding Project…' : 'Generate Compose & Link Project' }}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- ============================================== -->
-          <!-- TAB 4: ENVIRONMENT (.env)                      -->
-          <!-- ============================================== -->
-          <div v-else-if="selectedTab === 'env'" class="space-y-4">
-            <div v-if="selectedContainer.project_id" class="space-y-4">
-              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
-                <div>
-                  <h3 class="text-sm font-bold text-slate-900 flex items-center gap-2">
-                    <Sliders class="h-4 w-4 text-violet-400" />
-                    <span>Environment File (.env)</span>
-                  </h3>
-                  <p class="text-xs text-slate-600 font-mono">
-                    {{ selectedContainer.project_path }}/.env
-                  </p>
-                </div>
-
-                <div class="flex items-center gap-2">
-                  <span v-if="envMsg" class="text-xs font-medium" :class="envEditor.error ? 'text-red-600' : 'text-emerald-600'">
-                    {{ envMsg }}
-                  </span>
-                  <button
-                    @click="loadContainerEnv(selectedContainer.project_id)"
-                    :disabled="envLoading"
-                    class="cyber-btn-secondary text-xs flex items-center gap-1"
-                  >
-                    <RotateCcw class="h-3 w-3" :class="envLoading ? 'animate-spin' : ''" />
-                    <span>Reload</span>
-                  </button>
-                  <button
-                    @click="saveContainerEnv(false)"
-                    :disabled="envSaving || envLoading || !envEditor.loaded || !projectFilesWritable"
-                    class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
-                  >
-                    <Save class="h-3.5 w-3.5" />
-                    <span>Save</span>
-                  </button>
-                  <button
-                    @click="saveContainerEnv(true)"
-                    :disabled="envSaving || envLoading || !envEditor.loaded || !projectFilesWritable"
-                    class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-700 border-emerald-600 bg-emerald-50/40 hover:bg-emerald-100/50"
-                  >
-                    <RotateCcw class="h-3.5 w-3.5" />
-                    <span>Save & Restart</span>
-                  </button>
-                </div>
-              </div>
-
-              <!-- .env Editor -->
-              <textarea
-                v-model="envContent"
-                :readonly="!projectFilesWritable"
-                :disabled="!envEditor.loaded || envSaving"
-                rows="18"
-                spellcheck="false"
-                placeholder="# Enter KEY=VALUE environment variables&#10;PORT=8080&#10;DEBUG=false"
-                class="w-full rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-xs text-slate-800 focus:border-violet-500 focus:outline-none leading-relaxed"
-              ></textarea>
-            </div>
-
-            <div v-else class="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center space-y-4">
-              <Sliders class="mx-auto h-10 w-10 text-violet-400" />
-              <div class="max-w-md mx-auto space-y-1">
-                <h3 class="text-base font-bold text-slate-900">Standalone Container</h3>
-                <p class="text-xs text-slate-600">
-                  Generate a project to manage persistent environment variables in a dedicated <code class="text-violet-300">.env</code> file.
-                </p>
-              </div>
-              <button
-                @click="scaffoldProject"
-                :disabled="projectScaffolding"
-                class="cyber-btn flex items-center gap-2 mx-auto text-xs text-cyan-700 border-cyan-500 bg-cyan-50/60 px-5 py-2.5"
-              >
-                <span>Generate Project & .env</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- ============================================== -->
-          <!-- TAB 5: FILES & STORAGE                         -->
-          <!-- ============================================== -->
-          <div v-else-if="selectedTab === 'files'" class="space-y-4">
-            <div v-if="selectedContainer.project_id" class="space-y-4">
-              <!-- Header & Breadcrumbs -->
-              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
-                <div class="flex items-center gap-2 text-xs font-mono">
-                  <FolderOpen class="h-4 w-4 text-amber-600" />
-                  <span class="text-slate-600 cursor-pointer hover:text-slate-800" @click="loadContainerFiles(selectedContainer.project_id, '')">
-                    {{ selectedContainer.project_path }}
-                  </span>
-                  <span v-if="currentDir" class="text-slate-600">/</span>
-                  <span v-if="currentDir" class="text-cyan-700">{{ currentDir }}</span>
-                </div>
-
-                <div class="flex items-center gap-2">
-                  <button
-                    v-if="currentDir"
-                    @click="loadContainerFiles(selectedContainer.project_id, currentDir.split('/').slice(0, -1).join('/'))"
-                    class="cyber-btn-secondary text-xs"
-                  >
-                    Up One Level
-                  </button>
-                  <button
-                    @click="showNewItemModal = true"
-                    :disabled="!projectFilesWritable"
-                    class="cyber-btn text-xs flex items-center gap-1.5"
-                  >
-                    <Plus class="h-3.5 w-3.5" />
-                    <span>New Item</span>
-                  </button>
-                  <button
-                    @click="loadContainerFiles(selectedContainer.project_id, currentDir)"
-                    :disabled="filesLoading"
-                    class="cyber-btn-secondary text-xs"
-                  >
-                    <RotateCcw class="h-3 w-3" :class="filesLoading ? 'animate-spin' : ''" />
-                  </button>
-                </div>
-              </div>
-
-              <p v-if="editingFileMsg" role="status" class="text-xs font-medium" :class="editingFileMsg.startsWith('Failed') || editingFileMsg.startsWith('Save failed') ? 'text-red-600' : 'text-emerald-600'">{{ editingFileMsg }}</p>
-              <!-- Active File Editor if editing a file -->
-              <div v-if="editingFile" class="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
-                <div class="flex items-center justify-between border-b border-slate-200 pb-2">
-                  <div class="flex items-center gap-2 text-xs font-mono text-cyan-700">
-                    <FileText class="h-4 w-4 text-cyan-600" />
-                    <span>{{ editingFile.path }}</span>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <button
-                      @click="saveCurrentContainerFile"
-                      :disabled="editingFileSaving || !projectFilesWritable"
-                      class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700"
-                    >
-                      <Save class="h-3 w-3" />
-                      <span>Save</span>
-                    </button>
-                    <button
-                      @click="editingFile = null"
-                      class="cyber-btn-secondary text-xs"
-                    >
-                      Close Editor
-                    </button>
-                  </div>
-                </div>
-                <textarea
-                  v-model="editingFile.content"
-                  :readonly="!projectFilesWritable"
-                  rows="16"
-                  spellcheck="false"
-                  class="w-full rounded border border-slate-200 bg-white p-3 font-mono text-xs text-slate-800 focus:outline-none"
-                ></textarea>
-              </div>
-
-              <!-- File List View -->
-              <div v-else class="rounded-xl border border-slate-200 bg-slate-50 divide-y divide-slate-200/80">
-                <div v-if="fileList.length === 0 && !filesLoading" class="p-8 text-center text-xs text-slate-500">
-                  Folder is empty.
-                </div>
-                <div
-                  v-for="item in fileList"
-                  :key="item.path"
-                  class="flex items-center justify-between px-4 py-2.5 text-xs hover:bg-white/60 transition-colors"
-                >
-                  <div
-                    class="flex items-center gap-2.5 cursor-pointer font-mono truncate"
-                    @click="openContainerFile(item)"
-                  >
-                    <Folder v-if="item.is_dir" class="h-4 w-4 text-amber-600 shrink-0" />
-                    <FileText v-else class="h-4 w-4 text-slate-600 shrink-0" />
-                    <span :class="item.is_dir ? 'text-slate-800 font-semibold hover:text-cyan-700' : 'text-slate-700 hover:text-cyan-700'">
-                      {{ item.name }}
-                    </span>
-                  </div>
-
-                  <div class="flex items-center gap-4 text-slate-500 font-mono text-[11px]">
-                    <span v-if="!item.is_dir">{{ (item.size / 1024).toFixed(1) }} KB</span>
-                    <span>{{ item.mod_time }}</span>
-                    <button
-                      @click="deleteContainerFile(item.path)"
-                      :disabled="!projectFilesWritable"
-                      class="text-slate-600 hover:text-red-600 transition-colors"
-                      title="Delete file"
-                    >
-                      <Trash2 class="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <!-- New Item Modal -->
-              <div v-if="showNewItemModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/80 p-4">
-                <div class="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-5 space-y-4">
-                  <h4 class="text-sm font-bold text-slate-900">Create New Item</h4>
-                  <div>
-                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Item Name</label>
-                    <input
-                      v-model="newItemName"
-                      type="text"
-                      placeholder="filename.txt or folder_name"
-                      class="cyber-input text-xs font-mono"
-                    />
-                  </div>
-                  <div class="flex items-center gap-2 text-xs text-slate-700">
-                    <input type="checkbox" id="isDirCheck" v-model="newItemIsDir" class="rounded bg-slate-50" />
-                    <label for="isDirCheck">Create as directory</label>
-                  </div>
-                  <div class="flex justify-end gap-2 pt-2">
-                    <button @click="showNewItemModal = false" class="cyber-btn-secondary text-xs">Cancel</button>
-                    <button @click="createContainerFileItem" class="cyber-btn text-xs text-cyan-700">Create</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div v-else class="space-y-4">
-              <div class="rounded-xl border border-slate-200 bg-slate-50 p-5 space-y-3">
-                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-2">
-                  <HardDrive class="h-4 w-4 text-amber-600" /> Container Mounts & Storage
-                </h3>
-                <div v-if="selectedContainer.mounts && selectedContainer.mounts.length > 0" class="space-y-2 font-mono text-xs">
-                  <div
-                    v-for="(m, i) in selectedContainer.mounts"
-                    :key="i"
-                    class="rounded border border-slate-200 bg-white/60 p-3 space-y-1"
-                  >
-                    <div class="flex items-center justify-between">
-                      <span class="text-slate-600">Host Path:</span>
-                      <span class="text-cyan-600">{{ m.source }}</span>
-                    </div>
-                    <div class="flex items-center justify-between">
-                      <span class="text-slate-600">Container Path:</span>
-                      <span class="text-emerald-600">{{ m.destination }}</span>
-                    </div>
-                    <div class="flex items-center justify-between text-[11px] text-slate-500 pt-1">
-                      <span>Permissions:</span>
-                      <span>{{ m.rw ? 'Read/Write' : 'Read-Only' }}</span>
-                    </div>
-                  </div>
-                </div>
-                <p v-else class="text-xs text-slate-500">No storage mounts configured.</p>
-              </div>
-
-              <div class="rounded-xl border border-slate-200 bg-slate-50 p-6 text-center space-y-3">
-                <FolderOpen class="mx-auto h-8 w-8 text-amber-600" />
-                <p class="text-xs text-slate-600">Want full web file browsing and editing for this container?</p>
-                <button
-                  @click="scaffoldProject"
-                  :disabled="projectScaffolding"
-                  class="cyber-btn text-xs text-cyan-700 border-cyan-500 bg-cyan-50/60"
-                >
-                  Generate Project File Tree
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- ============================================== -->
-          <!-- TAB 6: REALTIME LOGS                           -->
-          <!-- ============================================== -->
-          <div v-else-if="selectedTab === 'logs'" class="space-y-3">
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
-              <div class="space-y-0.5">
-                <div class="flex flex-wrap items-center gap-2">
-                  <ScrollText class="h-4 w-4 text-cyan-600" />
-                  <span class="text-sm font-bold text-slate-900 font-mono">{{ selectedContainer.name }}</span>
-                  <span class="rounded bg-slate-100 px-2 py-0.5 text-[10px] text-slate-600 font-mono">{{ selectedContainer.image }}</span>
-                  <span class="inline-flex items-center gap-1 rounded bg-emerald-50/60 border border-emerald-800/50 px-2 py-0.5 text-[10px] text-emerald-600 font-medium">
-                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    Isolated Service Logs
-                  </span>
-                </div>
-                <p class="text-[11px] text-slate-500 font-mono">
-                  Streaming stdout & stderr exclusively for container <span class="text-slate-600 font-bold">{{ selectedContainer.id?.slice(0, 12) }}</span>
-                </p>
-              </div>
-
-              <div class="flex flex-wrap items-center gap-2">
-                <label class="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
-                  <input type="checkbox" v-model="modalLogsAutoRefresh" class="rounded bg-slate-50" />
-                  <span>Live (3s)</span>
-                </label>
-
-                <label class="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
-                  <input type="checkbox" v-model="modalLogsTimestamps" @change="fetchModalLogs" class="rounded bg-slate-50" />
-                  <span>Timestamps</span>
-                </label>
-
-                <label class="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
-                  <input type="checkbox" v-model="modalLogsWrap" class="rounded bg-slate-50" />
-                  <span>Wrap</span>
-                </label>
-
-                <select
-                  v-model.number="modalLogsTail"
-                  @change="fetchModalLogs"
-                  class="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs text-slate-700 font-mono"
-                >
-                  <option :value="100">100 lines</option>
-                  <option :value="200">200 lines</option>
-                  <option :value="500">500 lines</option>
-                  <option :value="1000">1000 lines</option>
-                </select>
-
-                <button
-                  @click="copyToClipboard('logs', filteredModalLogs)"
-                  class="cyber-btn-secondary text-xs flex items-center gap-1"
-                  title="Copy logs"
-                >
-                  <Check v-if="copiedKey === 'logs'" class="h-3 w-3 text-emerald-600" />
-                  <Copy v-else class="h-3 w-3" />
-                  <span>Copy</span>
-                </button>
-
-                <button
-                  @click="fetchModalLogs"
-                  :disabled="modalLogsLoading"
-                  class="cyber-btn-secondary text-xs flex items-center gap-1"
-                >
-                  <RotateCcw class="h-3 w-3" :class="modalLogsLoading ? 'animate-spin' : ''" />
-                  <span>Refresh</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Filter Input Strip -->
-            <div class="flex items-center justify-between gap-3 bg-white/60 border border-slate-200/80 rounded-lg px-3 py-1.5">
-              <div class="flex items-center gap-2 flex-1">
-                <Search class="h-3.5 w-3.5 text-slate-500" />
-                <input
-                  v-model="modalLogsFilter"
-                  type="text"
-                  placeholder="Filter service logs (case-insensitive substring)..."
-                  class="w-full bg-transparent text-xs text-slate-800 placeholder-slate-500 focus:outline-none font-mono"
-                />
-              </div>
-              <span v-if="matchingLinesCount" class="text-[10px] text-cyan-600 font-mono whitespace-nowrap">
-                {{ matchingLinesCount.matched }} / {{ matchingLinesCount.total }} lines
-              </span>
-              <button
-                v-if="modalLogsFilter"
-                @click="modalLogsFilter = ''"
-                class="text-slate-500 hover:text-slate-700 text-xs"
-              >
-                Clear
-              </button>
-            </div>
-
-            <!-- Terminal Output Box -->
-            <div
-              class="max-h-[58vh] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-xs leading-5 text-slate-700"
-            >
-              <div v-if="modalLogsLoading" class="text-slate-500 flex items-center gap-2">
-                <RotateCcw class="h-3.5 w-3.5 animate-spin" /> Fetching latest logs for {{ selectedContainer.name }}…
-              </div>
-              <div v-else-if="!filteredModalLogs" class="text-slate-500 text-center py-6">
-                {{ modalLogsFilter ? 'No lines matching filter query.' : 'No logs recorded for this service container.' }}
-              </div>
-              <pre
-                v-else
-                class="font-mono text-[11px] leading-relaxed"
-                :class="modalLogsWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre overflow-x-auto'"
-              >{{ filteredModalLogs }}</pre>
-            </div>
-          </div>
-
-          <!-- ============================================== -->
-          <!-- TAB 7: TERMINAL (CONTAINER EXEC)               -->
-          <!-- ============================================== -->
-          <div v-else-if="selectedTab === 'exec'" class="space-y-4">
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
-              <div>
-                <h3 class="text-sm font-bold text-slate-900 flex items-center gap-2 font-mono">
-                  <Terminal class="h-4 w-4 text-cyan-600" />
-                  <span>Interactive Container Exec: {{ selectedContainer.name }}</span>
-                </h3>
-                <p class="text-[11px] text-slate-600 font-mono mt-0.5">
-                  Execute commands directly inside container via Docker exec
-                </p>
-              </div>
-
-              <!-- Quick command chips -->
-              <div class="flex flex-wrap items-center gap-1.5 text-xs font-mono">
-                <span class="text-[10px] text-slate-500 uppercase tracking-wider mr-1">Presets:</span>
-                <button
-                  v-for="preset in ['ls -la', 'ps aux', 'env', 'df -h', 'ip a', 'uptime']"
-                  :key="preset"
-                  @click="execCmd = preset; runContainerExec()"
-                  class="rounded bg-white border border-slate-200 px-2 py-0.5 text-[11px] text-slate-700 hover:border-cyan-700 hover:text-cyan-700 transition"
-                >
-                  {{ preset }}
-                </button>
-              </div>
-            </div>
-
-            <!-- Command Input Bar -->
-            <div class="flex items-center gap-2">
-              <div class="relative flex-1">
-                <span class="absolute left-3 top-2.5 font-mono text-cyan-600 text-xs font-bold">$</span>
-                <input
-                  v-model="execCmd"
-                  @keyup.enter="runContainerExec"
-                  placeholder="Enter command to run (e.g. ls -la, cat /etc/resolv.conf, curl localhost)..."
-                  class="cyber-input w-full pl-8 font-mono text-xs text-cyan-200"
-                  :disabled="execLoading"
-                />
-              </div>
-
-              <button
-                @click="runContainerExec"
-                :disabled="execLoading || !execCmd.trim()"
-                class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
-              >
-                <RotateCcw v-if="execLoading" class="h-3.5 w-3.5 animate-spin" />
-                <Play v-else class="h-3.5 w-3.5 fill-current" />
-                <span>{{ execLoading ? 'Running...' : 'Execute' }}</span>
-              </button>
-
-              <button
-                v-if="execOutput"
-                @click="execOutput = ''; execExitCode = null"
-                class="cyber-btn-secondary text-xs"
-                title="Clear output"
-              >
-                Clear
-              </button>
-            </div>
-
-            <!-- Output Box -->
-            <div class="space-y-2">
-              <div class="flex items-center justify-between text-xs font-mono text-slate-600">
-                <span class="text-[10px] uppercase tracking-wider">Console Output</span>
-                <span
-                  v-if="execExitCode !== null"
-                  class="rounded px-2 py-0.5 text-[10px] font-bold"
-                  :class="execExitCode === 0 ? 'bg-emerald-50 text-emerald-600 border border-emerald-800' : 'bg-red-50 text-red-600 border border-red-800'"
-                >
-                  Exit Code: {{ execExitCode }}
-                </span>
-              </div>
-
-              <div class="max-h-[50vh] min-h-[160px] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-xs leading-relaxed text-slate-800 shadow-inner">
-                <pre v-if="execOutput" class="whitespace-pre-wrap break-all">{{ execOutput }}</pre>
-                <p v-else class="text-slate-600 italic">No command has been executed yet. Enter a command or click a preset above.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+      :container="selectedContainer"
+      v-model:active-tab="selectedTab"
+      :action-loading="actionLoading"
+      :stack-action-loading="stackActionLoading"
+      :project-file-access="projectFileAccess"
+      :project-files-writable="projectFilesWritable"
+      :compose-filename="composeFilename"
+      v-model:compose-content="composeContent"
+      :compose-loading="composeLoading"
+      :compose-saving="composeSaving"
+      :compose-msg="composeMsg"
+      :compose-editor="composeEditor"
+      :current-project="currentProject"
+      :project-git-saving="projectGitSaving"
+      :project-scaffolding="projectScaffolding"
+      :detail-loading="detailLoading"
+      :disconnecting-network="disconnectingNetwork"
+      :checking-single-update="checkingSingleUpdate"
+      :updating-container="updatingContainer"
+      :expose-saving="exposeSaving"
+      :expose-msg="exposeMsg"
+      :get-expose="getExpose"
+      @close="closeContainerModal"
+      @run-action="runAction"
+      @run-stack-action="runStackAction"
+      @deploy-stack="openDeployPrompt"
+      @stack-history="openStackHistory"
+      @delete-stack="openDeleteStackPrompt"
+      @save-compose="saveContainerCompose"
+      @save-project-git="saveProjectGit"
+      @check-single-update="checkSingleUpdate"
+      @confirm-update="confirmUpdate"
+      @disconnect-network="disconnectContainerNetwork"
+      @scaffold-project="scaffoldProject"
+      @save-exposure="saveExposure"
+      @refresh-containers="fetchContainers"
+    />
 
     <!-- ============================================== -->
-    <!-- UPDATE CONFIRMATION MODAL                      -->
+    <!-- CONTAINER UPDATE MODALS (CONFIRM & RESULT)    -->
     <!-- ============================================== -->
-    <div
-      v-if="showUpdateConfirmModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-4 backdrop-blur-md"
-      @mousedown="onBackdropMouseDown"
-      @click="onBackdropClick($event, () => showUpdateConfirmModal = null)"
-    >
-      <div class="w-full max-w-lg rounded-xl border border-amber-500/40 bg-white p-6 shadow-sm space-y-5" @mousedown.stop @mouseup.stop @click.stop>
-        <div class="flex items-start justify-between">
-          <div class="flex items-center gap-3">
-            <div class="rounded-lg bg-amber-500/20 p-2.5 text-amber-600 border border-amber-500/30">
-              <ArrowUpCircle class="h-6 w-6" />
-            </div>
-            <div>
-              <h3 class="text-lg font-bold text-slate-900">Update Container</h3>
-              <p class="text-xs text-slate-600 font-mono">{{ showUpdateConfirmModal.container.name }}</p>
-            </div>
-          </div>
-          <button @click="showUpdateConfirmModal = null" class="text-slate-600 hover:text-slate-800">
-            <X class="h-5 w-5" />
-          </button>
-        </div>
-
-        <div class="space-y-2 text-xs" aria-live="polite"><p v-if="updatePlanLoading">Staging candidate image and checking migration safety. Your running container is unchanged.</p><p v-if="updatePlanError" role="alert" class="text-red-600">{{updatePlanError}}</p><div v-for="check in updatePlan?.checks||[]" :key="check.id" class="border-b border-slate-100 pb-2"><strong>{{check.label}} · {{check.status}}</strong><p class="mt-1">{{check.message}}</p></div><p class="text-amber-800">{{updatePlan?.rollback_scope}}</p></div>
-          <div class="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-xs font-mono">
-          <div class="flex justify-between">
-            <span class="text-slate-500 font-sans">Target Image:</span>
-            <span class="text-cyan-700 font-bold">{{ showUpdateConfirmModal.container.image }}</span>
-          </div>
-          <div v-if="showUpdateConfirmModal.container.project_name" class="flex justify-between">
-            <span class="text-slate-500 font-sans">Stack / Compose:</span>
-            <span class="text-emerald-600">{{ showUpdateConfirmModal.container.project_name }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-slate-500 font-sans">Cloudflared Network:</span>
-            <span :class="showUpdateConfirmModal.container.connected_to_cloudflared ? 'text-emerald-600 font-bold' : 'text-slate-600'">
-              {{ showUpdateConfirmModal.container.connected_to_cloudflared ? 'Yes (Will maintain connection)' : 'No' }}
-            </span>
-          </div>
-        </div>
-
-        <p class="text-xs text-slate-700 leading-relaxed">
-          DockTun will pull the latest image layers from the remote registry, cleanly recreate the container with your existing volume mounts, environment variables, published ports, and network routes, then verify health.
-        </p>
-
-        <div class="flex items-center justify-end gap-3 pt-2">
-          <button
-            @click="showUpdateConfirmModal = null"
-            class="cyber-btn-secondary text-xs"
-          >
-            Cancel
-          </button>
-          <button
-            @click="performUpdate(showUpdateConfirmModal.container)"
-              :disabled="updatePlanLoading || !updatePlan?.ready || !!updatePlanError"
-            class="cyber-btn flex items-center gap-2 text-xs text-amber-200 border-amber-500/80 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 font-bold shadow-lg shadow-amber-900/30"
-          >
-            <ArrowUpCircle class="h-4 w-4" />
-            <span>Apply verified image update</span>
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- ============================================== -->
-    <!-- UPDATE RESULT MODAL                            -->
-    <!-- ============================================== -->
-    <div
-      v-if="updateResultModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-4 backdrop-blur-md"
-      @mousedown="onBackdropMouseDown"
-      @click="onBackdropClick($event, () => updateResultModal = null)"
-    >
-      <div
-        class="w-full max-w-2xl rounded-xl border bg-white p-6 shadow-sm space-y-4"
-        :class="updateResultModal.success ? 'border-emerald-500/40' : 'border-red-500/40'"
-        @mousedown.stop
-        @mouseup.stop
-        @click.stop
-      >
-        <div class="flex items-start justify-between">
-          <div class="flex items-center gap-3">
-            <div
-              class="rounded-lg p-2.5 border"
-              :class="updateResultModal.success ? 'bg-emerald-500/20 text-emerald-600 border-emerald-500/30' : 'bg-red-500/20 text-red-600 border-red-500/30'"
-            >
-              <CheckCircle2 v-if="updateResultModal.success" class="h-6 w-6" />
-              <AlertCircle v-else class="h-6 w-6" />
-            </div>
-            <div>
-              <h3 class="text-lg font-bold text-slate-900">
-                {{ updateResultModal.success ? 'Container Updated Successfully' : 'Update Failed' }}
-              </h3>
-              <p class="text-xs text-slate-600 font-mono">{{ updateResultModal.name }}</p>
-            </div>
-          </div>
-          <button @click="updateResultModal = null" class="text-slate-600 hover:text-slate-800">
-            <X class="h-5 w-5" />
-          </button>
-        </div>
-
-        <div class="max-h-72 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-xs leading-relaxed text-slate-700 shadow-inner">
-          <pre class="whitespace-pre-wrap break-all">{{ updateResultModal.output }}</pre>
-        </div>
-
-        <div class="flex items-center justify-end">
-          <button
-            @click="updateResultModal = null"
-            class="cyber-btn text-xs"
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
-
+    <ContainerUpdateModal
+      :confirm-container="showUpdateConfirmModal?.container"
+      :result="updateResultModal"
+      :update-plan="updatePlan"
+      :update-plan-loading="updatePlanLoading"
+      :update-plan-error="updatePlanError"
+      @close-confirm="showUpdateConfirmModal = null"
+      @close-result="updateResultModal = null"
+      @confirm="performUpdate"
+    />
     <!-- ============================================== -->
     <!-- LAUNCH MODAL (DOCKER RUN & GIT STACK LAUNCHER) -->
     <!-- ============================================== -->
-    <div
-      v-if="showLaunchModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-4 backdrop-blur-md"
-      @mousedown="onBackdropMouseDown"
-      @click="onBackdropClick($event, onLaunchModalBackdropClick)"
-    >
-      <div
-        class="w-full rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-xl space-y-4 max-h-[94vh] flex flex-col"
-        :class="launchTab === 'templates' ? 'max-w-6xl' : 'max-w-4xl'"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Deploy an app or stack"
-        @mousedown.stop
-        @mouseup.stop
-        @click.stop
-      >
-        <div class="flex items-start justify-between border-b border-slate-200 pb-3 shrink-0">
-          <div>
-            <h3 class="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <Rocket class="h-5 w-5 text-cyan-600" />
-              <span>Deploy New Container or Stack</span>
-            </h3>
-            <p class="text-xs text-slate-600">Launch a Docker Compose stack, use app templates, execute Docker run commands, or connect a Git repository.</p>
-          </div>
-          <button @click="showLaunchModal = false" class="text-slate-600 hover:text-slate-800">
-            <X class="h-5 w-5" />
-          </button>
-        </div>
-
-        <!-- Mode Tabs -->
-        <div class="flex gap-2 border-b border-slate-200 pb-2 shrink-0 overflow-x-auto">
-          <button
-            @click="launchTab = 'compose'"
-            class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition shrink-0"
-            :class="launchTab === 'compose' ? 'bg-cyan-50/80 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
-          >
-            <FileCode class="h-3.5 w-3.5" />
-            <span>Docker Compose (YAML)</span>
-          </button>
-          <button
-            @click="launchTab = 'templates'"
-            class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition shrink-0"
-            :class="launchTab === 'templates' ? 'bg-cyan-50/80 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
-          >
-            <Sparkles class="h-3.5 w-3.5 text-amber-600" />
-            <span>App Templates</span>
-          </button>
-          <button
-            @click="launchTab = 'dockerrun'"
-            class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition shrink-0"
-            :class="launchTab === 'dockerrun' ? 'bg-cyan-50/80 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
-          >
-            <Terminal class="h-3.5 w-3.5" />
-            <span>Docker Run Command</span>
-          </button>
-          <button
-            @click="launchTab = 'gitstack'"
-            class="flex items-center gap-2 rounded px-3 py-1.5 text-xs font-semibold transition shrink-0"
-            :class="launchTab === 'gitstack' ? 'bg-cyan-50/80 text-cyan-700 border border-cyan-800/60' : 'text-slate-600 hover:text-slate-800'"
-          >
-            <GitBranch class="h-3.5 w-3.5" />
-            <span>Git / Remote Stack</span>
-          </button>
-        </div>
-
-        <!-- TAB 1: Docker Compose YAML Editor -->
-        <div v-if="launchTab === 'compose'" class="space-y-4 overflow-y-auto pr-1 flex-1">
-          <div class="grid gap-3 text-xs" :class="{ 'sm:grid-cols-2': !composeTemplateSource }">
-            <div>
-              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                Stack / Project Name <span class="text-rose-600">*</span>
-              </label>
-              <input
-                v-model="composeDeployForm.name"
-                class="cyber-input text-xs font-mono"
-                placeholder="e.g. my-stack"
-              />
-            </div>
-            <div v-if="!composeTemplateSource">
-              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                Host Working Directory Path (Optional)
-              </label>
-              <input
-                v-model="composeDeployForm.path"
-                class="cyber-input text-xs font-mono"
-                placeholder="Leave empty to use DockTun's persistent projects folder"
-              />
-            </div>
-          </div>
-
-          <TemplateSetup v-if="composeTemplateSource" :input="{ compose_content: composeDeployForm.compose_content, env_content: composeDeployForm.env_content }" @apply="applyTemplateSetup" @dirty="composeSetupDirty = $event" />
-          <details :open="!composeTemplateSource" class="rounded-xl border border-slate-200 p-3 space-y-3">
-            <summary class="text-xs font-medium text-slate-700 cursor-pointer">Advanced: Compose &amp; Environment</summary>
-            <div v-if="composeTemplateSource" class="space-y-1"><label class="block text-xs text-slate-600">Project folder (optional)</label><input v-model="composeDeployForm.path" class="cyber-input text-xs font-mono" placeholder="Leave empty to create the project in DockTun's projects storage"><p class="text-[11px] text-slate-500">Override only if you want the project files in another mounted folder.</p></div>
-          <div>
-            <!-- Banner when docker run command is pasted in Compose YAML tab -->
-            <div v-if="isPastedDockerRun" class="mb-2.5 rounded-lg border border-cyan-500/60 bg-cyan-50/80 p-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
-              <div class="flex items-center gap-2 text-cyan-800">
-                <Sparkles class="h-4 w-4 text-cyan-600 shrink-0" />
-                <span><strong>Docker Run command detected!</strong> Convert to clean Compose YAML, or DockTun will auto-convert when you deploy.</span>
-              </div>
-              <div class="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  @click="convertComposeDockerRun"
-                  class="cyber-btn py-1 px-2.5 text-[11px] text-cyan-700 bg-white border-cyan-600 font-bold"
-                >
-                  Convert to Compose YAML
-                </button>
-                <button
-                  type="button"
-                  @click="launchTab = 'dockerrun'; dockerRunCmd = composeDeployForm.compose_content"
-                  class="text-[11px] text-slate-600 hover:text-slate-900 underline font-mono"
-                >
-                  Switch to Docker Run
-                </button>
-              </div>
-            </div>
-
-            <div class="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
-              <div class="flex items-center gap-2">
-                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                  docker-compose.yml Content <span class="text-rose-600">*</span>
-                </label>
-                <button
-                  type="button"
-                  @click="composeDeployForm.compose_content = defaultComposeExample; if (!composeDeployForm.name) composeDeployForm.name = 'my-app'"
-                  class="text-[10px] text-cyan-600 hover:text-cyan-800 underline font-mono"
-                >
-                  Insert Example
-                </button>
-                <button
-                  v-if="composeDeployForm.compose_content"
-                  type="button"
-                  @click="composeDeployForm.compose_content = ''"
-                  class="text-[10px] text-slate-500 hover:text-rose-600 underline font-mono"
-                >
-                  Clear
-                </button>
-              </div>
-              <div class="flex flex-wrap items-center gap-1 text-xs">
-                <span class="text-[10px] uppercase font-semibold text-slate-500 mr-0.5">Quick Insert:</span>
-                <button
-                  type="button"
-                  @click="insertComposeSnippet('network')"
-                  class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[9px] text-cyan-700 hover:border-cyan-600 hover:bg-white transition"
-                >
-                  + Cloudflared Net
-                </button>
-                <button
-                  type="button"
-                  @click="insertComposeSnippet('restart')"
-                  class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[9px] text-cyan-700 hover:border-cyan-600 hover:bg-white transition"
-                >
-                  + Restart
-                </button>
-                <button
-                  type="button"
-                  @click="insertComposeSnippet('ports')"
-                  class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[9px] text-cyan-700 hover:border-cyan-600 hover:bg-white transition"
-                >
-                  + Port Map
-                </button>
-                <button
-                  type="button"
-                  @click="insertComposeSnippet('volumes')"
-                  class="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[9px] text-cyan-700 hover:border-cyan-600 hover:bg-white transition"
-                >
-                  + Volume
-                </button>
-              </div>
-            </div>
-            <textarea
-              v-model="composeDeployForm.compose_content"
-              rows="12"
-              class="cyber-input font-mono text-xs w-full leading-relaxed bg-slate-50 border-slate-200 text-slate-800"
-              placeholder="services:&#10;  app:&#10;    image: nginx:alpine&#10;    restart: unless-stopped"
-              spellcheck="false"
-              @focus="onComposeFocus"
-              @paste="onComposePaste"
-            ></textarea>
-          </div>
-
-          <!-- Collapsible .env Editor -->
-          <div class="border border-slate-200 rounded-lg bg-slate-50/60 p-3 space-y-2">
-            <button
-              type="button"
-              @click="composeDeployForm.show_env = !composeDeployForm.show_env"
-              class="w-full flex items-center justify-between text-xs font-semibold text-slate-700 hover:text-slate-900"
-            >
-              <div class="flex items-center gap-2">
-                <FileText class="h-3.5 w-3.5 text-amber-600" />
-                <span>Environment Variables (.env file)</span>
-                <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">Optional</span>
-              </div>
-              <ChevronDown class="h-4 w-4 transition-transform" :class="composeDeployForm.show_env ? 'rotate-180' : ''" />
-            </button>
-            <div v-if="composeDeployForm.show_env" class="pt-2">
-              <textarea
-                v-model="composeDeployForm.env_content"
-                rows="4"
-                class="cyber-input font-mono text-xs w-full leading-relaxed bg-slate-50 border-slate-200 text-slate-800"
-                placeholder="KEY=value&#10;POSTGRES_PASSWORD=secret"
-                spellcheck="false"
-              ></textarea>
-            </div>
-          </div>
-
-          </details>
-          <TemplateFiles v-if="composeTemplateSource" :input="{ compose_content: composeDeployForm.compose_content, env_content: composeDeployForm.env_content }" :source="composeProjectSource" :files="composeFiles" @apply="applyTemplateFiles" @dirty="composeFilesDirty = $event" @source="composeProjectSource = $event" @environment="composeDeployForm.env_content = $event" />
-          <label v-if="composeTemplateSource" class="flex items-center gap-2 text-xs text-slate-700"><input v-model="composeCompatibility" type="checkbox">Check image architecture, availability, disk space and app permissions</label>
-          <p v-if="composeTemplateSource" class="text-xs text-slate-500 break-all">Template source: {{ composeTemplateSource }}</p>
-          <ComposeStorageReview ref="composeReview" :input="{ name: composeDeployForm.name, path: composeDeployForm.path, compose_content: composeDeployForm.compose_content, env_content: composeDeployForm.env_content, files: composeFiles, compatibility: Boolean(composeTemplateSource) && composeCompatibility }" @ready="composeStorageReady = $event" />
-          <div class="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
-            <button @click="showLaunchModal = false" class="cyber-btn-secondary text-xs">Cancel</button>
-            <button
-              @click="deployComposeStack"
-              :disabled="composeDeploying || (composeTemplateSource && (composeSetupDirty || composeFilesDirty)) || !composeStorageReady || !composeDeployForm.name.trim() || !composeDeployForm.compose_content.trim()"
-              class="cyber-btn flex items-center gap-2 text-xs text-cyan-700 border-cyan-500/80 bg-cyan-50/40 hover:bg-cyan-100/60 font-bold"
-            >
-              <RotateCcw v-if="composeDeploying" class="h-3.5 w-3.5 animate-spin" />
-              <Rocket v-else class="h-3.5 w-3.5" />
-              <span>{{ composeDeploying ? 'Deploying Stack…' : 'Deploy Compose Stack (up -d)' }}</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- TAB 2: Compose App Templates -->
-        <div v-if="launchTab === 'templates'" class="space-y-4 overflow-y-auto pr-1 flex-1">
-          <CommunityTemplates @select="selectCommunityTemplate" />
-        </div>
-
-        <!-- TAB 3: Docker Run -->
-        <div v-if="launchTab === 'dockerrun'" class="space-y-4 overflow-y-auto pr-1 flex-1">
-          <div>
-            <div class="flex items-center justify-between mb-1">
-              <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
-                Docker Run Command
-              </label>
-              <div class="flex items-center gap-2">
-                <button
-                  type="button"
-                  @click="dockerRunCmd = defaultExampleCmd"
-                  class="text-[10px] text-cyan-600 hover:text-cyan-800 underline font-mono"
-                >
-                  Insert Example
-                </button>
-                <button
-                  v-if="dockerRunCmd"
-                  type="button"
-                  @click="dockerRunCmd = ''"
-                  class="text-[10px] text-slate-500 hover:text-rose-600 underline font-mono"
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
-            <textarea
-              v-model="dockerRunCmd"
-              rows="3"
-              class="cyber-input font-mono text-xs w-full leading-relaxed"
-              :placeholder="defaultExampleCmd"
-              @focus="onDockerRunFocus"
-              @paste="onDockerRunPaste"
-            ></textarea>
-          </div>
-
-          <!-- Snippet helper buttons -->
-          <div class="flex flex-wrap items-center gap-1.5 text-xs">
-            <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mr-1">Insert:</span>
-            <button
-              v-for="snip in ['--restart unless-stopped', '-p 8080:80', '-v /data:/data', '-e KEY=val', '--network cloudflared']"
-              :key="snip"
-              type="button"
-              @click="insertDockerSnippet(snip)"
-              class="rounded border border-slate-200 bg-slate-50 px-2 py-0.5 font-mono text-[10px] text-cyan-700 hover:border-cyan-600 hover:bg-white transition"
-            >
-              + {{ snip }}
-            </button>
-          </div>
-
-          <div class="grid gap-3 sm:grid-cols-2 text-xs">
-            <div>
-              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Execution Mode</label>
-              <div class="space-y-1">
-                <label class="flex items-center gap-2 cursor-pointer text-slate-700">
-                  <input type="radio" v-model="dockerRunMode" value="compose" class="accent-cyan-500" />
-                  <span>Convert to Compose Stack (Recommended)</span>
-                </label>
-                <label class="flex items-center gap-2 cursor-pointer text-slate-700">
-                  <input type="radio" v-model="dockerRunMode" value="direct" class="accent-cyan-500" />
-                  <span>Direct Docker Run</span>
-                </label>
-              </div>
-            </div>
-
-            <div>
-              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Custom Project / Stack Name</label>
-              <input v-model="dockerRunCustomName" class="cyber-input text-xs" placeholder="Leave blank to infer from --name" />
-            </div>
-          </div>
-
-          <!-- Output Log -->
-          <div v-if="dockerRunLines.length > 0 || dockerRunLoading" class="max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono text-[11px] text-slate-700 leading-relaxed shadow-inner">
-            <div v-for="(line, idx) in dockerRunLines" :key="idx">{{ line }}</div>
-            <div v-if="dockerRunLoading" class="text-cyan-600 animate-pulse mt-1">&rarr; Running command...</div>
-          </div>
-
-          <div class="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
-            <button @click="showLaunchModal = false" class="cyber-btn-secondary text-xs">Cancel</button>
-            <button
-              @click="runDockerCommand"
-              :disabled="dockerRunLoading || !dockerRunCmd.trim()"
-              class="cyber-btn flex items-center gap-2 text-xs text-cyan-700 border-cyan-500/80 bg-cyan-50/40 hover:bg-cyan-100/60 font-bold"
-            >
-              <RotateCcw v-if="dockerRunLoading" class="h-3.5 w-3.5 animate-spin" />
-              <Play v-else class="h-3.5 w-3.5 fill-current" />
-              <span>{{ dockerRunLoading ? 'Executing…' : 'Run Container' }}</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- TAB 4: Git / Compose Stack -->
-        <div v-if="launchTab === 'gitstack'" class="space-y-4 overflow-y-auto pr-1 flex-1">
-          <div class="grid gap-3 sm:grid-cols-2 text-xs">
-            <div>
-              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Stack Name</label>
-              <input v-model="newProjectForm.name" class="cyber-input text-xs font-mono" placeholder="e.g. mediastorm" />
-            </div>
-            <div>
-              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Host Directory Path</label>
-              <input v-model="newProjectForm.path" class="cyber-input text-xs font-mono" placeholder="./projects/mediastorm" />
-            </div>
-            <div class="sm:col-span-2">
-              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Git Repository URL (Optional)</label>
-              <input v-model="newProjectForm.repo_url" class="cyber-input text-xs font-mono" placeholder="https://github.com/owner/repo.git" />
-            </div>
-            <div>
-              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Git Username (Optional)</label>
-              <input v-model="newProjectForm.git_username" class="cyber-input text-xs font-mono" placeholder="oauth2 or username" />
-            </div>
-            <div>
-              <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Git Token / PAT (Optional)</label>
-              <input v-model="newProjectForm.git_token" type="password" class="cyber-input text-xs font-mono" placeholder="ghp_••••••••••••" />
-            </div>
-          </div>
-
-          <div class="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
-            <button @click="showLaunchModal = false" class="cyber-btn-secondary text-xs">Cancel</button>
-            <button
-              @click="submitNewProject"
-              :disabled="newProjectSaving || !newProjectForm.name.trim() || !newProjectForm.path.trim()"
-              class="cyber-btn flex items-center gap-2 text-xs text-emerald-700 border-emerald-500/80 bg-emerald-50/40 hover:bg-emerald-100/60 font-bold"
-            >
-              <RotateCcw v-if="newProjectSaving" class="h-3.5 w-3.5 animate-spin" />
-              <Package v-else class="h-3.5 w-3.5" />
-              <span>{{ newProjectSaving ? 'Creating…' : 'Register & Initialize Stack' }}</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <StackLaunchModal
+      v-model="showLaunchModal"
+      @deployed="onStackDeployed"
+      @refresh="fetchContainers"
+      @close="showLaunchModal = false"
+    />
 
     <!-- ============================================== -->
     <!-- STACK OUTPUT STREAM MODAL                      -->
     <!-- ============================================== -->
-    <div
+    <StackOutputModal
       v-if="stackOutputModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-4 backdrop-blur-md"
-      @mousedown="onBackdropMouseDown"
-      @click="onBackdropClick($event, () => stackOutputModal = null)"
-    >
-      <div class="w-full max-w-3xl rounded-xl border border-slate-300 bg-white p-6 shadow-sm space-y-4" @mousedown.stop @mouseup.stop @click.stop>
-        <div class="flex items-start justify-between border-b border-slate-200 pb-3">
-          <div class="flex items-center gap-3">
-            <div class="rounded-lg p-2 bg-slate-100 text-cyan-600">
-              <Terminal class="h-5 w-5" />
-            </div>
-            <div>
-              <h3 class="text-base font-bold text-slate-900">{{ stackOutputModal.title }}</h3>
-              <p class="text-xs text-slate-600 font-mono">
-                {{ stackOutputModal.done ? 'Action finished.' : 'Action in progress… streaming output.' }}
-              </p>
-            </div>
-          </div>
-          <button @click="stackOutputModal = null" class="text-slate-600 hover:text-slate-800">
-            <X class="h-5 w-5" />
-          </button>
-        </div>
-
-        <div class="max-h-96 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-xs leading-relaxed text-slate-700 shadow-inner">
-          <div v-for="(line, idx) in stackOutputModal.lines" :key="idx" class="whitespace-pre-wrap break-all">{{ line }}</div>
-          <div v-if="!stackOutputModal.done" class="text-cyan-600 animate-pulse mt-2">&rarr; Running docker-compose command...</div>
-        </div>
-
-        <div class="flex items-center justify-between text-xs">
-          <span :class="stackOutputFailed ? 'text-rose-600 font-semibold' : (stackOutputModal.done ? 'text-emerald-600' : 'text-amber-600')">
-            {{ !stackOutputModal.done ? '● Processing...' : (stackOutputFailed ? '✗ Action Failed' : '✓ Completed') }}
-          </span>
-          <button @click="stackOutputModal = null" class="cyber-btn text-xs">Close</button>
-        </div>
-      </div>
-    </div>
+      :modal="stackOutputModal"
+      :failed="stackOutputFailed"
+      @close="stackOutputModal = null"
+    />
 
     <!-- ============================================== -->
     <!-- DEPLOY PROMPT MODAL                            -->
     <!-- ============================================== -->
-    <div
+    <StackDeployModal
       v-if="showDeployPromptModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-4 backdrop-blur-md"
-      @mousedown="onBackdropMouseDown"
-      @click="onBackdropClick($event, () => showDeployPromptModal = null)"
-    >
-      <div class="w-full max-w-md rounded-xl border border-violet-500/40 bg-white p-6 shadow-sm space-y-4" @mousedown.stop @mouseup.stop @click.stop>
-        <div class="flex items-start justify-between border-b border-slate-200 pb-3">
-          <div class="flex items-center gap-2 text-violet-300 font-bold">
-            <Rocket class="h-5 w-5" />
-            <span>Deploy Stack: {{ showDeployPromptModal.projectName }}</span>
-          </div>
-          <button @click="showDeployPromptModal = null" class="text-slate-600 hover:text-slate-800">
-            <X class="h-5 w-5" />
-          </button>
-        </div>
-
-        <div class="space-y-2 text-xs">
-          <label class="block font-semibold uppercase tracking-wider text-slate-600">Git Branch, Tag, or Ref</label>
-          <input
-            v-model="deployBranchName"
-            class="cyber-input font-mono text-xs"
-            placeholder="main"
-            @keyup.enter="confirmDeploy"
-          />
-          <p class="text-[11px] text-slate-500">
-            DockTun will fetch remote changes, checkout this ref, git pull, and execute <code class="text-cyan-600 font-mono">docker compose up -d --build</code>.
-          </p>
-        </div>
-
-        <div class="flex items-center justify-end gap-3 pt-2">
-          <button @click="showDeployPromptModal = null" class="cyber-btn-secondary text-xs">Cancel</button>
-          <button
-            @click="confirmDeploy"
-            class="cyber-btn flex items-center gap-1.5 text-xs text-violet-300 border-violet-600 bg-violet-950/40 hover:bg-violet-900/60 font-bold"
-          >
-            <Rocket class="h-3.5 w-3.5" />
-            <span>Start Deployment</span>
-          </button>
-        </div>
-      </div>
-    </div>
+      :modal="showDeployPromptModal"
+      v-model="deployBranchName"
+      @confirm="confirmDeploy"
+      @close="showDeployPromptModal = null"
+    />
 
     <!-- ============================================== -->
     <!-- STACK HISTORY MODAL                            -->
     <!-- ============================================== -->
-    <div
+    <StackHistoryModal
       v-if="stackHistoryModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-4 backdrop-blur-md"
-      @mousedown="onBackdropMouseDown"
-      @click="onBackdropClick($event, () => stackHistoryModal = null)"
-    >
-      <div class="w-full max-w-2xl rounded-xl border border-slate-300 bg-white p-6 shadow-sm space-y-4" @mousedown.stop @mouseup.stop @click.stop>
-        <div class="flex items-start justify-between border-b border-slate-200 pb-3">
-          <div class="flex items-center gap-2.5">
-            <History class="h-5 w-5 text-cyan-600" />
-            <div>
-              <h3 class="text-base font-bold text-slate-900">Stack Action History</h3>
-              <p class="text-xs text-slate-600 font-mono">{{ stackHistoryModal.projectName }}</p>
-            </div>
-          </div>
-          <button @click="stackHistoryModal = null" class="text-slate-600 hover:text-slate-800">
-            <X class="h-5 w-5" />
-          </button>
-        </div>
-
-        <div v-if="stackHistoryModal.items.length === 0" class="py-8 text-center text-xs text-slate-500">
-          No recorded actions found for this stack.
-        </div>
-
-        <div v-else class="max-h-80 overflow-y-auto divide-y divide-slate-200/80 pr-1">
-          <div
-            v-for="(item, idx) in stackHistoryModal.items"
-            :key="idx"
-            class="py-2.5 flex items-start justify-between gap-3 text-xs"
-          >
-            <div>
-              <div class="flex items-center gap-2">
-                <span class="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-cyan-700 uppercase">
-                  {{ item.action || 'Action' }}
-                </span>
-                <span class="text-slate-700 font-mono">{{ item.created_at || item.timestamp }}</span>
-              </div>
-              <div v-if="item.detail" class="mt-1 font-mono text-[11px] text-slate-600 line-clamp-2">
-                {{ item.detail }}
-              </div>
-            </div>
-            <span class="text-[10px] text-slate-500 font-mono shrink-0">{{ item.ip || 'Local' }}</span>
-          </div>
-        </div>
-
-        <div class="flex items-center justify-end pt-2">
-          <button @click="stackHistoryModal = null" class="cyber-btn text-xs">Close</button>
-        </div>
-      </div>
-    </div>
+      :modal="stackHistoryModal"
+      @close="stackHistoryModal = null"
+    />
 
     <!-- ============================================== -->
     <!-- DELETE STACK CONFIRMATION MODAL               -->
     <!-- ============================================== -->
-    <div
+    <StackDeleteModal
       v-if="showDeleteStackModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs"
-      @mousedown="onBackdropMouseDown"
-      @click="onBackdropClick($event, () => showDeleteStackModal = null)"
-    >
-      <div class="w-full max-w-md rounded-xl border border-rose-200 bg-white p-6 shadow-xl space-y-4" @mousedown.stop @mouseup.stop @click.stop>
-        <div class="flex items-start gap-3">
-          <div class="rounded-full bg-rose-100 p-2 text-rose-600 shrink-0">
-            <Trash2 class="h-5 w-5" />
-          </div>
-          <div>
-            <h3 class="text-base font-bold text-slate-900">Delete Stack</h3>
-            <p class="text-xs text-slate-600 mt-0.5">
-              Are you sure you want to delete stack <strong class="text-slate-900 font-mono">{{ showDeleteStackModal.projectName }}</strong>?
-            </p>
-          </div>
-        </div>
-
-        <div class="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3.5 text-xs">
-          <label class="flex items-start gap-2 cursor-pointer">
-            <input type="checkbox" v-model="deleteStackDown" class="mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer" />
-            <div>
-              <span class="font-semibold text-slate-800">Stop and remove stack containers</span>
-              <p class="text-slate-500 text-[11px]">Stops and removes this stack’s containers and Compose networks. Volumes, images, and external networks are kept. Uncheck to forget the saved project only; existing containers will still appear in the container list.</p>
-            </div>
-          </label>
-
-          <label class="flex items-start gap-2 pt-2 border-t border-slate-200" :class="deleteStackFolderAvailable && !deleteStackLoading ? 'cursor-pointer' : 'cursor-not-allowed'">
-            <input type="checkbox" v-model="deleteStackRemoveFiles" :disabled="deleteStackFolderChecking || !deleteStackFolderAvailable || deleteStackLoading" aria-describedby="delete-stack-folder-help" class="mt-0.5 rounded border-slate-300 text-rose-600 focus:ring-rose-500 disabled:opacity-40 disabled:cursor-not-allowed" />
-            <div>
-              <span class="font-semibold" :class="deleteStackFolderAvailable ? 'text-rose-700' : 'text-slate-400'">Delete project folder from disk</span>
-              <p id="delete-stack-folder-help" role="status" aria-live="polite" class="text-slate-500 text-[11px]">
-                <template v-if="deleteStackFolderChecking">Checking whether the project folder can be removed…</template>
-                <template v-else-if="!deleteStackFolderAvailable">{{ deleteStackFolderReason }}</template>
-                <template v-else>Permanently removes <code class="font-mono">{{ showDeleteStackModal.path }}</code>, including files stored inside it. Only folders inside DockTun’s projects folder can be removed.</template>
-              </p>
-            </div>
-          </label>
-        </div>
-
-        <div class="flex items-center justify-end gap-2 pt-2">
-          <button
-            type="button"
-            @click="showDeleteStackModal = null"
-            class="cyber-btn-secondary text-xs"
-            :disabled="deleteStackLoading"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            @click="confirmDeleteStack"
-            class="cyber-btn flex items-center gap-1.5 text-xs text-white bg-rose-600 hover:bg-rose-700 font-semibold"
-            :disabled="deleteStackLoading"
-          >
-            <RotateCcw v-if="deleteStackLoading" class="h-3.5 w-3.5 animate-spin" />
-            <Trash2 v-else class="h-3.5 w-3.5" />
-            <span>{{ deleteStackLoading ? 'Deleting…' : 'Delete Stack' }}</span>
-          </button>
-        </div>
-      </div>
-    </div>
+      :modal="showDeleteStackModal"
+      v-model:delete-down="deleteStackDown"
+      v-model:remove-files="deleteStackRemoveFiles"
+      :loading="deleteStackLoading"
+      :folder-checking="deleteStackFolderChecking"
+      :folder-available="deleteStackFolderAvailable"
+      :folder-reason="deleteStackFolderReason"
+      @confirm="confirmDeleteStack"
+      @close="showDeleteStackModal = null"
+    />
   </div>
 </template>
