@@ -325,6 +325,9 @@ func (s *DockerContainers) List() ([]Container, error) {
 		}
 
 		ingress, found := ingressMap[c.Name]
+		if !found {
+			ingress, found = ingressMap[strings.ToLower(c.Name)]
+		}
 		setContainerExposure(&c, projectExposure(dbExposures[c.Name], ingress, found))
 
 		if c.Status == "" {
@@ -577,6 +580,9 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 	}
 
 	ingress, found := s.loadCloudflareIngressMap()[c.Name]
+	if !found {
+		ingress, found = s.loadCloudflareIngressMap()[strings.ToLower(c.Name)]
+	}
 	setContainerExposure(&c, projectExposure(s.getExposureFromDB(c.Name), ingress, found))
 
 	// Mounts
@@ -1154,6 +1160,9 @@ func (s *DockerContainers) GetExposure(id string) (ExposureSettings, error) {
 	}
 
 	ingress, found := s.loadCloudflareIngressMap()[name]
+	if !found {
+		ingress, found = s.loadCloudflareIngressMap()[strings.ToLower(name)]
+	}
 	return projectExposure(s.getExposureFromDB(name), ingress, found), nil
 }
 
@@ -1161,10 +1170,13 @@ func cleanHostname(h string) string {
 	h = strings.TrimSpace(h)
 	h = strings.TrimPrefix(h, "https://")
 	h = strings.TrimPrefix(h, "http://")
-	h = strings.TrimRight(h, "/")
+	if idx := strings.IndexAny(h, "/?# \t\r\n"); idx != -1 {
+		h = h[:idx]
+	}
 	if idx := strings.Index(h, ":"); idx != -1 {
 		h = h[:idx]
 	}
+	h = strings.Trim(h, ".")
 	return strings.ToLower(h)
 }
 
@@ -1194,6 +1206,7 @@ func (s *DockerContainers) detectPrimaryPort(nameOrID string) string {
 }
 
 func (s *DockerContainers) normalizeTarget(containerName, rawTarget string) string {
+	containerName = strings.TrimPrefix(strings.TrimSpace(containerName), "/")
 	target := strings.TrimSpace(rawTarget)
 	defaultPort := s.detectPrimaryPort(containerName)
 	if target == "" {
@@ -1217,7 +1230,10 @@ func (s *DockerContainers) normalizeTarget(containerName, rawTarget string) stri
 	if idx := strings.Index(rest, "/"); idx != -1 {
 		hostPart = rest[:idx]
 	}
-	if strings.Contains(hostPart, ":") {
+	if host, port, err := net.SplitHostPort(hostPart); err == nil {
+		hostPart = host
+		portPart = port
+	} else if strings.Contains(hostPart, ":") && !strings.HasPrefix(hostPart, "[") {
 		parts := strings.Split(hostPart, ":")
 		hostPart = parts[0]
 		portPart = parts[1]
@@ -1260,12 +1276,26 @@ func (s *DockerContainers) UpdateExposure(id string, settings ExposureSettings) 
 		return fmt.Errorf("enter the existing VPN address and port; WireGuard/custom mesh routing must already be configured")
 	}
 	if settings.Mode == "public" {
- if err:=s.exposureHostnameAvailable(name,settings.Hostname);err!=nil{return err}
-		if cleanHostname(settings.Hostname) == "" {
+		cleanHost := cleanHostname(settings.Hostname)
+		if cleanHost == "" {
 			return fmt.Errorf("enter the public hostname to expose")
+		}
+		if err := s.exposureHostnameAvailable(name, settings.Hostname); err != nil {
+			return err
 		}
 		if err := s.validateCloudflarePublish(); err != nil {
 			return err
+		}
+		target := s.normalizeTarget(name, settings.Target)
+		u, err := url.Parse(target)
+		if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "tcp") || u.User != nil {
+			return fmt.Errorf("target must be a valid http, https, or tcp service URL without credentials")
+		}
+		if portStr := u.Port(); portStr != "" {
+			p, err := strconv.Atoi(portStr)
+			if err != nil || p < 1 || p > 65535 {
+				return fmt.Errorf("target port must be 1–65535")
+			}
 		}
 	}
 
@@ -1389,7 +1419,9 @@ func (s *DockerContainers) syncCloudflareIngress(containerName string, settings 
 			continue
 		}
 		// If rule matches container name or hostname
-		if strings.Contains(rule.Service, containerName) || (cleanHost != "" && cleanHostname(rule.Hostname) == cleanHost) {
+		ruleHost := ingressContainer(rule.Service)
+		matchesContainer := ruleHost != "" && strings.EqualFold(ruleHost, containerName)
+		if matchesContainer || (cleanHost != "" && cleanHostname(rule.Hostname) == cleanHost) {
 			if rule.OriginRequest != nil {
 				existingOriginReq = rule.OriginRequest
 			}

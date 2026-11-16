@@ -10,6 +10,11 @@ import {
 } from 'lucide-vue-next'
 import StackGroupRow, { type ContainerGroup } from './StackGroupRow.vue'
 import ContainerTableRow, { type ContainerRowItem } from './ContainerTableRow.vue'
+import {
+  sortContainers,
+  calculateStackSelection,
+  calculateTableSelection
+} from '../../../lib/containers-table.mjs'
 
 const props = defineProps<{
   groups: ContainerGroup[]
@@ -41,13 +46,21 @@ const emit = defineEmits<{
   (e: 'confirm-update', container: ContainerRowItem): void
 }>()
 
-type SortField = 'name' | 'image' | 'ports' | 'exposure' | 'cpu' | 'uptime'
+export type SortField = 'name' | 'image' | 'ports' | 'exposure' | 'ingress' | 'cpu' | 'memory' | 'uptime'
 
-const sortBy = ref<SortField>((localStorage.getItem('docktun:table_sort_by') as SortField) || 'name')
-const sortOrder = ref<'asc' | 'desc'>((localStorage.getItem('docktun:table_sort_order') as 'asc' | 'desc') || 'asc')
+function safeGetItem(key: string, fallback: string): string {
+  try {
+    return localStorage.getItem(key) || fallback
+  } catch {
+    return fallback
+  }
+}
+
+const sortBy = ref<SortField>((safeGetItem('docktun:table_sort_by', 'name') as SortField))
+const sortOrder = ref<'asc' | 'desc'>((safeGetItem('docktun:table_sort_order', 'asc') as 'asc' | 'desc'))
 
 function toggleSort(field: SortField) {
-  if (sortBy.value === field) {
+  if (sortBy.value === field || (field === 'ingress' && sortBy.value === 'exposure') || (field === 'exposure' && sortBy.value === 'ingress')) {
     sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
   } else {
     sortBy.value = field
@@ -61,37 +74,8 @@ function toggleSort(field: SortField) {
   }
 }
 
-function parseCpu(c: ContainerRowItem): number {
-  if (!c.running || !c.cpu) return 0
-  const n = parseFloat(c.cpu.replace('%', ''))
-  return isNaN(n) ? 0 : n
-}
-
 function sortContainerList(list: ContainerRowItem[]): ContainerRowItem[] {
-  return [...list].sort((a, b) => {
-    let comparison = 0
-    switch (sortBy.value) {
-      case 'name':
-        comparison = a.name.localeCompare(b.name)
-        break
-      case 'image':
-        comparison = (a.image || '').localeCompare(b.image || '')
-        break
-      case 'ports':
-        comparison = (a.ports || '').localeCompare(b.ports || '')
-        break
-      case 'exposure':
-        comparison = (a.hostname || a.exposure_mode || '').localeCompare(b.hostname || b.exposure_mode || '')
-        break
-      case 'cpu':
-        comparison = parseCpu(a) - parseCpu(b)
-        break
-      case 'uptime':
-        comparison = (a.uptime || a.status || '').localeCompare(b.uptime || b.status || '')
-        break
-    }
-    return sortOrder.value === 'asc' ? comparison : -comparison
-  })
+  return sortContainers(list, sortBy.value, sortOrder.value)
 }
 
 const sortedGroups = computed<ContainerGroup[]>(() => {
@@ -105,21 +89,14 @@ const sortedFlatContainers = computed<ContainerRowItem[]>(() => {
   return sortContainerList(props.flatContainers)
 })
 
-const totalContainersCount = computed(() => {
-  return props.flatContainers.length
+const tableSelection = computed(() => {
+  return calculateTableSelection(props.flatContainers, props.selectedContainerIds)
 })
 
-const selectedCount = computed(() => {
-  return props.flatContainers.filter((c) => props.selectedContainerIds[c.id]).length
-})
-
-const isAllSelected = computed(() => {
-  return totalContainersCount.value > 0 && selectedCount.value === totalContainersCount.value
-})
-
-const isIndeterminate = computed(() => {
-  return selectedCount.value > 0 && selectedCount.value < totalContainersCount.value
-})
+const isAllSelected = computed(() => tableSelection.value.isAllSelected)
+const isIndeterminate = computed(() => tableSelection.value.isIndeterminate)
+const totalContainersCount = computed(() => tableSelection.value.totalCount)
+const selectedCount = computed(() => tableSelection.value.selectedCount)
 
 const allStacksCollapsed = computed(() => {
   const stackGroups = props.groups.filter((g) => g.isStack)
@@ -226,12 +203,12 @@ const allStacksCollapsed = computed(() => {
             <th class="py-2.5 px-3 min-w-[150px] max-w-[190px]">
               <button
                 type="button"
-                @click="toggleSort('exposure')"
+                @click="toggleSort('ingress')"
                 class="flex items-center gap-1 hover:text-cyan-800 transition-colors cursor-pointer text-left font-semibold"
               >
                 <span>Ingress & Exposure</span>
-                <ArrowUp v-if="sortBy === 'exposure' && sortOrder === 'asc'" class="h-3 w-3 text-cyan-600" />
-                <ArrowDown v-else-if="sortBy === 'exposure' && sortOrder === 'desc'" class="h-3 w-3 text-cyan-600" />
+                <ArrowUp v-if="(sortBy === 'exposure' || sortBy === 'ingress') && sortOrder === 'asc'" class="h-3 w-3 text-cyan-600" />
+                <ArrowDown v-else-if="(sortBy === 'exposure' || sortBy === 'ingress') && sortOrder === 'desc'" class="h-3 w-3 text-cyan-600" />
                 <ArrowUpDown v-else class="h-3 w-3 text-slate-400 opacity-60" />
               </button>
             </th>
@@ -244,8 +221,8 @@ const allStacksCollapsed = computed(() => {
                 class="flex items-center gap-1 hover:text-cyan-800 transition-colors cursor-pointer text-left font-semibold"
               >
                 <span>CPU / RAM</span>
-                <ArrowUp v-if="sortBy === 'cpu' && sortOrder === 'asc'" class="h-3 w-3 text-cyan-600" />
-                <ArrowDown v-else-if="sortBy === 'cpu' && sortOrder === 'desc'" class="h-3 w-3 text-cyan-600" />
+                <ArrowUp v-if="(sortBy === 'cpu' || sortBy === 'memory') && sortOrder === 'asc'" class="h-3 w-3 text-cyan-600" />
+                <ArrowDown v-else-if="(sortBy === 'cpu' || sortBy === 'memory') && sortOrder === 'desc'" class="h-3 w-3 text-cyan-600" />
                 <ArrowUpDown v-else class="h-3 w-3 text-slate-400 opacity-60" />
               </button>
             </th>
@@ -280,8 +257,8 @@ const allStacksCollapsed = computed(() => {
               <StackGroupRow
                 :group="group"
                 :is-collapsed="Boolean(collapsedStacks[group.key])"
-                :is-selected="group.containers.length > 0 && group.containers.every((c) => selectedContainerIds[c.id])"
-                :is-indeterminate="group.containers.some((c) => selectedContainerIds[c.id]) && !group.containers.every((c) => selectedContainerIds[c.id])"
+                :is-selected="calculateStackSelection(group.containers, selectedContainerIds).isSelected"
+                :is-indeterminate="calculateStackSelection(group.containers, selectedContainerIds).isIndeterminate"
                 :stack-action-loading="stackActionLoading"
                 @toggle-collapse="emit('toggle-collapse', $event)"
                 @toggle-select-stack="emit('toggle-select-stack', $event)"

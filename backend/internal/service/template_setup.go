@@ -316,6 +316,9 @@ func ConfigureTemplate(input TemplateSetupInput) (TemplateSetup, error) {
 				}
 			} else if environment.Kind == yaml.SequenceNode {
 				for _, node := range environment.Content {
+					if node == nil {
+						continue
+					}
 					key, value, ok := strings.Cut(node.Value, "=")
 					if !ok {
 						continue
@@ -330,6 +333,9 @@ func ConfigureTemplate(input TemplateSetupInput) (TemplateSetup, error) {
 		}
 		if ports := setupGet(service, "ports"); ports != nil && ports.Kind == yaml.SequenceNode {
 			for _, node := range ports.Content {
+				if node == nil {
+					continue
+				}
 				publishedValue, _, protocol, target, editable := setupPortBinding(node)
 				if !editable {
 					continue
@@ -364,6 +370,9 @@ func ConfigureTemplate(input TemplateSetupInput) (TemplateSetup, error) {
 		}
 		if mounts := setupGet(service, "volumes"); mounts != nil && mounts.Kind == yaml.SequenceNode {
 			for index, node := range mounts.Content {
+				if node == nil {
+					continue
+				}
 				source, target, mode := "", "", ""
 				kind := "bind"
 				if node.Kind == yaml.ScalarNode {

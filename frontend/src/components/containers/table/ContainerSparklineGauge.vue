@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { parseCpuPercent, parseMemoryUsage } from '../../../lib/containers-table.mjs'
 
 const props = defineProps<{
   cpu?: string
@@ -8,9 +9,8 @@ const props = defineProps<{
 }>()
 
 const cpuPercent = computed<number>(() => {
-  if (!props.running || !props.cpu) return 0
-  const val = parseFloat(props.cpu.replace('%', '').trim())
-  return isNaN(val) ? 0 : Math.min(Math.max(val, 0), 100)
+  const val = parseCpuPercent(props.cpu, props.running)
+  return Math.min(Math.max(val, 0), 100)
 })
 
 const cpuColorClass = computed(() => {
@@ -20,34 +20,7 @@ const cpuColorClass = computed(() => {
 })
 
 const memoryInfo = computed(() => {
-  if (!props.running || !props.memory) {
-    return { used: '—', total: '', percent: 0 }
-  }
-  const parts = props.memory.split('/')
-  const used = parts[0]?.trim() || '—'
-  const total = parts[1]?.trim() || ''
-
-  // Attempt to parse bytes for a ratio if both exist
-  let percent = 0
-  if (parts.length === 2) {
-    const parseSize = (str: string): number => {
-      const match = str.match(/^([\d.]+)\s*([a-zA-Z]+)?$/)
-      if (!match) return 0
-      const num = parseFloat(match[1])
-      const unit = (match[2] || '').toUpperCase()
-      if (unit.startsWith('G')) return num * 1024
-      if (unit.startsWith('M')) return num
-      if (unit.startsWith('K')) return num / 1024
-      return num / (1024 * 1024)
-    }
-    const uNum = parseSize(used)
-    const tNum = parseSize(total)
-    if (tNum > 0) {
-      percent = Math.min(Math.max(Math.round((uNum / tNum) * 100), 0), 100)
-    }
-  }
-
-  return { used, total, percent }
+  return parseMemoryUsage(props.memory, props.running)
 })
 
 const memoryColorClass = computed(() => {

@@ -48,6 +48,9 @@ func repairComposeVolumes(content []byte) ([]byte, bool) {
 			continue
 		}
 		for _, mount := range mounts.Content {
+			if mount == nil {
+				continue
+			}
 			source := ""
 			if mount.Kind == yaml.ScalarNode {
 				if len(mount.Value) > 2 && mount.Value[1] == ':' && (mount.Value[2] == '/' || mount.Value[2] == '\\') {

@@ -4,6 +4,19 @@ import { createProjectFileEditor } from '../lib/project-file-editor.mjs'
 import { settingsEqual, syncExposureDraft } from '../lib/exposure-draft.mjs'
 import { getPrimaryPort, cleanContainerName, hasLocalWebLink, localAddress } from '../lib/containerPorts.mjs'
 import { containerStack, stackProjectID } from '../lib/container-stacks.mjs'
+import {
+  parseCpuPercent,
+  parseMemoryUsage,
+  loadCollapsedStacks,
+  saveCollapsedStacks,
+  toggleStackCollapse as toggleStackCollapseHelper,
+  collapseAllStacks as collapseAllStacksHelper,
+  expandAllStacks as expandAllStacksHelper,
+  calculateStackSelection,
+  toggleStackSelection,
+  calculateTableSelection,
+  toggleTableSelection,
+} from '../lib/containers-table.mjs'
 import ContainerInspectorModal from '../components/containers/modals/ContainerInspectorModal.vue'
 import ViewDensityToggle from '../components/containers/table/ViewDensityToggle.vue'
 import ContainersTable from '../components/containers/table/ContainersTable.vue'
@@ -402,10 +415,7 @@ const summary = computed(() => {
 
   let totalCpu = 0
   containers.value.forEach((c) => {
-    if (c.running && c.cpu) {
-      const parsed = parseFloat(c.cpu.replace('%', ''))
-      if (!isNaN(parsed)) totalCpu += parsed
-    }
+    totalCpu += parseCpuPercent(c.cpu, c.running)
   })
 
   return {
@@ -419,22 +429,7 @@ const summary = computed(() => {
   }
 })
 
-function parseCpuPercent(cpuStr?: string): number {
-  if (!cpuStr) return 0
-  const n = parseFloat(cpuStr.replace('%', ''))
-  return isNaN(n) ? 0 : Math.min(n, 100)
-}
-
-function parseMemoryUsage(memStr?: string): { used: string; total: string; percent: number } {
-  if (!memStr) return { used: '—', total: '—', percent: 0 }
-  const parts = memStr.split('/')
-  if (parts.length >= 2) {
-    const used = parts[0].trim()
-    const total = parts[1].trim()
-    return { used, total, percent: 0 }
-  }
-  return { used: memStr, total: '', percent: 0 }
-}
+// parseCpuPercent and parseMemoryUsage imported from ../lib/containers-table.mjs
 
 interface ContainerGroup {
   key: string
@@ -453,30 +448,28 @@ interface ContainerGroup {
 
 // Group By Stack & Collapsible States
 const groupByStack = ref(localStorage.getItem('docktun_group_by_stack') !== 'false')
-const collapsedStacks = ref<Record<string, boolean>>(
-  JSON.parse(localStorage.getItem('docktun_collapsed_stacks') || '{}')
-)
+const collapsedStacks = ref<Record<string, boolean>>(loadCollapsedStacks(localStorage))
 
 function toggleGroupByStack() {
   groupByStack.value = !groupByStack.value
-  localStorage.setItem('docktun_group_by_stack', String(groupByStack.value))
+  try {
+    localStorage.setItem('docktun_group_by_stack', String(groupByStack.value))
+  } catch {}
 }
 
 function toggleStackCollapse(key: string) {
-  collapsedStacks.value[key] = !collapsedStacks.value[key]
-  localStorage.setItem('docktun_collapsed_stacks', JSON.stringify(collapsedStacks.value))
+  collapsedStacks.value = toggleStackCollapseHelper(collapsedStacks.value, key)
+  saveCollapsedStacks(localStorage, collapsedStacks.value)
 }
 
 function collapseAllStacks() {
-  containerGroups.value.forEach((g) => {
-    collapsedStacks.value[g.key] = true
-  })
-  localStorage.setItem('docktun_collapsed_stacks', JSON.stringify(collapsedStacks.value))
+  collapsedStacks.value = collapseAllStacksHelper(containerGroups.value)
+  saveCollapsedStacks(localStorage, collapsedStacks.value)
 }
 
 function expandAllStacks() {
-  collapsedStacks.value = {}
-  localStorage.setItem('docktun_collapsed_stacks', '{}')
+  collapsedStacks.value = expandAllStacksHelper()
+  saveCollapsedStacks(localStorage, collapsedStacks.value)
 }
 
 // View Density Mode (table vs grid)
@@ -495,7 +488,7 @@ function toggleSelectContainer(id: string, selected: boolean) {
 }
 
 const selectedCount = computed(() => {
-  return Object.values(selectedContainerIds.value).filter(Boolean).length
+  return filteredContainers.value.filter((c) => selectedContainerIds.value[c.id]).length
 })
 
 const allSelected = computed(() => {
@@ -504,26 +497,11 @@ const allSelected = computed(() => {
 })
 
 function toggleSelectAll(selected?: boolean) {
-  if (selected === false || (selected === undefined && allSelected.value)) {
-    selectedContainerIds.value = {}
-  } else {
-    const next: Record<string, boolean> = {}
-    filteredContainers.value.forEach((c) => {
-      next[c.id] = true
-    })
-    selectedContainerIds.value = next
-  }
+  selectedContainerIds.value = toggleTableSelection(filteredContainers.value, selectedContainerIds.value, selected)
 }
 
 function toggleSelectStack(group: ContainerGroup) {
-  const allInGroup = group.containers.every((c) => selectedContainerIds.value[c.id])
-  group.containers.forEach((c) => {
-    if (allInGroup) {
-      delete selectedContainerIds.value[c.id]
-    } else {
-      selectedContainerIds.value[c.id] = true
-    }
-  })
+  selectedContainerIds.value = toggleStackSelection(group.containers, selectedContainerIds.value)
 }
 
 async function runBatchAction(action: 'start' | 'stop' | 'restart') {
@@ -569,10 +547,7 @@ const containerGroups = computed<ContainerGroup[]>(() => {
   if (!groupByStack.value) {
     let cpuSum = 0
     list.forEach((c) => {
-      if (c.running && c.cpu) {
-        const p = parseFloat(c.cpu.replace('%', ''))
-        if (!isNaN(p)) cpuSum += p
-      }
+      cpuSum += parseCpuPercent(c.cpu, c.running)
     })
     return [
       {
@@ -603,10 +578,7 @@ const containerGroups = computed<ContainerGroup[]>(() => {
   map.forEach((items, key) => {
     let cpuSum = 0
     items.forEach((c) => {
-      if (c.running && c.cpu) {
-        const p = parseFloat(c.cpu.replace('%', ''))
-        if (!isNaN(p)) cpuSum += p
-      }
+      cpuSum += parseCpuPercent(c.cpu, c.running)
     })
 
     const isStack = key !== '__standalone__'

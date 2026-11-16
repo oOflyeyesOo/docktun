@@ -21,6 +21,7 @@ import {
 } from 'lucide-vue-next'
 import ContainerSparklineGauge from './ContainerSparklineGauge.vue'
 import { hasLocalWebLink, localAddress } from '../../../lib/containerPorts.mjs'
+import { getDisplayPort } from '../../../lib/containers-table.mjs'
 
 export interface ContainerRowItem {
   id: string
@@ -152,7 +153,7 @@ function handleMenuAction(action: () => void) {
           </div>
 
           <div class="flex items-center gap-1 text-[10px] text-slate-500 font-mono">
-            <span>{{ container.id.slice(0, 10) }}</span>
+            <span>{{ (container.id || '').slice(0, 10) }}</span>
             <span v-if="!isStackChild && container.project_name" class="rounded bg-slate-100 px-1 text-slate-600">
               {{ container.project_name }}
             </span>
@@ -195,7 +196,7 @@ function handleMenuAction(action: () => void) {
             class="inline-flex items-center gap-1 rounded bg-cyan-50/80 border border-cyan-200 px-1.5 py-0.5 font-mono text-[10px] font-medium text-cyan-800 hover:bg-cyan-100 hover:text-cyan-900 transition-colors"
             title="Open local web service"
           >
-            <span>{{ container.ports.split(',')[0].trim() }}</span>
+            <span>{{ getDisplayPort(container.ports) }}</span>
             <ExternalLink class="h-2.5 w-2.5 text-cyan-600" />
           </a>
           <span

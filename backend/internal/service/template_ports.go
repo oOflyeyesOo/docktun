@@ -21,6 +21,9 @@ import (
 // remain intact in Compose rather than borrowing the next editable field.
 func setupPortBinding(entry *yaml.Node) (published, ip, protocol, target string, editable bool) {
 	protocol = "tcp"
+	if entry == nil {
+		return
+	}
 	if entry.Kind == yaml.MappingNode {
 		published = setupString(setupGet(entry, "published"))
 		target = setupString(setupGet(entry, "target"))
