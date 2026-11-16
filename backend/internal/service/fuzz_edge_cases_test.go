@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 	"gopkg.in/yaml.v3"
 )
 
@@ -266,9 +268,10 @@ func TestCorruptedDockerStatsAndInspect(t *testing.T) {
 	}
 
 	for _, sample := range corruptedStatsOutputs {
-		// Mock collector
+		currentSample := sample
+		containers.statsMu.Lock()
 		containers.statsCollector = func() map[string]liveStats {
-			lines := strings.Split(strings.TrimSpace(sample), "\n")
+			lines := strings.Split(strings.TrimSpace(currentSample), "\n")
 			statsMap := make(map[string]liveStats)
 			for _, line := range lines {
 				parts := strings.Split(line, "\t")
@@ -279,10 +282,21 @@ func TestCorruptedDockerStatsAndInspect(t *testing.T) {
 			}
 			return statsMap
 		}
+		containers.statsTime = time.Time{} // Force cache refresh
+		containers.statsMu.Unlock()
+
 		// Must not panic
 		stats := containers.getCachedStats()
 		if stats == nil {
 			t.Errorf("expected non-nil stats map")
+		}
+
+		// Wait for any running background collector to complete before next iteration
+		for i := 0; i < 50; i++ {
+			if atomic.LoadInt32(&containers.statsRunning) == 0 {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
 		}
 	}
 }

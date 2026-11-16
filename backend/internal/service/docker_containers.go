@@ -363,6 +363,10 @@ func (s *DockerContainers) List() ([]Container, error) {
 
 func (s *DockerContainers) getCachedStats() map[string]liveStats {
 	s.statsMu.RLock()
+	collect := s.statsCollector
+	if collect == nil {
+		collect = s.collectAllStats
+	}
 	sampledAt := s.statsTime
 	cached := make(map[string]liveStats, len(s.statsCache))
 	for name, value := range s.statsCache {
@@ -375,18 +379,14 @@ func (s *DockerContainers) getCachedStats() map[string]liveStats {
 		return cached
 	}
 	if atomic.CompareAndSwapInt32(&s.statsRunning, 0, 1) {
-		go func() {
+		go func(fn func() map[string]liveStats) {
 			defer atomic.StoreInt32(&s.statsRunning, 0)
-			collect := s.statsCollector
-			if collect == nil {
-				collect = s.collectAllStats
-			}
-			fresh := collect()
+			fresh := fn()
 			s.statsMu.Lock()
 			s.statsCache = fresh
 			s.statsTime = time.Now()
 			s.statsMu.Unlock()
-		}()
+		}(collect)
 	}
 	// Never block inventory or inspection on Docker's multi-second CPU sample.
 	// Missing readings stay unavailable until the next sample arrives.
