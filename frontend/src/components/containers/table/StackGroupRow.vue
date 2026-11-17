@@ -91,7 +91,7 @@ function handleMenuAction(action: () => void) {
               class="h-4 w-4"
               :class="group.isStack ? 'text-indigo-600' : 'text-slate-500'"
             />
-            <span class="font-mono font-bold text-xs text-slate-900 group-hover:text-cyan-800 transition-colors">
+            <span class="font-mono font-bold text-xs text-slate-900 group-hover:text-cyan-800 transition-colors truncate max-w-[200px] sm:max-w-xs" :title="group.name">
               {{ group.name }}
             </span>
           </button>

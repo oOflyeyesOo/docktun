@@ -17,6 +17,12 @@ import {
   toggleStackCollapse,
   collapseAllStacks,
   expandAllStacks,
+  shouldIncludeEmptyProjects,
+  filterContainerGroups,
+  formatStackCount,
+  formatContainerCount,
+  formatTableSummary,
+  formatImageIdentifier,
 } from './containers-table.mjs'
 
 test('CPU parsing handles standard, fractional, multi-core, stopped and malformed inputs', () => {
@@ -359,3 +365,201 @@ test('Accordion collapse state persistence and malformed JSON recovery in localS
   const expandedAll = expandAllStacks()
   assert.deepEqual(expandedAll, {})
 })
+
+test('Stack filtering logic excludes empty stacks when status filters or search queries are active', () => {
+  // 1. shouldIncludeEmptyProjects predicate
+  // Default: 'all' filter and empty search -> true
+  assert.equal(shouldIncludeEmptyProjects('all', ''), true)
+  assert.equal(shouldIncludeEmptyProjects(undefined, undefined), true)
+  assert.equal(shouldIncludeEmptyProjects('', ''), true)
+  assert.equal(shouldIncludeEmptyProjects('all', '   '), true)
+  assert.equal(shouldIncludeEmptyProjects({ statusFilter: 'all', searchQuery: '' }), true)
+
+  // Status filters: stopped, updates, exposed, running, public, private, local -> false
+  assert.equal(shouldIncludeEmptyProjects('stopped', ''), false)
+  assert.equal(shouldIncludeEmptyProjects('updates', ''), false)
+  assert.equal(shouldIncludeEmptyProjects('exposed', ''), false)
+  assert.equal(shouldIncludeEmptyProjects('running', ''), false)
+  assert.equal(shouldIncludeEmptyProjects('public', ''), false)
+  assert.equal(shouldIncludeEmptyProjects('private', ''), false)
+  assert.equal(shouldIncludeEmptyProjects('local', ''), false)
+  assert.equal(shouldIncludeEmptyProjects({ statusFilter: 'stopped' }), false)
+  assert.equal(shouldIncludeEmptyProjects({ filter: 'updates' }), false)
+  assert.equal(shouldIncludeEmptyProjects({ statusFilter: 'exposed' }), false)
+
+  // Non-empty search query -> false (even with 'all' status filter)
+  assert.equal(shouldIncludeEmptyProjects('all', 'redis'), false)
+  assert.equal(shouldIncludeEmptyProjects('all', '  web '), false)
+  assert.equal(shouldIncludeEmptyProjects('', 'nginx'), false)
+  assert.equal(shouldIncludeEmptyProjects({ statusFilter: 'all', searchQuery: 'stack' }), false)
+  assert.equal(shouldIncludeEmptyProjects({ search: 'docktun' }), false)
+
+  // 2. filterContainerGroups with mock groups
+  const activeStack = {
+    key: 'project:1',
+    name: 'web-stack',
+    isStack: true,
+    projectId: 1,
+    containers: [{ id: 'c1', name: 'web', running: true }],
+    runningCount: 1,
+    totalCount: 1,
+  }
+  const emptyStackA = {
+    key: 'project:2',
+    name: 'aio-stack',
+    isStack: true,
+    projectId: 2,
+    containers: [],
+    runningCount: 0,
+    totalCount: 0,
+  }
+  const emptyStackB = {
+    key: 'project:3',
+    name: 'sencho',
+    isStack: true,
+    projectId: 3,
+    containers: [],
+    runningCount: 0,
+    totalCount: 0,
+  }
+  const standaloneGroup = {
+    key: '__standalone__',
+    name: 'Standalone Containers',
+    isStack: false,
+    containers: [{ id: 'c2', name: 'redis', running: false }],
+    runningCount: 0,
+    totalCount: 1,
+  }
+
+  const allGroups = [activeStack, emptyStackA, emptyStackB, standaloneGroup]
+
+  // When filter is 'all' and search is empty, empty registered stacks are included
+  const allResult = filterContainerGroups(allGroups, 'all', '')
+  assert.equal(allResult.length, 4)
+  assert.deepEqual(
+    allResult.map((g) => g.name),
+    ['web-stack', 'aio-stack', 'sencho', 'Standalone Containers']
+  )
+
+  // When statusFilter is 'stopped', empty stacks must NEVER be returned
+  const stoppedResult = filterContainerGroups(allGroups, 'stopped', '')
+  assert.equal(stoppedResult.length, 2)
+  assert.deepEqual(
+    stoppedResult.map((g) => g.name),
+    ['web-stack', 'Standalone Containers']
+  )
+  assert.equal(stoppedResult.some((g) => g.containers.length === 0), false)
+
+  // When statusFilter is 'updates', empty stacks must NEVER be returned
+  const updatesResult = filterContainerGroups(allGroups, 'updates', '')
+  assert.equal(updatesResult.length, 2)
+  assert.equal(updatesResult.some((g) => g.name === 'aio-stack' || g.name === 'sencho'), false)
+
+  // When statusFilter is 'exposed', empty stacks must NEVER be returned
+  const exposedResult = filterContainerGroups(allGroups, 'exposed', '')
+  assert.equal(exposedResult.length, 2)
+  assert.equal(exposedResult.some((g) => g.name === 'aio-stack' || g.name === 'sencho'), false)
+
+  // When searchQuery is non-empty, empty stacks must NEVER be returned
+  const searchResult = filterContainerGroups(allGroups, 'all', 'web')
+  assert.equal(searchResult.length, 2)
+  assert.equal(searchResult.some((g) => g.containers.length === 0), false)
+
+  // Options object overload support
+  const objFilterResult = filterContainerGroups(allGroups, { statusFilter: 'stopped', searchQuery: '' })
+  assert.equal(objFilterResult.length, 2)
+
+  // Gracefully handles empty or malformed inputs
+  assert.deepEqual(filterContainerGroups(null), [])
+  assert.deepEqual(filterContainerGroups(undefined), [])
+  assert.deepEqual(filterContainerGroups([]), [])
+})
+
+test('Singular and plural count formatting for stacks, containers and table summary', () => {
+  // 1. Stack count formatting
+  assert.equal(formatStackCount(1), '1 stack / group')
+  assert.equal(formatStackCount(0), '0 stacks / groups')
+  assert.equal(formatStackCount(2), '2 stacks / groups')
+  assert.equal(formatStackCount(10), '10 stacks / groups')
+  // Edge cases: NaN, null, undefined
+  assert.equal(formatStackCount(NaN), '0 stacks / groups')
+  assert.equal(formatStackCount(null), '0 stacks / groups')
+  assert.equal(formatStackCount(undefined), '0 stacks / groups')
+
+  // 2. Container count formatting
+  assert.equal(formatContainerCount(1), '1 container')
+  assert.equal(formatContainerCount(0), '0 containers')
+  assert.equal(formatContainerCount(2), '2 containers')
+  assert.equal(formatContainerCount(42), '42 containers')
+  // Edge cases: NaN, null, undefined
+  assert.equal(formatContainerCount(NaN), '0 containers')
+  assert.equal(formatContainerCount(null), '0 containers')
+  assert.equal(formatContainerCount(undefined), '0 containers')
+
+  // 3. Combined table summary line formatting
+  // 1 stack, 1 container (both singular)
+  assert.equal(formatTableSummary(1, 1), 'Showing 1 stack / group (1 container)')
+  // Multiple stacks, 1 container (stack plural, container singular)
+  assert.equal(formatTableSummary(2, 1), 'Showing 2 stacks / groups (1 container)')
+  // 1 stack, multiple containers (stack singular, container plural)
+  assert.equal(formatTableSummary(1, 5), 'Showing 1 stack / group (5 containers)')
+  // Multiple stacks, multiple containers (both plural)
+  assert.equal(formatTableSummary(3, 12), 'Showing 3 stacks / groups (12 containers)')
+  // Zero stacks, zero containers
+  assert.equal(formatTableSummary(0, 0), 'Showing 0 stacks / groups (0 containers)')
+})
+
+test('formatImageIdentifier correctly formats bare sha/hex IDs and untagged images', () => {
+  // 1. Bare 12-char hex ID (e.g. '18328305a553')
+  const bare12 = formatImageIdentifier('18328305a553')
+  assert.equal(bare12.isUntagged, true)
+  assert.equal(bare12.isBareId, true)
+  assert.equal(bare12.shortId, '18328305a553')
+  assert.equal(bare12.displayName, '18328305a553')
+
+  // 2. Bare 64-char full SHA hex
+  const fullHex = '18328305a5534c0e9e1234567890abcdef18328305a5534c0e9e1234567890abcdef'
+  const bare64 = formatImageIdentifier(fullHex)
+  assert.equal(bare64.isUntagged, true)
+  assert.equal(bare64.isBareId, true)
+  assert.equal(bare64.shortId, '18328305a553')
+  assert.equal(bare64.displayName, '18328305a553')
+
+  // 3. sha256: prefixed hash
+  const shaPrefixed = formatImageIdentifier('sha256:18328305a5534c0e9e1234567890abcdef')
+  assert.equal(shaPrefixed.isUntagged, true)
+  assert.equal(shaPrefixed.isBareId, true)
+  assert.equal(shaPrefixed.shortId, '18328305a553')
+  assert.equal(shaPrefixed.displayName, '18328305a553')
+
+  // 4. Untagged / placeholder formats
+  const noneNone = formatImageIdentifier('<none>:<none>')
+  assert.equal(noneNone.isUntagged, true)
+  assert.equal(noneNone.isBareId, false)
+  assert.equal(noneNone.displayName, 'untagged')
+
+  const none = formatImageIdentifier('<none>')
+  assert.equal(none.isUntagged, true)
+  assert.equal(none.isBareId, false)
+
+  const empty = formatImageIdentifier('')
+  assert.equal(empty.isUntagged, true)
+  assert.equal(empty.isBareId, false)
+
+  const nullVal = formatImageIdentifier(null)
+  assert.equal(nullVal.isUntagged, true)
+  assert.equal(nullVal.isBareId, false)
+
+  // 5. Standard tagged images
+  const standard = formatImageIdentifier('nginx:latest')
+  assert.equal(standard.isUntagged, false)
+  assert.equal(standard.isBareId, false)
+  assert.equal(standard.displayName, 'nginx:latest')
+
+  const registry = formatImageIdentifier('cloudflare/cloudflared:2024.1.0')
+  assert.equal(registry.isUntagged, false)
+  assert.equal(registry.isBareId, false)
+  assert.equal(registry.displayName, 'cloudflare/cloudflared:2024.1.0')
+})
+
+

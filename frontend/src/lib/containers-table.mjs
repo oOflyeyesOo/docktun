@@ -479,3 +479,142 @@ export function collapseAllStacks(groups) {
 export function expandAllStacks() {
   return {}
 }
+
+/**
+ * Determines whether registered Compose projects with 0 running/stopped containers
+ * should be included in the container groups.
+ * Empty projects are only included when viewing all containers with no active search query.
+ *
+ * @param {string | { statusFilter?: string, filter?: string, searchQuery?: string, search?: string }} [statusFilterOrOptions='all']
+ * @param {string} [maybeSearchQuery='']
+ * @returns {boolean}
+ */
+export function shouldIncludeEmptyProjects(statusFilterOrOptions = 'all', maybeSearchQuery = '') {
+  let statusFilter = 'all'
+  let searchQuery = ''
+
+  if (typeof statusFilterOrOptions === 'object' && statusFilterOrOptions !== null) {
+    statusFilter = statusFilterOrOptions.statusFilter ?? statusFilterOrOptions.filter ?? 'all'
+    searchQuery = statusFilterOrOptions.searchQuery ?? statusFilterOrOptions.search ?? ''
+  } else {
+    statusFilter = statusFilterOrOptions || 'all'
+    searchQuery = maybeSearchQuery || ''
+  }
+
+  const isDefaultFilter = !statusFilter || statusFilter === 'all'
+  const hasSearch = typeof searchQuery === 'string' && searchQuery.trim().length > 0
+  return isDefaultFilter && !hasSearch
+}
+
+/**
+ * Filters container groups based on status filter and search query.
+ * Ensures empty stacks (with 0 matching containers) are omitted whenever any filter
+ * (stopped, updates, exposed, public, private, local, running) or search query is active.
+ *
+ * @param {Array<any>} groups
+ * @param {string | { statusFilter?: string, filter?: string, searchQuery?: string, search?: string }} [statusFilterOrOptions='all']
+ * @param {string} [maybeSearchQuery='']
+ * @returns {Array<any>}
+ */
+export function filterContainerGroups(groups, statusFilterOrOptions = 'all', maybeSearchQuery = '') {
+  if (!Array.isArray(groups)) return []
+  if (shouldIncludeEmptyProjects(statusFilterOrOptions, maybeSearchQuery)) {
+    return [...groups]
+  }
+  return groups.filter((g) => {
+    if (!g) return false
+    const count = Array.isArray(g.containers) ? g.containers.length : (g.totalCount ?? 0)
+    return count > 0
+  })
+}
+
+/**
+ * Formats stack count with correct singular/plural grammar.
+ * e.g. 1 -> "1 stack / group", 2 -> "2 stacks / groups", 0 -> "0 stacks / groups"
+ *
+ * @param {number} count
+ * @returns {string}
+ */
+export function formatStackCount(count) {
+  const n = typeof count === 'number' && !isNaN(count) ? count : 0
+  return n === 1 ? '1 stack / group' : `${n} stacks / groups`
+}
+
+/**
+ * Formats container count with correct singular/plural grammar.
+ * e.g. 1 -> "1 container", 2 -> "2 containers", 0 -> "0 containers"
+ *
+ * @param {number} count
+ * @returns {string}
+ */
+export function formatContainerCount(count) {
+  const n = typeof count === 'number' && !isNaN(count) ? count : 0
+  return n === 1 ? '1 container' : `${n} containers`
+}
+
+/**
+ * Formats table sub-header summary line with singular/plural counts.
+ * e.g. "Showing 1 stack / group (1 container)"
+ *
+ * @param {number} stackCount
+ * @param {number} containerCount
+ * @returns {string}
+ */
+export function formatTableSummary(stackCount, containerCount) {
+  return `Showing ${formatStackCount(stackCount)} (${formatContainerCount(containerCount)})`
+}
+
+/**
+ * Detects if an image string is an untagged placeholder or bare sha/hex ID.
+ * Formats bare IDs cleanly (12-char hex) and flags untagged images.
+ * Examples of bare IDs / untagged:
+ * - '18328305a553' (12-64 char hex)
+ * - 'sha256:18328305a5534c0e9e...'
+ * - '<none>:<none>'
+ * - '<none>'
+ *
+ * @param {string | undefined | null} image
+ * @returns {{ isUntagged: boolean, isBareId: boolean, shortId: string, displayName: string }}
+ */
+export function formatImageIdentifier(image) {
+  if (!image || typeof image !== 'string') {
+    return { isUntagged: true, isBareId: false, shortId: '', displayName: 'untagged' }
+  }
+
+  const trimmed = image.trim()
+  if (!trimmed || trimmed === '<none>' || trimmed === '<none>:<none>') {
+    return { isUntagged: true, isBareId: false, shortId: '', displayName: 'untagged' }
+  }
+
+  // Check if image starts with sha256:
+  if (trimmed.startsWith('sha256:')) {
+    const hex = trimmed.slice(7)
+    const shortHex = hex.slice(0, 12)
+    return {
+      isUntagged: true,
+      isBareId: true,
+      shortId: shortHex,
+      displayName: shortHex,
+    }
+  }
+
+  // Check if image is a bare hex string (12 or more hex characters)
+  if (/^[a-f0-9]{12,}$/i.test(trimmed)) {
+    const shortHex = trimmed.slice(0, 12)
+    return {
+      isUntagged: true,
+      isBareId: true,
+      shortId: shortHex,
+      displayName: shortHex,
+    }
+  }
+
+  return {
+    isUntagged: false,
+    isBareId: false,
+    shortId: '',
+    displayName: trimmed,
+  }
+}
+
+

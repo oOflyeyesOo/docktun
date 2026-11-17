@@ -16,6 +16,7 @@ import {
   toggleStackSelection,
   calculateTableSelection,
   toggleTableSelection,
+  shouldIncludeEmptyProjects,
 } from '../lib/containers-table.mjs'
 import ContainerInspectorModal from '../components/containers/modals/ContainerInspectorModal.vue'
 import ViewDensityToggle from '../components/containers/table/ViewDensityToggle.vue'
@@ -605,25 +606,28 @@ const containerGroups = computed<ContainerGroup[]>(() => {
   })
 
   // Include registered Compose projects with 0 running/stopped containers so they are visible and manageable
-  registeredProjects.value.forEach((p) => {
-    const existing = groups.find((g) => g.projectId === p.id || (g.isStack && g.name.toLowerCase() === p.name.toLowerCase()))
-    if (!existing) {
-      groups.push({
-        key: `project:${p.id}`,
-        name: p.name,
-        isStack: true,
-        projectId: p.id,
-        projectPath: p.path,
-        containers: [],
-        runningCount: 0,
-        totalCount: 0,
-        totalCpu: '0.0%',
-        hasUpdates: false,
-        hasPublic: false,
-        hasZeroTrust: false,
-      })
-    }
-  })
+  // Only include empty registered projects when viewing all containers with no search query active
+  if (shouldIncludeEmptyProjects(filter.value, searchQuery.value)) {
+    registeredProjects.value.forEach((p) => {
+      const existing = groups.find((g) => g.projectId === p.id || (g.isStack && g.name.toLowerCase() === p.name.toLowerCase()))
+      if (!existing) {
+        groups.push({
+          key: `project:${p.id}`,
+          name: p.name,
+          isStack: true,
+          projectId: p.id,
+          projectPath: p.path,
+          containers: [],
+          runningCount: 0,
+          totalCount: 0,
+          totalCpu: '0.0%',
+          hasUpdates: false,
+          hasPublic: false,
+          hasZeroTrust: false,
+        })
+      }
+    })
+  }
 
   // Sort stacks alphabetically, with standalone apps at the bottom.
   groups.sort((a, b) => {
@@ -1426,15 +1430,19 @@ onUnmounted(() => {
         >
           Running ({{ summary.running }})
         </button>
-        <button @click="filter = 'exposed'" class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors" :class="filter === 'exposed' ? 'bg-slate-100 text-cyan-700' : 'text-slate-600 hover:text-slate-800'">
+        <button
+          @click="filter = 'exposed'"
+          class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors"
+          :class="filter === 'exposed' ? 'bg-slate-100 text-cyan-700 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
+        >
           Exposed ({{ summary.publicCount + summary.privateCount }})
         </button>
         <button
           @click="filter = 'updates'"
           class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors flex items-center gap-1.5"
-          :class="filter === 'updates' ? 'bg-amber-50/70 text-amber-700 border border-amber-500/40 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
+          :class="filter === 'updates' ? 'bg-amber-500/15 text-amber-700 border border-amber-500/30 shadow-sm' : 'text-slate-600 hover:text-slate-800'"
         >
-          <ArrowUpCircle class="h-3 w-3 text-amber-600" />
+          <ArrowUpCircle class="h-3.5 w-3.5 text-amber-600" />
           <span>Updates</span>
           <span
             v-if="availableUpdatesCount > 0"
@@ -1442,6 +1450,7 @@ onUnmounted(() => {
           >
             {{ availableUpdatesCount }}
           </span>
+          <span v-else class="text-[10px] text-slate-500 font-mono">(0)</span>
         </button>
         <button
           @click="filter = 'stopped'"
@@ -1468,8 +1477,8 @@ onUnmounted(() => {
           <span>{{ groupByStack ? 'Grouped by Stack' : 'Flat List' }}</span>
         </button>
 
-        <!-- Expand / Collapse All (active when groupByStack is true) -->
-        <template v-if="groupByStack">
+        <!-- Expand / Collapse All (active in card grid mode when groupByStack is true; table mode includes its own sub-header controls) -->
+        <template v-if="groupByStack && viewMode === 'grid'">
           <button
             @click="expandAllStacks"
             class="cyber-btn-secondary text-xs px-2.5 py-1.5 text-slate-600 hover:text-slate-800"
@@ -1582,6 +1591,7 @@ onUnmounted(() => {
       :group-by-stack="groupByStack"
       :selected-container-ids="selectedContainerIds"
       :collapsed-stacks="collapsedStacks"
+      :is-filter-active="filter !== 'all' || Boolean(searchQuery.trim())"
       :action-loading="actionLoading"
       :stack-action-loading="stackActionLoading"
       :checking-single-update="checkingSingleUpdate"

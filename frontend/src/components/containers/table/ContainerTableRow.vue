@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import {
   Play,
   Square,
@@ -21,7 +21,7 @@ import {
 } from 'lucide-vue-next'
 import ContainerSparklineGauge from './ContainerSparklineGauge.vue'
 import { hasLocalWebLink, localAddress } from '../../../lib/containerPorts.mjs'
-import { getDisplayPort } from '../../../lib/containers-table.mjs'
+import { getDisplayPort, formatImageIdentifier } from '../../../lib/containers-table.mjs'
 
 export interface ContainerRowItem {
   id: string
@@ -69,6 +69,7 @@ const emit = defineEmits<{
 
 const copied = ref(false)
 const showMenu = ref(false)
+const imageInfo = computed(() => formatImageIdentifier(props.container.image))
 
 function copyId() {
   if (!props.container.id) return
@@ -130,7 +131,7 @@ function handleMenuAction(action: () => void) {
         </span>
 
         <div class="truncate">
-          <div class="flex items-center gap-1.5">
+          <div class="flex items-center gap-1.5 min-w-0">
             <button
               type="button"
               @click="emit('open-inspector', container, 'overview')"
@@ -165,7 +166,27 @@ function handleMenuAction(action: () => void) {
     <!-- 3. Image & Version -->
     <td class="py-2.5 px-3 max-w-[180px]">
       <div class="flex items-center gap-1.5 truncate">
-        <span class="font-mono text-[11px] text-slate-600 truncate" :title="container.image">
+        <!-- Untagged badge / formatted bare ID -->
+        <template v-if="imageInfo.isUntagged">
+          <span
+            class="inline-flex items-center rounded bg-slate-100 border border-slate-200 px-1.5 py-0.5 text-[9px] font-mono font-medium text-slate-500 uppercase tracking-wide shrink-0"
+            title="Untagged / dangling image"
+          >
+            untagged
+          </span>
+          <span
+            v-if="imageInfo.isBareId"
+            class="font-mono text-[11px] text-slate-600 truncate"
+            :title="container.image"
+          >
+            {{ imageInfo.displayName }}
+          </span>
+        </template>
+        <span
+          v-else
+          class="font-mono text-[11px] text-slate-600 truncate"
+          :title="container.image"
+        >
           {{ container.image }}
         </span>
 
@@ -186,7 +207,7 @@ function handleMenuAction(action: () => void) {
     <!-- 4. Published Ports -->
     <td class="py-2.5 px-3 max-w-[160px]">
       <div class="flex items-center gap-1.5 flex-wrap">
-        <template v-if="container.ports">
+        <template v-if="container.ports && container.ports.trim()">
           <!-- Web link if HTTP web port published -->
           <a
             v-if="hasLocalWebLink(container.ports)"

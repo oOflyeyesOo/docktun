@@ -13,7 +13,9 @@ import ContainerTableRow, { type ContainerRowItem } from './ContainerTableRow.vu
 import {
   sortContainers,
   calculateStackSelection,
-  calculateTableSelection
+  calculateTableSelection,
+  filterContainerGroups,
+  formatTableSummary
 } from '../../../lib/containers-table.mjs'
 
 const props = defineProps<{
@@ -22,6 +24,7 @@ const props = defineProps<{
   groupByStack: boolean
   selectedContainerIds: Record<string, boolean>
   collapsedStacks: Record<string, boolean>
+  isFilterActive?: boolean
   actionLoading?: Record<string, string | boolean>
   stackActionLoading?: Record<number, boolean>
   checkingSingleUpdate?: Record<string, boolean>
@@ -85,6 +88,14 @@ const sortedGroups = computed<ContainerGroup[]>(() => {
   }))
 })
 
+const displayGroups = computed<ContainerGroup[]>(() => {
+  let list = sortedGroups.value
+  if (props.isFilterActive) {
+    list = filterContainerGroups(list, 'active_filter', '')
+  }
+  return list
+})
+
 const sortedFlatContainers = computed<ContainerRowItem[]>(() => {
   return sortContainerList(props.flatContainers)
 })
@@ -99,8 +110,12 @@ const totalContainersCount = computed(() => tableSelection.value.totalCount)
 const selectedCount = computed(() => tableSelection.value.selectedCount)
 
 const allStacksCollapsed = computed(() => {
-  const stackGroups = props.groups.filter((g) => g.isStack)
+  const stackGroups = displayGroups.value.filter((g) => g.isStack)
   return stackGroups.length > 0 && stackGroups.every((g) => props.collapsedStacks[g.key])
+})
+
+const summaryText = computed(() => {
+  return formatTableSummary(displayGroups.value.length, totalContainersCount.value)
 })
 </script>
 
@@ -108,12 +123,12 @@ const allStacksCollapsed = computed(() => {
   <div class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
     <!-- Sub-header bar for quick expand/collapse and count -->
     <div
-      v-if="groupByStack && groups.some((g) => g.isStack)"
+      v-if="groupByStack && displayGroups.some((g) => g.isStack)"
       class="flex items-center justify-between border-b border-slate-200 bg-slate-50/70 px-4 py-2 text-xs text-slate-600"
     >
       <div class="flex items-center gap-2">
         <span class="font-medium text-slate-700">
-          Showing {{ groups.length }} stacks / groups ({{ totalContainersCount }} containers)
+          {{ summaryText }}
         </span>
       </div>
 
@@ -252,7 +267,7 @@ const allStacksCollapsed = computed(() => {
         <tbody class="divide-y divide-slate-100">
           <!-- Mode A: Grouped by Compose Stacks -->
           <template v-if="groupByStack">
-            <template v-for="group in sortedGroups" :key="group.key">
+            <template v-for="group in displayGroups" :key="group.key">
               <!-- Stack Group Row (rendered for each stack) -->
               <StackGroupRow
                 :group="group"
@@ -311,7 +326,7 @@ const allStacksCollapsed = computed(() => {
           </template>
 
           <!-- Empty state when no rows -->
-          <tr v-if="flatContainers.length === 0">
+          <tr v-if="(groupByStack && displayGroups.length === 0) || (!groupByStack && flatContainers.length === 0)">
             <td colspan="8" class="py-12 text-center text-slate-500">
               <Server class="mx-auto h-8 w-8 text-slate-400 mb-2" />
               <p class="text-sm font-medium text-slate-700">No containers match the current filter.</p>
