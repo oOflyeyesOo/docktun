@@ -145,7 +145,7 @@ const lastCheckedText = computed(() => {
 </script>
 
 <template>
-  <section class="cyber-card space-y-5">
+  <section id="docktun-updater" class="cyber-card space-y-5">
     <!-- Header -->
     <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
       <div>

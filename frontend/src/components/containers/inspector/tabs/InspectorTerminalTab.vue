@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Terminal, RotateCcw, Play } from 'lucide-vue-next'
+import { Terminal, RotateCcw, Play, Check, Copy, Trash2 } from 'lucide-vue-next'
 import { useApi } from '../../../../composables/useApi'
 
 const props = defineProps<{
@@ -15,6 +15,9 @@ const execOutput = ref('')
 const execLoading = ref(false)
 const execExitCode = ref<number | null>(null)
 const execHistory = ref<string[]>([])
+const historyIndex = ref(-1)
+const savedCmd = ref('')
+const copiedOutput = ref(false)
 
 const presets = ['ls -la', 'ps aux', 'env', 'df -h', 'ip a', 'uptime']
 
@@ -24,9 +27,13 @@ async function runContainerExec() {
   execLoading.value = true
   execOutput.value = `// EXECUTING: ${cmd}...\n`
   execExitCode.value = null
-  if (!execHistory.value.includes(cmd)) {
-    execHistory.value.unshift(cmd)
+  const idx = execHistory.value.indexOf(cmd)
+  if (idx !== -1) {
+    execHistory.value.splice(idx, 1)
   }
+  execHistory.value.unshift(cmd)
+  historyIndex.value = -1
+  savedCmd.value = ''
 
   try {
     const res = await apiFetch<{ output: string; exit_code: number }>(
@@ -49,6 +56,47 @@ async function runContainerExec() {
 function runPreset(preset: string) {
   execCmd.value = preset
   runContainerExec()
+}
+
+function onHistoryUp() {
+  if (!execHistory.value.length) return
+  if (historyIndex.value === -1) {
+    savedCmd.value = execCmd.value
+    historyIndex.value = 0
+    execCmd.value = execHistory.value[0]
+  } else if (historyIndex.value < execHistory.value.length - 1) {
+    historyIndex.value++
+    execCmd.value = execHistory.value[historyIndex.value]
+  }
+}
+
+function onHistoryDown() {
+  if (historyIndex.value === -1) return
+  if (historyIndex.value > 0) {
+    historyIndex.value--
+    execCmd.value = execHistory.value[historyIndex.value]
+  } else if (historyIndex.value === 0) {
+    historyIndex.value = -1
+    execCmd.value = savedCmd.value
+  }
+}
+
+async function copyOutput() {
+  if (!execOutput.value) return
+  try {
+    await navigator.clipboard.writeText(execOutput.value)
+    copiedOutput.value = true
+    setTimeout(() => {
+      copiedOutput.value = false
+    }, 2000)
+  } catch (err) {
+    console.error('Failed to copy output:', err)
+  }
+}
+
+function clearOutput() {
+  execOutput.value = ''
+  execExitCode.value = null
 }
 </script>
 
@@ -86,6 +134,8 @@ function runPreset(preset: string) {
         <input
           v-model="execCmd"
           @keyup.enter="runContainerExec"
+          @keydown.up.prevent="onHistoryUp"
+          @keydown.down.prevent="onHistoryDown"
           placeholder="Enter command to run (e.g. ls -la, cat /etc/resolv.conf, curl localhost)..."
           class="cyber-input w-full pl-8 font-mono text-xs text-slate-900"
           :disabled="execLoading"
@@ -103,26 +153,51 @@ function runPreset(preset: string) {
       </button>
 
       <button
-        v-if="execOutput"
-        @click="execOutput = ''; execExitCode = null"
+        @click="clearOutput"
+        :disabled="!execOutput"
         class="cyber-btn-secondary text-xs"
-        title="Clear output"
+        title="Clear Output"
       >
-        Clear
+        Clear Output
       </button>
     </div>
 
     <!-- Output Box -->
     <div class="space-y-2">
       <div class="flex items-center justify-between text-xs font-mono text-slate-600">
-        <span class="text-[10px] uppercase tracking-wider">Console Output</span>
-        <span
-          v-if="execExitCode !== null"
-          class="rounded px-2 py-0.5 text-[10px] font-bold"
-          :class="execExitCode === 0 ? 'bg-emerald-50 text-emerald-600 border border-emerald-800' : 'bg-red-50 text-red-600 border border-red-800'"
-        >
-          Exit Code: {{ execExitCode }}
-        </span>
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] uppercase tracking-wider">Console Output</span>
+          <span
+            v-if="execExitCode !== null"
+            class="rounded px-2 py-0.5 text-[10px] font-bold"
+            :class="execExitCode === 0 ? 'bg-emerald-50 text-emerald-600 border border-emerald-800' : 'bg-rose-50 text-rose-600 border border-rose-800'"
+          >
+            Exit Code: {{ execExitCode }}
+          </span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button
+            @click="copyOutput"
+            :disabled="!execOutput"
+            class="cyber-btn-secondary text-xs flex items-center gap-1"
+            title="Copy Output"
+          >
+            <Check v-if="copiedOutput" class="h-3 w-3 text-emerald-600" />
+            <Copy v-else class="h-3 w-3" />
+            <span>{{ copiedOutput ? 'Copied' : 'Copy Output' }}</span>
+          </button>
+
+          <button
+            @click="clearOutput"
+            :disabled="!execOutput"
+            class="cyber-btn-secondary text-xs flex items-center gap-1"
+            title="Clear Output"
+          >
+            <Trash2 class="h-3 w-3" />
+            <span>Clear Output</span>
+          </button>
+        </div>
       </div>
 
       <div class="max-h-[50vh] min-h-[160px] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-xs leading-relaxed text-slate-800 shadow-inner">

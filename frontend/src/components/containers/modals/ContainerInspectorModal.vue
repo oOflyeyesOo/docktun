@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   Activity,
   Globe,
@@ -33,6 +34,7 @@ import {
   Plus,
 } from 'lucide-vue-next'
 import { hasLocalWebLink, localAddress } from '../../../lib/containerPorts.mjs'
+import { parseMemoryUsage, getMemoryUsageColor } from '../../../lib/containers-table.mjs'
 import ContainerExposure from '../../ContainerExposure.vue'
 import InspectorLogsTab from '../inspector/tabs/InspectorLogsTab.vue'
 import InspectorTerminalTab from '../inspector/tabs/InspectorTerminalTab.vue'
@@ -154,15 +156,38 @@ function parseCpuPercent(cpuStr?: string): number {
   return isNaN(n) ? 0 : Math.min(n, 100)
 }
 
-function parseMemoryUsage(memStr?: string): { used: string; total: string; percent: number } {
-  if (!memStr) return { used: '—', total: '—', percent: 0 }
-  const parts = memStr.split('/')
-  return {
-    used: parts[0]?.trim() || '—',
-    total: parts[1]?.trim() || '—',
-    percent: 0,
+const router = useRouter()
+
+const isDockTun = computed(() => {
+  if (!props.container) return false
+  const name = (props.container.name || '').toLowerCase()
+  const image = (props.container.image || '').toLowerCase()
+  const project = (props.container.compose_project || props.container.project_name || '').toLowerCase()
+  return name === 'docktun' || name.includes('docktun') || image.includes('docktun') || project === 'docktun'
+})
+
+function openDockTunUpdater() {
+  emit('close')
+  if (router) {
+    router.push('/settings#docktun-updater')
+  } else {
+    window.location.href = '/settings#docktun-updater'
   }
 }
+
+function onKeyDown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    emit('close')
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onKeyDown)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeyDown)
+})
 
 function selectTab(tab: 'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs' | 'exec' | 'inspect') {
   emit('update:activeTab', tab)
@@ -191,6 +216,8 @@ function onBackdropClick(e: MouseEvent) {
   <div
     v-if="container"
     class="fixed inset-0 z-50 flex items-center justify-center bg-slate-50/85 p-2 sm:p-4 backdrop-blur-md"
+    tabindex="-1"
+    @keydown.esc="emit('close')"
     @mousedown="onBackdropMouseDown"
     @click="onBackdropClick"
   >
@@ -451,8 +478,16 @@ function onBackdropClick(e: MouseEvent) {
                   {{ parseMemoryUsage(container.memory).used }}
                 </span>
               </div>
-              <div class="text-[10px] text-slate-500 font-mono truncate">
-                Limit: {{ parseMemoryUsage(container.memory).total || 'Unlimited' }}
+              <div class="h-2 w-full overflow-hidden rounded-full bg-slate-100 mb-1">
+                <div
+                  class="h-full transition-all duration-300"
+                  :class="getMemoryUsageColor(parseMemoryUsage(container.memory).percent)"
+                  :style="{ width: `${Math.min(parseMemoryUsage(container.memory).percent, 100)}%` }"
+                ></div>
+              </div>
+              <div class="flex items-center justify-between text-[10px] text-slate-500 font-mono truncate">
+                <span>Limit: {{ parseMemoryUsage(container.memory).total || 'Unlimited' }}</span>
+                <span v-if="parseMemoryUsage(container.memory).percent > 0">{{ parseMemoryUsage(container.memory).percent }}%</span>
               </div>
             </div>
 
@@ -489,6 +524,15 @@ function onBackdropClick(e: MouseEvent) {
                 <Sparkles class="h-4 w-4 text-amber-600" /> Container Image & Registry Updates
               </h3>
               <div class="flex items-center gap-2">
+                <button
+                  v-if="isDockTun"
+                  @click="openDockTunUpdater"
+                  class="cyber-btn flex items-center gap-1.5 text-xs text-cyan-700 border-cyan-500 bg-cyan-50/70 hover:bg-cyan-100"
+                  title="Open DockTun Updater in Settings"
+                >
+                  <Sparkles class="h-3.5 w-3.5 text-cyan-600" />
+                  <span>Open DockTun Updater</span>
+                </button>
                 <button
                   @click="emit('check-single-update', container)"
                   :disabled="!!checkingSingleUpdate?.[container.id]"
@@ -563,13 +607,31 @@ function onBackdropClick(e: MouseEvent) {
                 <span class="text-slate-500">Restart Count:</span>
                 <span class="ml-2 text-slate-800">{{ container.restart_count || 0 }}</span>
               </div>
-              <div>
+              <div class="flex items-center gap-1.5">
                 <span class="text-slate-500">IP Address:</span>
-                <span class="ml-2 text-slate-800">{{ container.ip_address || 'Host / Dynamic' }}</span>
+                <span class="ml-1 text-slate-800">{{ container.ip_address || 'Host / Dynamic' }}</span>
+                <button
+                  v-if="container.ip_address"
+                  @click="copyToClipboard('ip', container.ip_address)"
+                  class="text-slate-500 hover:text-slate-700 p-0.5 inline-flex items-center"
+                  title="Copy IP Address"
+                >
+                  <Check v-if="copiedKey === 'ip'" class="h-3 w-3 text-emerald-600" />
+                  <Copy v-else class="h-3 w-3" />
+                </button>
               </div>
-              <div>
+              <div class="flex items-center gap-1.5">
                 <span class="text-slate-500">Gateway:</span>
-                <span class="ml-2 text-slate-800">{{ container.gateway || '—' }}</span>
+                <span class="ml-1 text-slate-800">{{ container.gateway || '—' }}</span>
+                <button
+                  v-if="container.gateway && container.gateway !== '—'"
+                  @click="copyToClipboard('gateway', container.gateway)"
+                  class="text-slate-500 hover:text-slate-700 p-0.5 inline-flex items-center"
+                  title="Copy Gateway"
+                >
+                  <Check v-if="copiedKey === 'gateway'" class="h-3 w-3 text-emerald-600" />
+                  <Copy v-else class="h-3 w-3" />
+                </button>
               </div>
               <div class="md:col-span-2 space-y-2">
                 <span class="text-slate-500">Docker network attachments:</span>
@@ -587,9 +649,18 @@ function onBackdropClick(e: MouseEvent) {
                 </div>
                 <p class="text-xs text-slate-500">Disconnect a network only when this container no longer needs it. Active Tailscale app networks are managed in Access.</p>
               </div>
-              <div class="md:col-span-2">
-                <span class="text-slate-500">Command:</span>
-                <span class="ml-2 text-slate-700 break-all">{{ container.command || '—' }}</span>
+              <div class="md:col-span-2 flex items-start gap-1.5">
+                <span class="text-slate-500 shrink-0">Command:</span>
+                <span class="ml-1 text-slate-700 break-all">{{ container.command || '—' }}</span>
+                <button
+                  v-if="container.command && container.command !== '—'"
+                  @click="copyToClipboard('cmd', container.command)"
+                  class="text-slate-500 hover:text-slate-700 p-0.5 inline-flex items-center shrink-0"
+                  title="Copy Command"
+                >
+                  <Check v-if="copiedKey === 'cmd'" class="h-3 w-3 text-emerald-600" />
+                  <Copy v-else class="h-3 w-3" />
+                </button>
               </div>
               <div class="md:col-span-2">
                 <span class="text-slate-500">Published Ports:</span>
@@ -803,6 +874,17 @@ function onBackdropClick(e: MouseEvent) {
                   </button>
 
                   <button
+                    @click="copyToClipboard('compose-yaml', composeContent)"
+                    :disabled="!composeContent"
+                    class="cyber-btn-secondary text-xs flex items-center gap-1"
+                    title="Copy Compose YAML to clipboard"
+                  >
+                    <Check v-if="copiedKey === 'compose-yaml'" class="h-3 w-3 text-emerald-600" />
+                    <Copy v-else class="h-3 w-3" />
+                    <span>{{ copiedKey === 'compose-yaml' ? 'Copied' : 'Copy YAML' }}</span>
+                  </button>
+
+                  <button
                     @click="emit('save-compose', false)"
                     :disabled="composeSaving || composeLoading || !composeEditor?.loaded || !projectFilesWritable"
                     class="cyber-btn text-xs flex items-center gap-1 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
@@ -810,6 +892,16 @@ function onBackdropClick(e: MouseEvent) {
                   >
                     <Save class="h-3 w-3" />
                     <span>Save YAML</span>
+                  </button>
+
+                  <button
+                    @click="emit('save-compose', true)"
+                    :disabled="composeSaving || composeLoading || !composeEditor?.loaded || !projectFilesWritable"
+                    class="cyber-btn text-xs flex items-center gap-1 text-emerald-700 border-emerald-600 bg-emerald-50/40 hover:bg-emerald-100/50"
+                    title="Save edits and recreate stack containers"
+                  >
+                    <RotateCcw class="h-3 w-3" :class="composeSaving ? 'animate-spin' : ''" />
+                    <span>Save & Recreate Stack</span>
                   </button>
                 </div>
               </div>

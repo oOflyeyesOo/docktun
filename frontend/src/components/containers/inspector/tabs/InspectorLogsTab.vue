@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { ScrollText, RotateCcw, Search, Check, Copy } from 'lucide-vue-next'
+import { ScrollText, RotateCcw, Search, Check, Copy, Download, Trash2 } from 'lucide-vue-next'
 import { useApi } from '../../../../composables/useApi'
 
 const props = defineProps<{
@@ -64,6 +64,23 @@ async function copyLogs() {
   } catch (e) {
     console.error('Failed to copy logs:', e)
   }
+}
+
+function downloadLogs() {
+  const content = modalLogsFilter.value ? filteredModalLogs.value : modalLogsText.value
+  if (!content) return
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const name = (props.containerName || props.containerId || 'container').replace(/^\//, '')
+  a.download = `${name}-logs.txt`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function clearLogsView() {
+  modalLogsText.value = ''
 }
 
 watch(modalLogsAutoRefresh, (enabled) => {
@@ -153,6 +170,26 @@ onUnmounted(() => {
           <Check v-if="copiedLogs" class="h-3 w-3 text-emerald-600" />
           <Copy v-else class="h-3 w-3" />
           <span>{{ copiedLogs ? 'Copied' : 'Copy' }}</span>
+        </button>
+
+        <button
+          @click="downloadLogs"
+          :disabled="!modalLogsText"
+          class="cyber-btn-secondary text-xs flex items-center gap-1"
+          title="Download Logs"
+        >
+          <Download class="h-3 w-3" />
+          <span>Download Logs</span>
+        </button>
+
+        <button
+          @click="clearLogsView"
+          :disabled="!modalLogsText"
+          class="cyber-btn-secondary text-xs flex items-center gap-1"
+          title="Clear View"
+        >
+          <Trash2 class="h-3 w-3" />
+          <span>Clear View</span>
         </button>
 
         <button

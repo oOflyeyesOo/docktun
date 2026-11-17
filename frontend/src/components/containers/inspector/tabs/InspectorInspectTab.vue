@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Code2, Copy, Check, Search } from 'lucide-vue-next'
+import { Code2, Copy, Check, Search, Download } from 'lucide-vue-next'
 
 const props = defineProps<{
   container: any
@@ -36,6 +36,19 @@ async function copyJson() {
     console.error('Failed to copy JSON:', err)
   }
 }
+
+function downloadJson() {
+  const json = formattedJson.value
+  if (!json) return
+  const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const name = (props.container?.name || props.containerId || 'container').replace(/^\//, '')
+  a.download = `${name}-inspect.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 </script>
 
 <template>
@@ -60,6 +73,15 @@ async function copyJson() {
           <Check v-if="copied" class="h-3.5 w-3.5 text-emerald-600" />
           <Copy v-else class="h-3.5 w-3.5" />
           <span>{{ copied ? 'Copied' : 'Copy JSON' }}</span>
+        </button>
+
+        <button
+          @click="downloadJson"
+          class="cyber-btn-secondary text-xs flex items-center gap-1.5"
+          title="Download JSON"
+        >
+          <Download class="h-3.5 w-3.5" />
+          <span>Download JSON</span>
         </button>
       </div>
     </div>

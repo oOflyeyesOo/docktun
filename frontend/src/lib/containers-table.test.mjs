@@ -23,6 +23,8 @@ import {
   formatContainerCount,
   formatTableSummary,
   formatImageIdentifier,
+  getMemoryUsageColor,
+  filterEnvContent,
 } from './containers-table.mjs'
 
 test('CPU parsing handles standard, fractional, multi-core, stopped and malformed inputs', () => {
@@ -97,6 +99,57 @@ test('Memory usage parsing returns structured used, total, and percentage ratio'
   assert.deepEqual(parseMemoryUsage('N/A'), { used: 'N/A', total: '', percent: 0 })
   assert.deepEqual(parseMemoryUsage('', true), { used: '—', total: '', percent: 0 })
   assert.deepEqual(parseMemoryUsage('512 MB', false), { used: '—', total: '', percent: 0 })
+})
+
+test('Memory color thresholds correctly return emerald, amber, and rose classes', () => {
+  // <70% emerald
+  assert.equal(getMemoryUsageColor(0), 'bg-emerald-500')
+  assert.equal(getMemoryUsageColor(50), 'bg-emerald-500')
+  assert.equal(getMemoryUsageColor(69.9), 'bg-emerald-500')
+
+  // 70-85% amber
+  assert.equal(getMemoryUsageColor(70), 'bg-amber-500')
+  assert.equal(getMemoryUsageColor(75), 'bg-amber-500')
+  assert.equal(getMemoryUsageColor(85), 'bg-amber-500')
+
+  // >85% rose
+  assert.equal(getMemoryUsageColor(85.1), 'bg-rose-500')
+  assert.equal(getMemoryUsageColor(90), 'bg-rose-500')
+  assert.equal(getMemoryUsageColor(100), 'bg-rose-500')
+})
+
+test('filterEnvContent accurately filters .env key-value lines', () => {
+  const envSample = [
+    '# Database configuration',
+    'DB_HOST=localhost',
+    'DB_PORT=5432',
+    'DB_USER=docktun_admin',
+    'DB_PASS=secret123',
+    '',
+    '# App settings',
+    'APP_ENV=production',
+    'PORT=8080',
+    'LOG_LEVEL=info',
+  ].join('\n')
+
+  // Search by key
+  const dbMatches = filterEnvContent(envSample, 'DB_')
+  assert.equal(dbMatches.length, 4)
+  assert.equal(dbMatches[0].lineNum, 2)
+  assert.equal(dbMatches[0].line, 'DB_HOST=localhost')
+
+  // Search by value (case-insensitive)
+  const prodMatches = filterEnvContent(envSample, 'PRODUCTION')
+  assert.equal(prodMatches.length, 1)
+  assert.equal(prodMatches[0].line, 'APP_ENV=production')
+
+  // Empty or whitespace query
+  assert.deepEqual(filterEnvContent(envSample, ''), [])
+  assert.deepEqual(filterEnvContent(envSample, '   '), [])
+  assert.deepEqual(filterEnvContent('', 'PORT'), [])
+
+  // Non-matching query
+  assert.deepEqual(filterEnvContent(envSample, 'NON_EXISTENT_KEY'), [])
 })
 
 test('Port parsing handles port ranges, UDP binds, multiple published ports and missing values', () => {

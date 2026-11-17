@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import {
   FolderOpen,
   Folder,
@@ -9,8 +9,13 @@ import {
   Save,
   Trash2,
   HardDrive,
+  Copy,
+  Check,
+  Download,
+  Search,
 } from 'lucide-vue-next'
 import { useApi } from '../../../../composables/useApi'
+import { formatFileSize, filterFileList } from '../../../../lib/inspector-tabs.mjs'
 
 interface FileItem {
   name: string
@@ -47,20 +52,27 @@ const { apiFetch } = useApi()
 
 const currentDir = ref('')
 const fileList = ref<FileItem[]>([])
+const fileSearch = ref('')
 const filesLoading = ref(false)
 const editingFile = ref<{ projectId: number; path: string; content: string } | null>(null)
 const editingFileSaving = ref(false)
 const editingFileMsg = ref('')
+const copiedFileContent = ref(false)
 const showNewItemModal = ref(false)
 const newItemName = ref('')
 const newItemIsDir = ref(false)
 let filesRevision = 0
+
+const filteredFileList = computed(() => {
+  return filterFileList(fileList.value, fileSearch.value)
+})
 
 async function loadContainerFiles(projectId: number, path = '') {
   const revision = ++filesRevision
   filesLoading.value = true
   currentDir.value = path
   fileList.value = []
+  fileSearch.value = ''
   editingFileMsg.value = ''
   editingFile.value = null
   try {
@@ -134,6 +146,28 @@ async function saveCurrentContainerFile() {
       editingFileSaving.value = false
     }
   }
+}
+
+function copyFileContent() {
+  if (!editingFile.value) return
+  navigator.clipboard.writeText(editingFile.value.content).then(() => {
+    copiedFileContent.value = true
+    setTimeout(() => {
+      copiedFileContent.value = false
+    }, 2000)
+  })
+}
+
+function downloadFile() {
+  if (!editingFile.value) return
+  const blob = new Blob([editingFile.value.content], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const parts = editingFile.value.path.split('/')
+  a.download = parts[parts.length - 1] || 'file'
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 async function createContainerFileItem() {
@@ -251,6 +285,23 @@ onMounted(() => {
           </div>
           <div class="flex items-center gap-2">
             <button
+              @click="copyFileContent"
+              class="cyber-btn-secondary text-xs flex items-center gap-1"
+              title="Copy file content"
+            >
+              <Check v-if="copiedFileContent" class="h-3 w-3 text-emerald-600" />
+              <Copy v-else class="h-3 w-3" />
+              <span>{{ copiedFileContent ? 'Copied' : 'Copy' }}</span>
+            </button>
+            <button
+              @click="downloadFile"
+              class="cyber-btn-secondary text-xs flex items-center gap-1"
+              title="Download file"
+            >
+              <Download class="h-3 w-3" />
+              <span>Download</span>
+            </button>
+            <button
               @click="saveCurrentContainerFile"
               :disabled="editingFileSaving || !projectFilesWritable"
               class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700"
@@ -276,37 +327,59 @@ onMounted(() => {
       </div>
 
       <!-- File List View -->
-      <div v-else class="rounded-xl border border-slate-200 bg-slate-50 divide-y divide-slate-200/80">
-        <div v-if="fileList.length === 0 && !filesLoading" class="p-8 text-center text-xs text-slate-500">
-          Folder is empty.
-        </div>
-        <div
-          v-for="item in fileList"
-          :key="item.path"
-          class="flex items-center justify-between px-4 py-2.5 text-xs hover:bg-white/60 transition-colors"
-        >
-          <div
-            class="flex items-center gap-2.5 cursor-pointer font-mono truncate"
-            @click="openContainerFile(item)"
-          >
-            <Folder v-if="item.is_dir" class="h-4 w-4 text-amber-600 shrink-0" />
-            <FileText v-else class="h-4 w-4 text-slate-600 shrink-0" />
-            <span :class="item.is_dir ? 'text-slate-800 font-semibold hover:text-cyan-700' : 'text-slate-700 hover:text-cyan-700'">
-              {{ item.name }}
-            </span>
+      <div v-else class="space-y-2">
+        <!-- Quick File Filter Input -->
+        <div v-if="fileList.length > 2 || fileSearch" class="flex items-center justify-between gap-3 bg-white/60 border border-slate-200/80 rounded-lg px-3 py-1.5">
+          <div class="flex items-center gap-2 flex-1">
+            <Search class="h-3.5 w-3.5 text-slate-500" />
+            <input
+              v-model="fileSearch"
+              type="text"
+              placeholder="Filter files by name..."
+              class="w-full bg-transparent text-xs text-slate-800 placeholder-slate-500 focus:outline-none font-mono"
+            />
           </div>
+          <button
+            v-if="fileSearch"
+            @click="fileSearch = ''"
+            class="text-slate-500 hover:text-slate-700 text-xs"
+          >
+            Clear
+          </button>
+        </div>
 
-          <div class="flex items-center gap-4 text-slate-500 font-mono text-[11px]">
-            <span v-if="!item.is_dir">{{ (item.size / 1024).toFixed(1) }} KB</span>
-            <span>{{ item.mod_time }}</span>
-            <button
-              @click="deleteContainerFile(item.path)"
-              :disabled="!projectFilesWritable"
-              class="text-slate-600 hover:text-red-600 transition-colors"
-              title="Delete file"
+        <div class="rounded-xl border border-slate-200 bg-slate-50 divide-y divide-slate-200/80">
+          <div v-if="filteredFileList.length === 0 && !filesLoading" class="p-8 text-center text-xs text-slate-500">
+            {{ fileSearch ? 'No files matching query.' : 'Folder is empty.' }}
+          </div>
+          <div
+            v-for="item in filteredFileList"
+            :key="item.path"
+            class="flex items-center justify-between px-4 py-2.5 text-xs hover:bg-white/60 transition-colors"
+          >
+            <div
+              class="flex items-center gap-2.5 cursor-pointer font-mono truncate"
+              @click="openContainerFile(item)"
             >
-              <Trash2 class="h-3.5 w-3.5" />
-            </button>
+              <Folder v-if="item.is_dir" class="h-4 w-4 text-amber-600 shrink-0" />
+              <FileText v-else class="h-4 w-4 text-slate-600 shrink-0" />
+              <span :class="item.is_dir ? 'text-slate-800 font-semibold hover:text-cyan-700' : 'text-slate-700 hover:text-cyan-700'">
+                {{ item.name }}
+              </span>
+            </div>
+
+            <div class="flex items-center gap-4 text-slate-500 font-mono text-[11px]">
+              <span v-if="!item.is_dir">{{ formatFileSize(item.size) }}</span>
+              <span>{{ item.mod_time }}</span>
+              <button
+                @click="deleteContainerFile(item.path)"
+                :disabled="!projectFilesWritable"
+                class="text-slate-600 hover:text-red-600 transition-colors"
+                title="Delete file"
+              >
+                <Trash2 class="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -319,14 +392,14 @@ onMounted(() => {
             <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-slate-600">Item Name</label>
             <input
               v-model="newItemName"
-              type="text"
-              placeholder="filename.txt or folder_name"
-              class="cyber-input text-xs font-mono"
+              placeholder="e.g. data.json or logs"
+              class="cyber-input w-full font-mono text-xs"
+              @keyup.enter="createContainerFileItem"
             />
           </div>
-          <div class="flex items-center gap-2 text-xs text-slate-700">
-            <input type="checkbox" id="isDirCheck" v-model="newItemIsDir" class="rounded bg-slate-50" />
-            <label for="isDirCheck">Create as directory</label>
+          <div class="flex items-center gap-2">
+            <input id="is-dir" type="checkbox" v-model="newItemIsDir" class="rounded bg-slate-50" />
+            <label for="is-dir" class="text-xs text-slate-700">Create as Directory</label>
           </div>
           <div class="flex justify-end gap-2 pt-2">
             <button @click="showNewItemModal = false" class="cyber-btn-secondary text-xs">Cancel</button>

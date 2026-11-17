@@ -102,6 +102,36 @@ export function parseMemoryUsage(memStr, running = true) {
 }
 
 /**
+ * Returns visual color threshold for memory usage percentage.
+ * Thresholds: <70% emerald, 70-85% amber, >85% rose
+ *
+ * @param {number} pct
+ * @returns {string}
+ */
+export function getMemoryUsageColor(pct) {
+  if (pct > 85) return 'bg-rose-500'
+  if (pct >= 70) return 'bg-amber-500'
+  return 'bg-emerald-500'
+}
+
+/**
+ * Filters .env file lines by case-insensitive key or value match.
+ *
+ * @param {string} content
+ * @param {string} query
+ * @returns {Array<{ line: string, lineNum: number }>}
+ */
+export function filterEnvContent(content, query) {
+  if (!content || typeof content !== 'string') return []
+  if (!query || typeof query !== 'string' || !query.trim()) return []
+  const q = query.toLowerCase()
+  return content
+    .split('\n')
+    .map((line, idx) => ({ line, lineNum: idx + 1 }))
+    .filter((item) => item.line.toLowerCase().includes(q))
+}
+
+/**
  * Extracts primary port number for sorting and comparison.
  * Handles ranges ('8080-8082/tcp'), host published bindings ('0.0.0.0:8080->80/tcp'),
  * UDP binds ('53/udp'), multiple published ports, and missing ports.

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
-import { Sliders, RotateCcw, Save } from 'lucide-vue-next'
+import { ref, computed, watch, onMounted } from 'vue'
+import { Sliders, RotateCcw, Save, Copy, Check, Search, X } from 'lucide-vue-next'
 import { useApi } from '../../../../composables/useApi'
+import { filterEnvContent } from '../../../../lib/containers-table.mjs'
 
 const props = defineProps<{
   container: {
@@ -26,6 +27,22 @@ const envLoading = ref(false)
 const envSaving = ref(false)
 const envMsg = ref('')
 const envLoaded = ref(false)
+const searchQuery = ref('')
+const copied = ref(false)
+
+const filteredLines = computed(() => {
+  return filterEnvContent(envContent.value, searchQuery.value)
+})
+
+function copyEnv() {
+  if (!envContent.value) return
+  navigator.clipboard.writeText(envContent.value).then(() => {
+    copied.value = true
+    setTimeout(() => {
+      copied.value = false
+    }, 2000)
+  })
+}
 
 async function loadEnv() {
   if (!props.container.project_id) return
@@ -122,6 +139,16 @@ onMounted(() => {
             <span>Reload</span>
           </button>
           <button
+            @click="copyEnv"
+            :disabled="!envContent"
+            class="cyber-btn-secondary text-xs flex items-center gap-1.5"
+            title="Copy .env file"
+          >
+            <Check v-if="copied" class="h-3.5 w-3.5 text-emerald-600" />
+            <Copy v-else class="h-3.5 w-3.5" />
+            <span>{{ copied ? 'Copied' : 'Copy .env' }}</span>
+          </button>
+          <button
             @click="saveEnv(false)"
             :disabled="envSaving || envLoading || !envLoaded || !projectFilesWritable"
             class="cyber-btn text-xs flex items-center gap-1.5 text-cyan-700 border-cyan-600 bg-cyan-50/40 hover:bg-cyan-100/50"
@@ -137,6 +164,50 @@ onMounted(() => {
             <RotateCcw class="h-3.5 w-3.5" />
             <span>Save & Restart</span>
           </button>
+        </div>
+      </div>
+
+      <!-- Quick Filter / Search Bar -->
+      <div class="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5">
+        <Search class="h-3.5 w-3.5 text-slate-400 shrink-0" />
+        <input
+          v-model="searchQuery"
+          type="text"
+          placeholder="Filter keys or values in .env…"
+          class="w-full bg-transparent text-xs text-slate-800 placeholder-slate-400 focus:outline-none font-mono"
+        />
+        <span v-if="searchQuery.trim()" class="text-[11px] text-slate-400 font-mono whitespace-nowrap">
+          {{ filteredLines.length }} {{ filteredLines.length === 1 ? 'match' : 'matches' }}
+        </span>
+        <button
+          v-if="searchQuery"
+          @click="searchQuery = ''"
+          class="text-slate-400 hover:text-slate-600 text-xs shrink-0"
+        >
+          Clear
+        </button>
+      </div>
+
+      <!-- Filtered Results Preview when Search Query is Active -->
+      <div v-if="searchQuery.trim()" class="rounded-lg border border-violet-200 bg-violet-50/40 p-3 space-y-2">
+        <div class="flex items-center justify-between text-xs text-slate-600">
+          <span class="font-semibold text-violet-700">
+            Matching variables ({{ filteredLines.length }}):
+          </span>
+          <span class="text-[11px] text-slate-500 font-mono">Quick search preview</span>
+        </div>
+        <div v-if="filteredLines.length > 0" class="max-h-48 overflow-y-auto space-y-1 font-mono text-xs">
+          <div
+            v-for="item in filteredLines"
+            :key="item.lineNum"
+            class="rounded bg-white px-2 py-1 border border-slate-200 text-slate-800 flex items-start gap-2"
+          >
+            <span class="text-slate-500 select-none text-[10px] w-6 shrink-0 text-right">{{ item.lineNum }}:</span>
+            <span class="break-all">{{ item.line }}</span>
+          </div>
+        </div>
+        <div v-else class="text-xs text-slate-500 italic py-1">
+          No matching keys or values found for "{{ searchQuery }}"
         </div>
       </div>
 
