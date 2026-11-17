@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ArrowUpCircle, X, CheckCircle2, AlertCircle } from 'lucide-vue-next'
+import { computed } from 'vue'
+import { useRouter } from 'vue-router'
+import { ArrowUpCircle, X, CheckCircle2, AlertCircle, Sparkles, ExternalLink } from 'lucide-vue-next'
 
 export interface UpdateContainerItem {
   id: string
@@ -30,7 +32,7 @@ export interface UpdatePlanData {
   checks?: UpdatePlanCheck[]
 }
 
-defineProps<{
+const props = defineProps<{
   confirmContainer?: UpdateContainerItem | null
   result?: UpdateResultData | null
   updatePlan?: UpdatePlanData | null
@@ -43,6 +45,24 @@ const emit = defineEmits<{
   (e: 'close-result'): void
   (e: 'confirm', container: UpdateContainerItem): void
 }>()
+
+const router = useRouter()
+
+const isDockTunSelf = computed(() => {
+  if (!props.confirmContainer) return false
+  const name = (props.confirmContainer.name || '').toLowerCase().replace(/^\//, '')
+  const image = (props.confirmContainer.image || '').toLowerCase()
+  return (
+    name === 'docktun' ||
+    (name.includes('docktun') && !name.includes('cloudflared')) ||
+    (image.includes('docktun') && !image.includes('cloudflared'))
+  )
+})
+
+function goToUpdater() {
+  emit('close-confirm')
+  router.push('/settings')
+}
 
 let confirmBackdropMouseDown = false
 let resultBackdropMouseDown = false
@@ -136,7 +156,21 @@ function onResultBackdropClick(e: MouseEvent) {
         </div>
       </div>
 
-      <p class="text-xs text-slate-700 leading-relaxed">
+      <div v-if="isDockTunSelf" class="rounded-xl border border-cyan-500/40 bg-cyan-50/70 p-4 space-y-2">
+        <div class="flex items-start gap-3">
+          <div class="rounded-lg bg-cyan-500/20 p-2 text-cyan-700 border border-cyan-500/30">
+            <Sparkles class="h-5 w-5" />
+          </div>
+          <div class="space-y-1">
+            <h4 class="text-xs font-bold text-slate-900">DockTun System Dashboard Updater</h4>
+            <p class="text-xs text-slate-600 leading-relaxed">
+              DockTun manages its own container updates, verified image digests, and health reconnection via the dedicated In-App Updater in Settings.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <p v-else class="text-xs text-slate-700 leading-relaxed">
         DockTun will pull the latest image layers from the remote registry, cleanly recreate the container with your existing volume mounts, environment variables, published ports, and network routes, then verify health.
       </p>
 
@@ -148,6 +182,16 @@ function onResultBackdropClick(e: MouseEvent) {
           Cancel
         </button>
         <button
+          v-if="isDockTunSelf"
+          @click="goToUpdater"
+          class="cyber-btn flex items-center gap-2 text-xs text-white border-cyan-600 bg-cyan-600 hover:bg-cyan-500 font-bold shadow-md shadow-cyan-900/20"
+        >
+          <Sparkles class="h-4 w-4" />
+          <span>Open DockTun Updater</span>
+          <ExternalLink class="h-3.5 w-3.5 opacity-80" />
+        </button>
+        <button
+          v-else
           @click="emit('confirm', confirmContainer)"
           :disabled="updatePlanLoading || (updatePlan && !updatePlan.ready) || !!updatePlanError"
           class="cyber-btn flex items-center gap-2 text-xs text-amber-200 border-amber-500/80 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 font-bold shadow-lg shadow-amber-900/30 disabled:opacity-50 disabled:cursor-not-allowed"

@@ -37,7 +37,8 @@ RUN go mod download github.com/sigstore/cosign/v3@v3.1.4 && \
     go get golang.org/x/net@v0.62.0 && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /cosign-bin ./cmd/cosign
 FROM alpine:3.23
-RUN apk --no-cache add ca-certificates docker-cli docker-cli-compose docker-cli-buildx git tzdata curl && \
+RUN apk --no-cache upgrade && \
+    apk --no-cache add ca-certificates docker-cli docker-cli-compose docker-cli-buildx git tzdata curl && \
     git config --global --add safe.directory '*'
 
 COPY --from=signature-verifier /cosign-bin /usr/local/bin/cosign
