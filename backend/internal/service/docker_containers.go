@@ -1886,6 +1886,14 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 		s.saveUpdateToDB(res)
 		return res, nil
 	}
+	// 1. Detect if this service is backed by a Git repository
+	gitInfo := s.getContainerGitInfo(detail)
+	if isLocalOrCustomImage(detail.Image) && (gitInfo.RepoURL != "" || gitInfo.LocalDir != "") {
+		if gitRes, ok := s.checkGitUpstream(ctx, gitInfo, detail); ok {
+			s.saveUpdateToDB(gitRes)
+			return gitRes, nil
+		}
+	}
 	// 0. Detect local DockTun image tag (e.g. "docktun:latest" or "docktun" without remote registry repo)
 	if isLocalDocktunImage(detail.Image) {
 		localCommit := getLocalGitCommit(s.cfg.SelfPath, detail)
@@ -1999,8 +2007,20 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 			}
 		}
 
+		// Fallback to checking Git upstream if the service has a Git repository
+		if gitInfo.RepoURL != "" || gitInfo.LocalDir != "" {
+			if gitRes, ok := s.checkGitUpstream(ctx, gitInfo, detail); ok {
+				s.saveUpdateToDB(gitRes)
+				return gitRes, nil
+			}
+		}
+
 		if strings.Contains(err.Error(), "does not host this image") || strings.Contains(err.Error(), "401") || strings.Contains(err.Error(), "404") {
-			res.Error = "Local build or private image (updates managed locally)"
+			if gitInfo.RepoURL != "" {
+				res.Error = fmt.Sprintf("Local build: Git remote %s has no reachable commits", gitInfo.RepoURL)
+			} else {
+				res.Error = "Local build or private image (configure Git repository in Compose to check updates)"
+			}
 		} else {
 			res.Error = fmt.Sprintf("unable to check registry: %v", err)
 		}
@@ -2430,47 +2450,6 @@ func getLocalGitCommit(selfPath string, detail ContainerDetail) string {
 		}
 	}
 	return ""
-}
-
-func fetchLatestGitHubCommit(ctx context.Context, owner, repo, branch string) (string, string, error) {
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", owner, repo, branch)
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
-	if err != nil {
-		return "", "", err
-	}
-	req.Header.Set("User-Agent", "DockTun-Dashboard/1.0")
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("github api returned %d", resp.StatusCode)
-	}
-
-	var data struct {
-		SHA    string `json:"sha"`
-		Commit struct {
-			Message string `json:"message"`
-		} `json:"commit"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return "", "", err
-	}
-
-	shortSHA := data.SHA
-	if len(shortSHA) > 7 {
-		shortSHA = shortSHA[:7]
-	}
-	firstLineMsg := strings.Split(data.Commit.Message, "\n")[0]
-	if len(firstLineMsg) > 50 {
-		firstLineMsg = firstLineMsg[:47] + "..."
-	}
-	return shortSHA, firstLineMsg, nil
 }
 
 var reIPv4 = regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`)

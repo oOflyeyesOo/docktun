@@ -1029,6 +1029,9 @@ async function saveProjectGit() {
       body: JSON.stringify(currentProject.value),
     })
     alert('Git configuration saved successfully!')
+    if (selectedContainer.value) {
+      checkSingleUpdate(selectedContainer.value)
+    }
   } catch (e: any) {
     alert('Failed to save Git configuration: ' + (e.message || e))
   } finally {

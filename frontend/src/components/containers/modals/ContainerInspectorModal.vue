@@ -542,13 +542,23 @@ function onBackdropClick(e: MouseEvent) {
                   <span>{{ checkingSingleUpdate?.[container.id] ? 'Checking…' : 'Check for Update' }}</span>
                 </button>
                 <button
-                  v-if="container.update_available"
+                  v-if="container.update_available && !container.project_id"
                   @click="emit('confirm-update', container)"
                   :disabled="!!updatingContainer?.[container.id]"
                   class="cyber-btn flex items-center gap-1.5 text-xs text-amber-200 border-amber-500 bg-amber-50/70 hover:bg-amber-100"
                 >
                   <ArrowUpCircle class="h-3.5 w-3.5 text-amber-600" :class="updatingContainer?.[container.id] ? 'animate-spin' : ''" />
                   <span>{{ updatingContainer?.[container.id] ? 'Updating…' : 'Update to Latest' }}</span>
+                </button>
+                <button
+                  v-if="container.update_available && container.project_id"
+                  @click="emit('deploy-stack', container.project_id, container.project_name || container.name)"
+                  :disabled="!!stackActionLoading?.[container.project_id]"
+                  class="cyber-btn flex items-center gap-1.5 text-xs text-violet-700 border-violet-500 bg-violet-50/70 hover:bg-violet-100"
+                  title="Deploy / pull latest Git updates and recreate stack"
+                >
+                  <Rocket class="h-3.5 w-3.5 text-violet-600" :class="stackActionLoading?.[container.project_id] ? 'animate-spin' : ''" />
+                  <span>{{ stackActionLoading?.[container.project_id] ? 'Deploying…' : 'Deploy / Pull Stack' }}</span>
                 </button>
               </div>
             </div>
@@ -559,12 +569,12 @@ function onBackdropClick(e: MouseEvent) {
                 <span class="ml-2 text-cyan-700 font-bold">{{ container.image }}</span>
               </div>
               <div>
-                <span class="text-slate-500">Registry Status:</span>
+                <span class="text-slate-500">Upstream Status:</span>
                 <span v-if="container.update_available" class="ml-2 inline-flex items-center gap-1 text-amber-600 font-bold animate-pulse">
                   <ArrowUpCircle class="h-3.5 w-3.5" />
-                  Update Available on Registry
+                  {{ container.update_error?.toLowerCase().includes('git') ? 'Git Update Available' : 'Update Available on Registry' }}
                 </span>
-                <span v-else-if="container.update_error && (container.update_error.includes('built locally') || container.update_error.includes('Local'))" class="ml-2 inline-flex items-center gap-1 text-cyan-700 font-semibold">
+                <span v-else-if="container.update_error && (container.update_error.includes('built locally') || container.update_error.includes('Local') || container.update_error.includes('Git'))" class="ml-2 inline-flex items-center gap-1 text-cyan-700 font-semibold">
                   <Info class="h-3.5 w-3.5" />
                   Local / Git Managed
                 </span>
@@ -577,12 +587,12 @@ function onBackdropClick(e: MouseEvent) {
                 </span>
               </div>
               <div v-if="container.current_digest" class="truncate">
-                <span class="text-slate-500">Current Digest:</span>
-                <span class="ml-2 text-slate-700 truncate" :title="container.current_digest">{{ container.current_digest.substring(0, 19) }}…</span>
+                <span class="text-slate-500">{{ container.update_error?.toLowerCase().includes('git') ? 'Current Commit:' : 'Current Digest:' }}</span>
+                <span class="ml-2 text-slate-700 truncate" :title="container.current_digest">{{ container.current_digest }}</span>
               </div>
               <div v-if="container.latest_digest" class="truncate">
-                <span class="text-slate-500">Latest Remote Digest:</span>
-                <span class="ml-2 text-amber-700 truncate" :title="container.latest_digest">{{ container.latest_digest.substring(0, 19) }}…</span>
+                <span class="text-slate-500">{{ container.update_error?.toLowerCase().includes('git') ? 'Latest Git Commit:' : 'Latest Remote Digest:' }}</span>
+                <span class="ml-2 text-amber-700 truncate" :title="container.latest_digest">{{ container.latest_digest }}</span>
               </div>
               <div v-if="container.update_checked_at" class="md:col-span-2 text-slate-500 text-[11px]">
                 Last checked: {{ container.update_checked_at }}
