@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -1911,8 +1912,8 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 				}
 			} else {
 				res.CurrentDigest = "local-git"
-				res.UpdateAvailable = true
-				res.Error = fmt.Sprintf("Upstream commit %s available (%s). Built locally.", commitSHA, commitMsg)
+				res.UpdateAvailable = false
+				res.Error = fmt.Sprintf("Upstream commit %s available (%s). Built locally (untracked commit).", commitSHA, commitMsg)
 			}
 		} else {
 			res.CurrentDigest = "local-git"
@@ -1949,8 +1950,35 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 		}
 	}
 
+	// If localDigests is still empty, inspect the container's running image ID directly
+	if len(localDigests) == 0 && detail.ID != "" {
+		contInspectCmd := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.Image}}", detail.ID)
+		if cOut, cErr := contInspectCmd.Output(); cErr == nil {
+			cImgID := strings.TrimSpace(string(cOut))
+			if cImgID != "" {
+				localDigests = append(localDigests, cImgID)
+				imgCmd := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}", cImgID)
+				if iOut, iErr := imgCmd.Output(); iErr == nil {
+					var repoDigests []string
+					if json.Unmarshal([]byte(strings.TrimSpace(string(iOut))), &repoDigests) == nil {
+						for _, rd := range repoDigests {
+							if idx := strings.Index(rd, "@"); idx != -1 {
+								localDigests = append(localDigests, rd[idx+1:])
+							} else {
+								localDigests = append(localDigests, rd)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	if len(localDigests) > 0 {
 		res.CurrentDigest = localDigests[0]
+	} else if detail.CurrentDigest != "" {
+		res.CurrentDigest = detail.CurrentDigest
+		localDigests = append(localDigests, detail.CurrentDigest)
 	}
 
 	// 2. Fetch remote manifest digest
@@ -1996,11 +2024,14 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 					if !strings.HasPrefix(commitSHA, localCommit) && !strings.HasPrefix(localCommit, commitSHA) {
 						res.UpdateAvailable = true
 						res.Error = fmt.Sprintf("Upstream commit %s available (%s)", commitSHA, commitMsg)
+					} else {
+						res.UpdateAvailable = false
+						res.Error = ""
 					}
 				} else {
 					res.CurrentDigest = "local-git"
-					res.UpdateAvailable = true
-					res.Error = fmt.Sprintf("Upstream commit %s available (%s)", commitSHA, commitMsg)
+					res.UpdateAvailable = false
+					res.Error = fmt.Sprintf("Upstream commit %s available (%s). Untracked local commit.", commitSHA, commitMsg)
 				}
 				s.saveUpdateToDB(res)
 				return res, nil
@@ -2024,6 +2055,7 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 		} else {
 			res.Error = fmt.Sprintf("unable to check registry: %v", err)
 		}
+		res.UpdateAvailable = false
 		s.saveUpdateToDB(res)
 		return res, nil
 	}
@@ -2034,11 +2066,16 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 	allRemote := append([]string{latestDigest}, subDigests...)
 	matched := false
 	for _, rem := range allRemote {
-		if rem == "" {
+		remClean := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(rem)), "sha256:")
+		if remClean == "" {
 			continue
 		}
 		for _, loc := range localDigests {
-			if strings.EqualFold(loc, rem) || strings.HasSuffix(loc, rem) || strings.HasSuffix(rem, loc) {
+			locClean := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(loc)), "sha256:")
+			if locClean == "" {
+				continue
+			}
+			if locClean == remClean || strings.HasPrefix(remClean, locClean) || strings.HasPrefix(locClean, remClean) {
 				matched = true
 				break
 			}
@@ -2049,6 +2086,9 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 	}
 
 	res.UpdateAvailable = !matched && (latestDigest != "")
+	if matched {
+		res.Error = ""
+	}
 	s.saveUpdateToDB(res)
 	return res, nil
 }
@@ -2303,6 +2343,7 @@ func fetchRemoteManifestDigest(ctx context.Context, registry, repo, tag string) 
 	}
 	defer resp.Body.Close()
 
+	var bearerToken string
 	if resp.StatusCode == http.StatusUnauthorized {
 		authHeader := resp.Header.Get("Www-Authenticate")
 		if strings.HasPrefix(authHeader, "Bearer ") {
@@ -2331,6 +2372,7 @@ func fetchRemoteManifestDigest(ctx context.Context, registry, repo, tag string) 
 						tok = tokenData.AccessToken
 					}
 					if tok != "" {
+						bearerToken = tok
 						req2, _ := http.NewRequestWithContext(ctx, "GET", manifestURL, nil)
 						req2.Header.Set("Accept", "application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json")
 						req2.Header.Set("Authorization", "Bearer "+tok)
@@ -2356,7 +2398,10 @@ func fetchRemoteManifestDigest(ctx context.Context, registry, repo, tag string) 
 	bodyBytes, _ := io.ReadAll(resp.Body)
 
 	var subDigests []string
-	var indexDoc struct {
+	var manifestPayload struct {
+		Config struct {
+			Digest string `json:"digest"`
+		} `json:"config"`
 		Manifests []struct {
 			Digest   string `json:"digest"`
 			Platform struct {
@@ -2365,12 +2410,66 @@ func fetchRemoteManifestDigest(ctx context.Context, registry, repo, tag string) 
 			} `json:"platform"`
 		} `json:"manifests"`
 	}
-	if err := json.Unmarshal(bodyBytes, &indexDoc); err == nil && len(indexDoc.Manifests) > 0 {
-		for _, m := range indexDoc.Manifests {
-			if m.Digest != "" {
-				subDigests = append(subDigests, m.Digest)
+
+	if err := json.Unmarshal(bodyBytes, &manifestPayload); err == nil {
+		// Single image manifest: config.digest is the image ID in Docker
+		if manifestPayload.Config.Digest != "" {
+			subDigests = append(subDigests, manifestPayload.Config.Digest)
+		}
+
+		// Manifest list / OCI index: collect sub-digests and extract the config.digest for host architecture
+		if len(manifestPayload.Manifests) > 0 {
+			var matchingPlatformDigests []string
+			hostArch := runtime.GOARCH
+			if hostArch == "" {
+				hostArch = "amd64"
+			}
+			for _, m := range manifestPayload.Manifests {
+				if m.Digest != "" {
+					subDigests = append(subDigests, m.Digest)
+					if (m.Platform.Architecture == hostArch || m.Platform.Architecture == "amd64") &&
+						(m.Platform.OS == "linux" || m.Platform.OS == "") {
+						matchingPlatformDigests = append(matchingPlatformDigests, m.Digest)
+					}
+				}
+			}
+
+			targetPlatformDigest := ""
+			if len(matchingPlatformDigests) > 0 {
+				targetPlatformDigest = matchingPlatformDigests[0]
+			} else if len(manifestPayload.Manifests) > 0 {
+				targetPlatformDigest = manifestPayload.Manifests[0].Digest
+			}
+
+			if targetPlatformDigest != "" {
+				childURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s", registry, repo, targetPlatformDigest)
+				cReq, cErr := http.NewRequestWithContext(ctx, "GET", childURL, nil)
+				if cErr == nil {
+					cReq.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json")
+					if bearerToken != "" {
+						cReq.Header.Set("Authorization", "Bearer "+bearerToken)
+					}
+					cResp, cErr := client.Do(cReq)
+					if cErr == nil && cResp.StatusCode == http.StatusOK {
+						var childDoc struct {
+							Config struct {
+								Digest string `json:"digest"`
+							} `json:"config"`
+						}
+						if json.NewDecoder(cResp.Body).Decode(&childDoc) == nil {
+							if childDoc.Config.Digest != "" {
+								subDigests = append(subDigests, childDoc.Config.Digest)
+							}
+						}
+						cResp.Body.Close()
+					}
+				}
 			}
 		}
+	}
+
+	if mainDigest == "" && len(subDigests) > 0 {
+		mainDigest = subDigests[0]
 	}
 
 	return mainDigest, subDigests, nil

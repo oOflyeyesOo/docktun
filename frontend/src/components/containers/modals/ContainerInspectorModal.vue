@@ -578,7 +578,7 @@ function onBackdropClick(e: MouseEvent) {
                   <Info class="h-3.5 w-3.5" />
                   Local / Git Managed
                 </span>
-                <span v-else-if="container.update_checked_at && !container.update_error" class="ml-2 inline-flex items-center gap-1 text-emerald-600 font-bold">
+                <span v-else-if="container.update_checked_at && !container.update_available" class="ml-2 inline-flex items-center gap-1 text-emerald-600 font-bold">
                   <CheckCircle2 class="h-3.5 w-3.5" />
                   Up to Date
                 </span>

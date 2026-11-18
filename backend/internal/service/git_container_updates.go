@@ -63,9 +63,12 @@ func isLocalOrCustomImage(image string) bool {
 	if !strings.Contains(img, "/") {
 		return true
 	}
-	firstPart := strings.Split(img, "/")[0]
-	if !strings.Contains(firstPart, ".") && !strings.Contains(firstPart, ":") {
-		return true
+	parts := strings.Split(img, "/")
+	if len(parts) == 2 && !strings.Contains(parts[0], ".") && !strings.Contains(parts[0], ":") {
+		return false
+	}
+	if strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":") {
+		return false
 	}
 	return false
 }
@@ -346,12 +349,12 @@ func (s *DockerContainers) checkGitUpstream(ctx context.Context, info ContainerG
 			}
 		}
 	} else {
-		res.CurrentDigest = "local-git"
-		res.UpdateAvailable = true
+		res.CurrentDigest = "local-build"
+		res.UpdateAvailable = false
 		if commitMsg != "" {
-			res.Error = fmt.Sprintf("Upstream git commit %s available (%s)", remoteSHA, commitMsg)
+			res.Error = fmt.Sprintf("Upstream git commit %s available (local commit untracked)", remoteSHA)
 		} else {
-			res.Error = fmt.Sprintf("Upstream git commit %s available", remoteSHA)
+			res.Error = "Local build commit untracked"
 		}
 	}
 

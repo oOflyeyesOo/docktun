@@ -48,6 +48,9 @@ func TestIsLocalOrCustomImage(t *testing.T) {
 		{"ghcr.io/viren070/aiostreams:latest", false},
 		{"docker.io/library/nginx:latest", false},
 		{"redis:alpine", true}, // single segment without registry host
+		{"viren070/aiostreams:latest", false},
+		{"linuxserver/wireguard", false},
+		{"vaultwarden/server:latest", false},
 		{"quay.io/coreos/etcd", false},
 	}
 
