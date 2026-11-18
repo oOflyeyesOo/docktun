@@ -3,3 +3,6 @@ allowBuilds:
   vue-demi: true
 overrides:
   postcss-selector-parser: ^7.1.6
+auditConfig:
+  ignoreGhsas:
+    - GHSA-fc5q-39xc-vjpf
