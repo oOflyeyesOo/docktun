@@ -321,15 +321,21 @@ export function sortContainers(list, sortBy = 'name', sortOrder = 'asc') {
  * @returns {{ isSelected: boolean, isIndeterminate: boolean, selectedCount: number, totalCount: number }}
  */
 export function calculateStackSelection(groupContainers, selectedContainerIds = {}) {
+  const selMap = selectedContainerIds || {}
   if (!Array.isArray(groupContainers) || groupContainers.length === 0) {
     return { isSelected: false, isIndeterminate: false, selectedCount: 0, totalCount: 0 }
   }
 
-  const totalCount = groupContainers.length
+  const validContainers = groupContainers.filter((c) => c && c.id)
+  const totalCount = validContainers.length
+  if (totalCount === 0) {
+    return { isSelected: false, isIndeterminate: false, selectedCount: 0, totalCount: 0 }
+  }
+
   let selectedCount = 0
 
-  for (const c of groupContainers) {
-    if (c && c.id && selectedContainerIds[c.id]) {
+  for (const c of validContainers) {
+    if (selMap[c.id]) {
       selectedCount++
     }
   }
@@ -350,15 +356,19 @@ export function calculateStackSelection(groupContainers, selectedContainerIds = 
  * @returns {Record<string, boolean>} new selection map
  */
 export function toggleStackSelection(groupContainers, selectedContainerIds = {}) {
-  const next = { ...selectedContainerIds }
+  const next = { ...(selectedContainerIds || {}) }
   if (!Array.isArray(groupContainers) || groupContainers.length === 0) {
     return next
   }
 
-  const { isSelected } = calculateStackSelection(groupContainers, next)
+  const validContainers = groupContainers.filter((c) => c && c.id)
+  if (validContainers.length === 0) {
+    return next
+  }
 
-  for (const c of groupContainers) {
-    if (!c || !c.id) continue
+  const { isSelected } = calculateStackSelection(validContainers, next)
+
+  for (const c of validContainers) {
     if (isSelected) {
       delete next[c.id]
     } else {
@@ -377,15 +387,21 @@ export function toggleStackSelection(groupContainers, selectedContainerIds = {})
  * @returns {{ isAllSelected: boolean, isIndeterminate: boolean, selectedCount: number, totalCount: number }}
  */
 export function calculateTableSelection(flatContainers, selectedContainerIds = {}) {
+  const selMap = selectedContainerIds || {}
   if (!Array.isArray(flatContainers) || flatContainers.length === 0) {
     return { isAllSelected: false, isIndeterminate: false, selectedCount: 0, totalCount: 0 }
   }
 
-  const totalCount = flatContainers.length
+  const validContainers = flatContainers.filter((c) => c && c.id)
+  const totalCount = validContainers.length
+  if (totalCount === 0) {
+    return { isAllSelected: false, isIndeterminate: false, selectedCount: 0, totalCount: 0 }
+  }
+
   let selectedCount = 0
 
-  for (const c of flatContainers) {
-    if (c && c.id && selectedContainerIds[c.id]) {
+  for (const c of validContainers) {
+    if (selMap[c.id]) {
       selectedCount++
     }
   }
@@ -407,7 +423,8 @@ export function calculateTableSelection(flatContainers, selectedContainerIds = {
 export function toggleTableSelection(flatContainers, selectedContainerIds = {}, forceSelected) {
   if (!Array.isArray(flatContainers)) return {}
 
-  const { isAllSelected } = calculateTableSelection(flatContainers, selectedContainerIds)
+  const selMap = selectedContainerIds || {}
+  const { isAllSelected } = calculateTableSelection(flatContainers, selMap)
 
   if (forceSelected === false || (forceSelected === undefined && isAllSelected)) {
     return {}
@@ -531,6 +548,10 @@ export function shouldIncludeEmptyProjects(statusFilterOrOptions = 'all', maybeS
     searchQuery = maybeSearchQuery || ''
   }
 
+  if (typeof statusFilter === 'string') {
+    statusFilter = statusFilter.trim().toLowerCase()
+  }
+
   const isDefaultFilter = !statusFilter || statusFilter === 'all'
   const hasSearch = typeof searchQuery === 'string' && searchQuery.trim().length > 0
   return isDefaultFilter && !hasSearch
@@ -552,8 +573,11 @@ export function filterContainerGroups(groups, statusFilterOrOptions = 'all', may
     return [...groups]
   }
   return groups.filter((g) => {
-    if (!g) return false
-    const count = Array.isArray(g.containers) ? g.containers.length : (g.totalCount ?? 0)
+    if (!g || typeof g !== 'object') return false
+    if (Array.isArray(g.containers)) {
+      return g.containers.length > 0
+    }
+    const count = typeof g.totalCount === 'number' && !isNaN(g.totalCount) ? g.totalCount : 0
     return count > 0
   })
 }

@@ -58,7 +58,8 @@ import {
   History,
   ChevronDown,
   ChevronRight,
-  CheckSquare
+  CheckSquare,
+  X
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
@@ -273,6 +274,15 @@ function copyToClipboard(key: string, text: string) {
   setTimeout(() => {
     if (copiedKey.value === key) copiedKey.value = null
   }, 2000)
+}
+
+// Managed Services Banner State
+const showServicesBanner = ref(localStorage.getItem('docktun_hide_services_banner') !== 'true')
+function dismissServicesBanner() {
+  showServicesBanner.value = false
+  try {
+    localStorage.setItem('docktun_hide_services_banner', 'true')
+  } catch {}
 }
 
 // ==========================================
@@ -588,6 +598,11 @@ const containerGroups = computed<ContainerGroup[]>(() => {
     if (!a.isStack && b.isStack) return 1
     return a.name.localeCompare(b.name)
   })
+
+  // Ensure empty stacks (0 containers matching active filter/search) NEVER render when a filter tab or search is active
+  if (!shouldIncludeEmptyProjects(filter.value, searchQuery.value)) {
+    return groups.filter((g) => g.containers && g.containers.length > 0)
+  }
 
   return groups
 })
@@ -1326,7 +1341,28 @@ onUnmounted(() => {
       </router-link>
     </div>
 
-      <div class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-sm"><p class="text-slate-600">Your apps and stacks. DockTun and its managed services live in Settings.</p><router-link to="/settings#docktun-services" class="font-medium text-indigo-700">DockTun services →</router-link></div>
+      <!-- Dismissible compact banner for DockTun managed services -->
+      <div
+        v-if="showServicesBanner"
+        class="flex items-center justify-between gap-3 rounded-lg border border-indigo-100 bg-indigo-50/50 px-3.5 py-2 text-xs transition-all"
+      >
+        <div class="flex items-center gap-2 text-slate-600 min-w-0">
+          <Sparkles class="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+          <span class="truncate">Your apps and stacks. DockTun and its managed services live in Settings.</span>
+          <router-link to="/settings#docktun-services" class="font-semibold text-indigo-700 hover:text-indigo-900 shrink-0 ml-1 inline-flex items-center gap-0.5">
+            <span>DockTun services</span>
+            <span>&rarr;</span>
+          </router-link>
+        </div>
+        <button
+          type="button"
+          @click="dismissServicesBanner"
+          class="rounded p-1 text-slate-400 hover:bg-indigo-100/60 hover:text-slate-700 transition-colors shrink-0 cursor-pointer"
+          title="Dismiss notice"
+        >
+          <X class="h-3.5 w-3.5" />
+        </button>
+      </div>
       <p v-if="serviceInventoryError" role="status" class="text-xs text-amber-800">Could not refresh service ownership. {{ serviceInventoryError }}</p>
     <!-- Filter & Search Bar -->
     <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -1392,24 +1428,6 @@ onUnmounted(() => {
           <Layers class="h-3.5 w-3.5" :class="groupByStack ? 'text-indigo-600' : 'text-slate-500'" />
           <span>{{ groupByStack ? 'Grouped by Stack' : 'Flat List' }}</span>
         </button>
-
-        <!-- Expand / Collapse All (active in card grid mode when groupByStack is true; table mode includes its own sub-header controls) -->
-        <template v-if="groupByStack && viewMode === 'grid'">
-          <button
-            @click="expandAllStacks"
-            class="cyber-btn-secondary text-xs px-2.5 py-1.5 text-slate-600 hover:text-slate-800"
-            title="Expand all stack groups"
-          >
-            Expand All
-          </button>
-          <button
-            @click="collapseAllStacks"
-            class="cyber-btn-secondary text-xs px-2.5 py-1.5 text-slate-600 hover:text-slate-800"
-            title="Collapse all stack groups"
-          >
-            Collapse All
-          </button>
-        </template>
 
         <!-- Search box -->
         <div class="relative w-full sm:w-60">

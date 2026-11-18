@@ -125,7 +125,7 @@ function handleMenuAction(action: () => void) {
         <!-- Tree guideline branch if stack child -->
         <span
           v-if="isStackChild"
-          class="font-mono text-slate-400 select-none text-xs"
+          class="font-mono text-slate-300 select-none text-xs leading-none shrink-0"
         >
           {{ isLastChild ? '└─' : '├─' }}
         </span>
@@ -145,7 +145,7 @@ function handleMenuAction(action: () => void) {
             <button
               type="button"
               @click="copyId"
-              class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-slate-600 transition-opacity p-0.5"
+              class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-slate-600 transition-opacity p-0.5 cursor-pointer"
               :title="`Copy ID: ${container.id}`"
             >
               <Check v-if="copied" class="h-3 w-3 text-emerald-600" />
@@ -155,7 +155,7 @@ function handleMenuAction(action: () => void) {
 
           <div class="flex items-center gap-1 text-[10px] text-slate-500 font-mono">
             <span>{{ (container.id || '').slice(0, 10) }}</span>
-            <span v-if="!isStackChild && container.project_name" class="rounded bg-slate-100 px-1 text-slate-600">
+            <span v-if="!isStackChild && container.project_name" class="rounded bg-slate-100 px-1 text-slate-600 font-medium">
               {{ container.project_name }}
             </span>
           </div>
@@ -195,7 +195,7 @@ function handleMenuAction(action: () => void) {
           v-if="container.update_available"
           type="button"
           @click="emit('confirm-update', container)"
-          class="shrink-0 flex items-center gap-0.5 rounded-full bg-amber-50 border border-amber-300 px-1.5 py-0.2 text-[9px] font-bold text-amber-700 hover:bg-amber-100 transition-colors animate-pulse cursor-pointer"
+          class="shrink-0 flex items-center gap-0.5 rounded-full bg-amber-50 border border-amber-300 px-1.5 py-0.2 text-[9px] font-bold text-amber-700 hover:bg-amber-100 transition-colors animate-pulse cursor-pointer shadow-2xs"
           title="Update available! Click to recreate with new image"
         >
           <ArrowUpCircle class="h-2.5 w-2.5 text-amber-600" />
@@ -214,7 +214,7 @@ function handleMenuAction(action: () => void) {
             :href="localAddress(container)"
             target="_blank"
             rel="noopener noreferrer"
-            class="inline-flex items-center gap-1 rounded bg-cyan-50/80 border border-cyan-200 px-1.5 py-0.5 font-mono text-[10px] font-medium text-cyan-800 hover:bg-cyan-100 hover:text-cyan-900 transition-colors"
+            class="inline-flex items-center gap-1 rounded-md bg-cyan-50 border border-cyan-200/80 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-cyan-800 hover:bg-cyan-100 hover:text-cyan-900 transition-colors shadow-2xs"
             title="Open local web service"
           >
             <span>{{ getDisplayPort(container.ports) }}</span>
@@ -222,7 +222,7 @@ function handleMenuAction(action: () => void) {
           </a>
           <span
             v-else
-            class="font-mono text-[10px] text-slate-600 truncate"
+            class="inline-flex items-center rounded-md bg-slate-100 border border-slate-200/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-600 truncate max-w-[150px]"
             :title="container.ports"
           >
             {{ container.ports }}
@@ -233,7 +233,7 @@ function handleMenuAction(action: () => void) {
     </td>
 
     <!-- 5. Exposure & Tunnel -->
-    <td class="py-2.5 px-3 max-w-[160px]">
+    <td class="py-2.5 px-3 max-w-[170px]">
       <div class="flex items-center gap-1.5 flex-wrap">
         <!-- Public Cloudflare Hostname -->
         <a
@@ -241,19 +241,20 @@ function handleMenuAction(action: () => void) {
           :href="`https://${container.hostname}`"
           target="_blank"
           rel="noopener noreferrer"
-          class="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-300 px-2 py-0.5 text-[10px] font-medium text-emerald-800 hover:bg-emerald-100 transition-colors truncate max-w-[150px]"
+          class="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-300/80 px-2 py-0.5 text-[10px] font-medium text-emerald-800 hover:bg-emerald-100 transition-colors truncate max-w-[150px] shadow-2xs"
           :title="`Public tunnel: https://${container.hostname}`"
         >
           <Globe class="h-2.5 w-2.5 text-emerald-600 shrink-0" />
-          <span class="truncate">{{ container.hostname }}</span>
+          <span class="truncate font-mono">{{ container.hostname }}</span>
+          <ExternalLink class="h-2 w-2 text-emerald-600/70 shrink-0" />
         </a>
 
-        <!-- Zero Trust Protected -->
+        <!-- Zero Trust Protected (shown alongside if public or standalone) -->
         <button
-          v-else-if="container.zero_trust_enabled"
+          v-if="container.zero_trust_enabled"
           type="button"
           @click="emit('open-inspector', container, 'access')"
-          class="inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[10px] font-medium text-indigo-700 hover:bg-indigo-100 transition-colors cursor-pointer"
+          class="inline-flex items-center gap-0.5 rounded-full bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 hover:bg-indigo-100 transition-colors cursor-pointer shadow-2xs shrink-0"
           title="Zero Trust Access Policy active"
         >
           <ShieldCheck class="h-2.5 w-2.5 text-indigo-600" />
@@ -262,10 +263,10 @@ function handleMenuAction(action: () => void) {
 
         <!-- Connected to Cloudflare bridge -->
         <button
-          v-else-if="container.connected_to_cloudflared"
+          v-else-if="container.connected_to_cloudflared && container.exposure_mode !== 'public'"
           type="button"
           @click="emit('open-inspector', container, 'access')"
-          class="inline-flex items-center gap-1 rounded-full bg-cyan-50 border border-cyan-200 px-2 py-0.5 text-[10px] font-medium text-cyan-700 hover:bg-cyan-100 transition-colors cursor-pointer"
+          class="inline-flex items-center gap-1 rounded-full bg-cyan-50 border border-cyan-200 px-2 py-0.5 text-[10px] font-medium text-cyan-700 hover:bg-cyan-100 transition-colors cursor-pointer shadow-2xs"
           title="Connected to cloudflared network"
         >
           <Network class="h-2.5 w-2.5 text-cyan-600" />
@@ -274,10 +275,10 @@ function handleMenuAction(action: () => void) {
 
         <!-- Internal / Unexposed -->
         <button
-          v-else
+          v-else-if="container.exposure_mode !== 'public' && !container.zero_trust_enabled"
           type="button"
           @click="emit('open-inspector', container, 'access')"
-          class="text-[10px] text-slate-400 hover:text-slate-600 font-medium transition-colors cursor-pointer"
+          class="rounded bg-slate-100 hover:bg-slate-200/70 px-1.5 py-0.5 text-[10px] text-slate-500 hover:text-slate-700 font-medium transition-colors cursor-pointer"
           title="Internal only. Click to configure ingress exposure"
         >
           Internal

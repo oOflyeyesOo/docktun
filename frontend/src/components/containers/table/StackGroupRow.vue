@@ -84,7 +84,7 @@ function handleMenuAction(action: () => void) {
           >
             <component
               :is="isCollapsed ? ChevronRight : ChevronDown"
-              class="h-4 w-4 text-slate-500 group-hover:text-cyan-700 transition-colors"
+              class="h-4 w-4 text-slate-400 group-hover:text-slate-600 transition-colors"
             />
             <component
               :is="group.isStack ? Layers : Server"
@@ -100,10 +100,10 @@ function handleMenuAction(action: () => void) {
           <span
             class="rounded-full px-2 py-0.5 text-[10px] font-mono font-semibold"
             :class="group.runningCount === group.totalCount && group.totalCount > 0
-              ? 'bg-emerald-500/10 text-emerald-700 border border-emerald-500/30'
+              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
               : group.runningCount > 0
-                ? 'bg-amber-500/10 text-amber-700 border border-amber-500/30'
-                : 'bg-slate-200/70 text-slate-600 border border-slate-300'"
+                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                : 'bg-slate-100 text-slate-600 border border-slate-200'"
           >
             {{ group.runningCount }}/{{ group.totalCount }} running
           </span>
@@ -111,146 +111,155 @@ function handleMenuAction(action: () => void) {
           <!-- Total CPU -->
           <span
             v-if="group.runningCount > 0 && group.totalCpu !== '0.0%'"
-            class="rounded-full bg-slate-200/60 border border-slate-300/60 px-2 py-0.5 text-[10px] font-mono text-cyan-800"
+            class="rounded-full bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-mono text-slate-700"
             title="Total CPU used across all stack containers"
           >
-            CPU: {{ group.totalCpu }}
+            CPU {{ group.totalCpu }}
           </span>
 
           <!-- Updates Available -->
           <span
             v-if="group.hasUpdates"
-            class="rounded-full bg-amber-50 border border-amber-300 px-2 py-0.5 text-[10px] font-bold text-amber-700 flex items-center gap-1 animate-pulse"
+            class="rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-700 flex items-center gap-1 shadow-2xs"
           >
             <ArrowUpCircle class="h-2.5 w-2.5 text-amber-600" />
-            <span>Updates Available</span>
+            <span>Updates</span>
           </span>
 
           <!-- Zero Trust / Public Badge -->
           <span
             v-if="group.hasZeroTrust"
-            class="rounded-full bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 flex items-center gap-1"
+            class="rounded-full bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 flex items-center gap-1 shadow-2xs"
             title="Zero Trust Protected Ingress"
           >
-            <ShieldCheck class="h-2.5 w-2.5" />
+            <ShieldCheck class="h-2.5 w-2.5 text-indigo-600" />
             <span>Zero Trust</span>
           </span>
           <span
             v-else-if="group.hasPublic"
-            class="rounded-full bg-cyan-50 border border-cyan-200 px-2 py-0.5 text-[10px] font-semibold text-cyan-700 flex items-center gap-1"
+            class="rounded-full bg-cyan-50 border border-cyan-200 px-2 py-0.5 text-[10px] font-semibold text-cyan-700 flex items-center gap-1 shadow-2xs"
             title="Public Cloudflare Tunnel Ingress"
           >
-            <Globe class="h-2.5 w-2.5" />
+            <Globe class="h-2.5 w-2.5 text-cyan-600" />
             <span>Public Ingress</span>
           </span>
         </div>
 
-        <!-- Right Section: Mass Stack Actions (Up / Down / Restart / Compose / More) -->
+        <!-- Right Section: Compact Unified Stack Control Group -->
         <div v-if="group.projectId" class="flex items-center gap-1.5 self-end sm:self-center">
-          <!-- Compose Editor Shortcut -->
-          <button
-            type="button"
-            @click="emit('open-compose', group)"
-            class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2 text-cyan-700 hover:border-cyan-500/50"
-            title="Edit docker-compose.yml"
-          >
-            <Code2 class="h-3 w-3" />
-            <span class="hidden md:inline">Compose</span>
-          </button>
-
-          <!-- Up -->
-          <button
-            type="button"
-            @click="emit('stack-action', group.projectId, 'up')"
-            :disabled="!!stackActionLoading?.[group.projectId]"
-            class="cyber-btn flex items-center gap-1 text-[11px] py-1 px-2 text-emerald-700 border-emerald-400 hover:bg-emerald-50"
-            title="docker compose up -d"
-          >
-            <Play class="h-3 w-3 fill-current" />
-            <span>Up</span>
-          </button>
-
-          <!-- Down -->
-          <button
-            type="button"
-            @click="emit('stack-action', group.projectId, 'down')"
-            :disabled="!!stackActionLoading?.[group.projectId]"
-            class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2 text-amber-700 hover:border-amber-400"
-            title="docker compose down"
-          >
-            <Square class="h-3 w-3 fill-current" />
-            <span>Down</span>
-          </button>
-
-          <!-- Restart -->
-          <button
-            type="button"
-            @click="emit('stack-action', group.projectId, 'restart')"
-            :disabled="!!stackActionLoading?.[group.projectId]"
-            class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2"
-            title="docker compose restart"
-          >
-            <RotateCcw
-              class="h-3 w-3"
-              :class="{ 'animate-spin': stackActionLoading?.[group.projectId] }"
-            />
-            <span class="hidden md:inline">Restart</span>
-          </button>
-
-          <!-- Stack Overflow Menu -->
-          <div class="relative inline-block text-left">
-            <button
-              type="button"
-              @click="showMenu = !showMenu"
-              class="rounded p-1 text-slate-500 hover:bg-slate-200/80 hover:text-slate-800 transition-colors cursor-pointer"
-              title="More stack actions"
-            >
-              <MoreVertical class="h-3.5 w-3.5" />
-            </button>
-
-            <!-- Menu Popover -->
-            <div
-              v-if="showMenu"
-              class="fixed inset-0 z-40"
-              @click="showMenu = false"
-            ></div>
-
-            <div
-              v-if="showMenu"
-              class="absolute right-0 top-full mt-1 z-50 w-44 rounded-lg border border-slate-200 bg-white py-1 shadow-lg text-left"
-            >
-              <!-- Deploy Branch/Tag -->
+          <div class="inline-flex items-center rounded-lg border border-slate-200 bg-white shadow-2xs divide-x divide-slate-100 p-0.5">
+            <!-- Stack Lifecycle Actions: Up, Down, Restart -->
+            <div class="flex items-center">
+              <!-- Up -->
               <button
                 type="button"
-                @click="handleMenuAction(() => emit('deploy-stack', group.projectId!, group.name))"
+                @click="emit('stack-action', group.projectId, 'up')"
                 :disabled="!!stackActionLoading?.[group.projectId]"
-                class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                class="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-slate-700 hover:text-emerald-700 hover:bg-emerald-50 transition-colors disabled:opacity-50 cursor-pointer"
+                title="Start stack (docker compose up -d)"
               >
-                <Rocket class="h-3.5 w-3.5 text-indigo-600" />
-                <span>Deploy Ref…</span>
+                <Play class="h-3 w-3 fill-current text-emerald-600" />
+                <span>Up</span>
               </button>
 
-              <!-- Audit History -->
+              <!-- Down -->
               <button
                 type="button"
-                @click="handleMenuAction(() => emit('stack-history', group.projectId!, group.name))"
-                class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
-              >
-                <History class="h-3.5 w-3.5 text-slate-500" />
-                <span>Action History</span>
-              </button>
-
-              <!-- Delete Stack -->
-              <button
-                v-if="group.name !== 'docktun'"
-                type="button"
-                @click="handleMenuAction(() => emit('delete-stack', group.projectId!, group.name, group.projectPath))"
+                @click="emit('stack-action', group.projectId, 'down')"
                 :disabled="!!stackActionLoading?.[group.projectId]"
-                class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                class="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-slate-700 hover:text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-50 cursor-pointer"
+                title="Stop stack (docker compose down)"
               >
-                <Trash2 class="h-3.5 w-3.5 text-red-500" />
-                <span>Delete Stack…</span>
+                <Square class="h-3 w-3 fill-current text-amber-500" />
+                <span>Down</span>
               </button>
+
+              <!-- Restart -->
+              <button
+                type="button"
+                @click="emit('stack-action', group.projectId, 'restart')"
+                :disabled="!!stackActionLoading?.[group.projectId]"
+                class="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-slate-700 hover:text-cyan-700 hover:bg-cyan-50 transition-colors disabled:opacity-50 cursor-pointer"
+                title="Restart stack (docker compose restart)"
+              >
+                <RotateCcw
+                  class="h-3 w-3 text-cyan-600"
+                  :class="{ 'animate-spin': stackActionLoading?.[group.projectId] }"
+                />
+                <span>Restart</span>
+              </button>
+            </div>
+
+            <!-- Compose & Overflow Actions -->
+            <div class="flex items-center pl-1">
+              <!-- Compose Editor Shortcut -->
+              <button
+                type="button"
+                @click="emit('open-compose', group)"
+                class="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-slate-700 hover:text-indigo-700 hover:bg-indigo-50 transition-colors cursor-pointer"
+                title="Edit docker-compose.yml"
+              >
+                <Code2 class="h-3 w-3 text-indigo-500" />
+                <span class="hidden md:inline">Compose</span>
+              </button>
+
+              <!-- Stack Overflow Menu -->
+              <div class="relative inline-block text-left">
+                <button
+                  type="button"
+                  @click="showMenu = !showMenu"
+                  class="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors cursor-pointer"
+                  title="More stack actions"
+                >
+                  <MoreVertical class="h-3.5 w-3.5" />
+                </button>
+
+                <!-- Menu Popover Backdrop -->
+                <div
+                  v-if="showMenu"
+                  class="fixed inset-0 z-40"
+                  @click="showMenu = false"
+                ></div>
+
+                <!-- Menu Popover -->
+                <div
+                  v-if="showMenu"
+                  class="absolute right-0 top-full mt-1 z-50 w-44 rounded-lg border border-slate-200 bg-white py-1 shadow-lg text-left"
+                >
+                  <!-- Deploy Branch/Tag -->
+                  <button
+                    type="button"
+                    @click="handleMenuAction(() => emit('deploy-stack', group.projectId!, group.name))"
+                    :disabled="!!stackActionLoading?.[group.projectId]"
+                    class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                  >
+                    <Rocket class="h-3.5 w-3.5 text-indigo-600" />
+                    <span>Deploy Ref…</span>
+                  </button>
+
+                  <!-- Audit History -->
+                  <button
+                    type="button"
+                    @click="handleMenuAction(() => emit('stack-history', group.projectId!, group.name))"
+                    class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+                  >
+                    <History class="h-3.5 w-3.5 text-slate-500" />
+                    <span>Action History</span>
+                  </button>
+
+                  <!-- Delete Stack -->
+                  <button
+                    v-if="group.name !== 'docktun'"
+                    type="button"
+                    @click="handleMenuAction(() => emit('delete-stack', group.projectId!, group.name, group.projectPath))"
+                    :disabled="!!stackActionLoading?.[group.projectId]"
+                    class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                  >
+                    <Trash2 class="h-3.5 w-3.5 text-red-500" />
+                    <span>Delete Stack…</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

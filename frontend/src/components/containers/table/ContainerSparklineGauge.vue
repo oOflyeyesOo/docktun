@@ -37,7 +37,7 @@ const memoryColorClass = computed(() => {
   >
     <!-- CPU Gauge -->
     <div class="flex items-center gap-1.5 w-20">
-      <span class="w-9 text-right text-slate-700 truncate">
+      <span class="w-9 text-right text-slate-700 font-medium truncate">
         {{ running && cpu ? (cpu.endsWith('%') ? cpu : `${cpu}%`) : '—' }}
       </span>
       <div class="h-1.5 w-9 flex-1 rounded-full bg-slate-200 overflow-hidden">
@@ -52,7 +52,7 @@ const memoryColorClass = computed(() => {
 
     <!-- Memory Gauge -->
     <div class="flex items-center gap-1.5 w-24">
-      <span class="w-13 text-right text-slate-700 truncate" :title="memoryInfo.total ? `${memoryInfo.used} / ${memoryInfo.total}` : memoryInfo.used">
+      <span class="w-14 text-right text-slate-700 font-medium truncate" :title="memoryInfo.total ? `${memoryInfo.used} / ${memoryInfo.total}` : memoryInfo.used">
         {{ memoryInfo.used }}
       </span>
       <div class="h-1.5 w-9 flex-1 rounded-full bg-slate-200 overflow-hidden">

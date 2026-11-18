@@ -92,6 +92,7 @@ const displayGroups = computed<ContainerGroup[]>(() => {
   let list = sortedGroups.value
   if (props.isFilterActive) {
     list = filterContainerGroups(list, 'active_filter', '')
+    list = list.filter((g) => g && g.containers && g.containers.length > 0)
   }
   return list
 })
@@ -124,10 +125,10 @@ const summaryText = computed(() => {
     <!-- Sub-header bar for quick expand/collapse and count -->
     <div
       v-if="groupByStack && displayGroups.some((g) => g.isStack)"
-      class="flex items-center justify-between border-b border-slate-200 bg-slate-50/70 px-4 py-2 text-xs text-slate-600"
+      class="flex items-center justify-between border-b border-slate-200 bg-slate-50/80 px-4 py-2 text-xs text-slate-600"
     >
       <div class="flex items-center gap-2">
-        <span class="font-medium text-slate-700">
+        <span class="font-semibold text-slate-700">
           {{ summaryText }}
         </span>
       </div>
@@ -137,18 +138,18 @@ const summaryText = computed(() => {
           v-if="!allStacksCollapsed"
           type="button"
           @click="emit('collapse-all-stacks')"
-          class="flex items-center gap-1 text-[11px] text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
+          class="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 transition-colors cursor-pointer"
         >
-          <ChevronsDownUp class="h-3.5 w-3.5" />
+          <ChevronsDownUp class="h-3.5 w-3.5 text-slate-500" />
           <span>Collapse All</span>
         </button>
         <button
           v-else
           type="button"
           @click="emit('expand-all-stacks')"
-          class="flex items-center gap-1 text-[11px] text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
+          class="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 transition-colors cursor-pointer"
         >
-          <ChevronsUpDown class="h-3.5 w-3.5" />
+          <ChevronsUpDown class="h-3.5 w-3.5 text-slate-500" />
           <span>Expand All</span>
         </button>
       </div>

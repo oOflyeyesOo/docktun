@@ -315,6 +315,124 @@ test('Stack selection logic handles select all, partial indeterminate math, and 
   assert.equal(emptyState.isSelected, false)
   assert.equal(emptyState.isIndeterminate, false)
   assert.equal(emptyState.selectedCount, 0)
+
+  // 7. Null/undefined selectedContainerIds does not throw
+  assert.deepEqual(calculateStackSelection(stack, null), {
+    isSelected: false,
+    isIndeterminate: false,
+    selectedCount: 0,
+    totalCount: 3,
+  })
+  assert.deepEqual(toggleStackSelection(stack, null), {
+    'app-1': true,
+    'app-2': true,
+    'app-3': true,
+  })
+
+  // 8. Gracefully ignores null or malformed containers in stack
+  const messyStack = [{ id: 'app-1' }, null, undefined, { notAnId: 'xyz' }, { id: 'app-2' }]
+  const messyState = calculateStackSelection(messyStack, { 'app-1': true, 'app-2': true })
+  assert.equal(messyState.isSelected, true)
+  assert.equal(messyState.isIndeterminate, false)
+  assert.equal(messyState.selectedCount, 2)
+  assert.equal(messyState.totalCount, 2)
+})
+
+test('Selection math remains 100% accurate when stacks are filtered or collapsed', () => {
+  // Scenario: Two stacks with containers, simulating collapsed and filtered views
+  const stackA = [
+    { id: 'web-1', project_name: 'frontend-stack' },
+    { id: 'web-2', project_name: 'frontend-stack' },
+  ]
+  const stackB = [
+    { id: 'db-1', project_name: 'backend-stack' },
+    { id: 'db-2', project_name: 'backend-stack' },
+    { id: 'redis-1', project_name: 'backend-stack' },
+  ]
+  const allContainers = [...stackA, ...stackB]
+
+  // 1. Collapsed stack selection math:
+  // Stack A is collapsed, Stack B is expanded
+  const collapsedMap = { 'frontend-stack': true, 'backend-stack': false }
+  assert.equal(collapsedMap['frontend-stack'], true)
+
+  // Selecting in collapsed stack A works accurately
+  let selection = {}
+  selection = toggleStackSelection(stackA, selection)
+  assert.deepEqual(selection, { 'web-1': true, 'web-2': true })
+
+  // Stack A is fully selected, Stack B is completely unselected
+  let stackAState = calculateStackSelection(stackA, selection)
+  let stackBState = calculateStackSelection(stackB, selection)
+  assert.equal(stackAState.isSelected, true)
+  assert.equal(stackAState.isIndeterminate, false)
+  assert.equal(stackBState.isSelected, false)
+  assert.equal(stackBState.isIndeterminate, false)
+
+  // Partial select in Stack B (1 of 3)
+  selection['db-1'] = true
+  stackBState = calculateStackSelection(stackB, selection)
+  assert.equal(stackBState.isSelected, false)
+  assert.equal(stackBState.isIndeterminate, true)
+  assert.equal(stackBState.selectedCount, 1)
+  assert.equal(stackBState.totalCount, 3)
+
+  // Toggling stack B when indeterminate selects all containers in stack B without affecting stack A
+  selection = toggleStackSelection(stackB, selection)
+  assert.deepEqual(selection, {
+    'web-1': true,
+    'web-2': true,
+    'db-1': true,
+    'db-2': true,
+    'redis-1': true,
+  })
+
+  // 2. Filtered containers selection math:
+  // Simulate an active filter (e.g. status='running' or search='db')
+  // Visible filtered containers: only db-1 and db-2
+  const filteredVisible = [
+    { id: 'db-1', project_name: 'backend-stack' },
+    { id: 'db-2', project_name: 'backend-stack' },
+  ]
+
+  // Even if 'web-1' and 'web-2' remain selected from a previous view,
+  // table selection calculation must ONLY reflect the visible filtered containers
+  const filteredSelection = { 'web-1': true, 'web-2': true, 'db-1': true }
+  const tableState = calculateTableSelection(filteredVisible, filteredSelection)
+  assert.equal(tableState.totalCount, 2)
+  assert.equal(tableState.selectedCount, 1) // Only db-1 counts towards the visible selection
+  assert.equal(tableState.isAllSelected, false)
+  assert.equal(tableState.isIndeterminate, true)
+
+  // Selecting all visible filtered containers
+  const allFilteredSelected = { 'web-1': true, 'web-2': true, 'db-1': true, 'db-2': true }
+  const tableAllState = calculateTableSelection(filteredVisible, allFilteredSelected)
+  assert.equal(tableAllState.totalCount, 2)
+  assert.equal(tableAllState.selectedCount, 2)
+  assert.equal(tableAllState.isAllSelected, true)
+  assert.equal(tableAllState.isIndeterminate, false)
+
+  // Toggling table select-all on filtered containers
+  const toggledOff = toggleTableSelection(filteredVisible, allFilteredSelected)
+  assert.deepEqual(toggledOff, {})
+
+  const toggledOn = toggleTableSelection(filteredVisible, {})
+  assert.deepEqual(toggledOn, { 'db-1': true, 'db-2': true })
+
+  // Null/undefined robustness for calculateTableSelection and toggleTableSelection
+  assert.deepEqual(calculateTableSelection(filteredVisible, null), {
+    isAllSelected: false,
+    isIndeterminate: false,
+    selectedCount: 0,
+    totalCount: 2,
+  })
+  assert.deepEqual(calculateTableSelection([], null), {
+    isAllSelected: false,
+    isIndeterminate: false,
+    selectedCount: 0,
+    totalCount: 0,
+  })
+  assert.deepEqual(toggleTableSelection(null, {}), {})
 })
 
 test('Table-wide selection logic computes select-all and indeterminate accurately', () => {
@@ -426,19 +544,22 @@ test('Stack filtering logic excludes empty stacks when status filters or search 
   assert.equal(shouldIncludeEmptyProjects(undefined, undefined), true)
   assert.equal(shouldIncludeEmptyProjects('', ''), true)
   assert.equal(shouldIncludeEmptyProjects('all', '   '), true)
+  assert.equal(shouldIncludeEmptyProjects('ALL', ''), true)
+  assert.equal(shouldIncludeEmptyProjects('  all  ', ''), true)
   assert.equal(shouldIncludeEmptyProjects({ statusFilter: 'all', searchQuery: '' }), true)
+  assert.equal(shouldIncludeEmptyProjects({ statusFilter: 'ALL', searchQuery: '   ' }), true)
+  assert.equal(shouldIncludeEmptyProjects({ filter: 'all' }), true)
 
-  // Status filters: stopped, updates, exposed, running, public, private, local -> false
-  assert.equal(shouldIncludeEmptyProjects('stopped', ''), false)
-  assert.equal(shouldIncludeEmptyProjects('updates', ''), false)
-  assert.equal(shouldIncludeEmptyProjects('exposed', ''), false)
-  assert.equal(shouldIncludeEmptyProjects('running', ''), false)
-  assert.equal(shouldIncludeEmptyProjects('public', ''), false)
-  assert.equal(shouldIncludeEmptyProjects('private', ''), false)
-  assert.equal(shouldIncludeEmptyProjects('local', ''), false)
-  assert.equal(shouldIncludeEmptyProjects({ statusFilter: 'stopped' }), false)
-  assert.equal(shouldIncludeEmptyProjects({ filter: 'updates' }), false)
-  assert.equal(shouldIncludeEmptyProjects({ statusFilter: 'exposed' }), false)
+  // Status filters: strictly false for ALL active filter modes
+  const allFilterModes = ['running', 'stopped', 'exposed', 'updates', 'local', 'public', 'private']
+  for (const mode of allFilterModes) {
+    assert.equal(shouldIncludeEmptyProjects(mode, ''), false, `mode ${mode} must reject empty projects`)
+    assert.equal(shouldIncludeEmptyProjects(mode.toUpperCase(), ''), false, `mode ${mode.toUpperCase()} must reject empty projects`)
+    assert.equal(shouldIncludeEmptyProjects(`  ${mode}  `, ''), false)
+    assert.equal(shouldIncludeEmptyProjects({ statusFilter: mode }), false)
+    assert.equal(shouldIncludeEmptyProjects({ filter: mode }), false)
+    assert.equal(shouldIncludeEmptyProjects({ statusFilter: mode, searchQuery: '' }), false)
+  }
 
   // Non-empty search query -> false (even with 'all' status filter)
   assert.equal(shouldIncludeEmptyProjects('all', 'redis'), false)
@@ -475,6 +596,15 @@ test('Stack filtering logic excludes empty stacks when status filters or search 
     runningCount: 0,
     totalCount: 0,
   }
+  const emptyStackWithStaleCount = {
+    key: 'project:4',
+    name: 'stale-count-stack',
+    isStack: true,
+    projectId: 4,
+    containers: [],
+    runningCount: 0,
+    totalCount: 5,
+  }
   const standaloneGroup = {
     key: '__standalone__',
     name: 'Standalone Containers',
@@ -484,43 +614,42 @@ test('Stack filtering logic excludes empty stacks when status filters or search 
     totalCount: 1,
   }
 
-  const allGroups = [activeStack, emptyStackA, emptyStackB, standaloneGroup]
+  const allGroups = [activeStack, emptyStackA, emptyStackB, emptyStackWithStaleCount, standaloneGroup]
 
   // When filter is 'all' and search is empty, empty registered stacks are included
   const allResult = filterContainerGroups(allGroups, 'all', '')
-  assert.equal(allResult.length, 4)
+  assert.equal(allResult.length, 5)
   assert.deepEqual(
     allResult.map((g) => g.name),
-    ['web-stack', 'aio-stack', 'sencho', 'Standalone Containers']
+    ['web-stack', 'aio-stack', 'sencho', 'stale-count-stack', 'Standalone Containers']
   )
 
-  // When statusFilter is 'stopped', empty stacks must NEVER be returned
-  const stoppedResult = filterContainerGroups(allGroups, 'stopped', '')
-  assert.equal(stoppedResult.length, 2)
-  assert.deepEqual(
-    stoppedResult.map((g) => g.name),
-    ['web-stack', 'Standalone Containers']
-  )
-  assert.equal(stoppedResult.some((g) => g.containers.length === 0), false)
+  // Verify EVERY filter mode strictly eliminates all empty stacks
+  for (const mode of allFilterModes) {
+    const res = filterContainerGroups(allGroups, mode, '')
+    assert.equal(res.length, 2, `filter mode '${mode}' must return only non-empty groups`)
+    assert.deepEqual(
+      res.map((g) => g.name),
+      ['web-stack', 'Standalone Containers'],
+      `filter mode '${mode}' included empty stacks!`
+    )
+    assert.equal(res.some((g) => !g.containers || g.containers.length === 0), false)
 
-  // When statusFilter is 'updates', empty stacks must NEVER be returned
-  const updatesResult = filterContainerGroups(allGroups, 'updates', '')
-  assert.equal(updatesResult.length, 2)
-  assert.equal(updatesResult.some((g) => g.name === 'aio-stack' || g.name === 'sencho'), false)
-
-  // When statusFilter is 'exposed', empty stacks must NEVER be returned
-  const exposedResult = filterContainerGroups(allGroups, 'exposed', '')
-  assert.equal(exposedResult.length, 2)
-  assert.equal(exposedResult.some((g) => g.name === 'aio-stack' || g.name === 'sencho'), false)
+    // Also verify with options object format
+    const resObj = filterContainerGroups(allGroups, { statusFilter: mode, searchQuery: '' })
+    assert.equal(resObj.length, 2)
+  }
 
   // When searchQuery is non-empty, empty stacks must NEVER be returned
   const searchResult = filterContainerGroups(allGroups, 'all', 'web')
   assert.equal(searchResult.length, 2)
   assert.equal(searchResult.some((g) => g.containers.length === 0), false)
 
-  // Options object overload support
-  const objFilterResult = filterContainerGroups(allGroups, { statusFilter: 'stopped', searchQuery: '' })
-  assert.equal(objFilterResult.length, 2)
+  // Edge cases: handles null, undefined, invalid elements inside groups
+  const mixedGroups = [activeStack, null, undefined, {}, { containers: [] }, standaloneGroup]
+  const filteredMixed = filterContainerGroups(mixedGroups, 'running')
+  assert.equal(filteredMixed.length, 2)
+  assert.deepEqual(filteredMixed.map((g) => g.name), ['web-stack', 'Standalone Containers'])
 
   // Gracefully handles empty or malformed inputs
   assert.deepEqual(filterContainerGroups(null), [])
