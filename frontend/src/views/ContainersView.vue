@@ -2,7 +2,7 @@
 import { applicationContainers, applicationProjects, matchesServiceID } from '../lib/managed-services.mjs'
 import { createProjectFileEditor } from '../lib/project-file-editor.mjs'
 import { settingsEqual, syncExposureDraft } from '../lib/exposure-draft.mjs'
-import { getPrimaryPort, cleanContainerName, hasLocalWebLink, localAddress } from '../lib/containerPorts.mjs'
+import { getPrimaryPort, hasLocalWebLink, localAddress } from '../lib/containerPorts.mjs'
 import { containerStack, stackProjectID } from '../lib/container-stacks.mjs'
 import {
   parseCpuPercent,
@@ -27,7 +27,7 @@ import StackHistoryModal from '../components/containers/modals/StackHistoryModal
 import StackDeleteModal from '../components/containers/modals/StackDeleteModal.vue'
 import ContainerUpdateModal from '../components/containers/modals/ContainerUpdateModal.vue'
 import StackLaunchModal from '../components/containers/modals/StackLaunchModal.vue'
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, toRefs, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, toRefs, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Server,
@@ -35,59 +35,31 @@ import {
   Square,
   RotateCcw,
   Trash2,
-  ScrollText,
   Shield,
-  ShieldAlert,
   ShieldCheck,
   Globe,
-  Lock,
   ExternalLink,
   Cpu,
   Layers,
   ArrowUpDown,
   Search,
-  CheckCircle2,
-  AlertCircle,
-  X,
-  Info,
   Clock,
   HardDrive,
-  Folder,
-  FolderOpen,
-  FileCode,
-  FileText,
-  Save,
   Plus,
-  RefreshCw,
   Copy,
   Check,
   Network,
-  Wifi,
   Terminal,
   Sliders,
-  Link2,
-  Radio,
-  Activity,
-  CornerDownRight,
   Code2,
   ArrowUpCircle,
   Sparkles,
-  Download,
   Rocket,
   History,
-  GitBranch,
-  KeyRound,
-  Package,
   ChevronDown,
   ChevronRight,
-  CheckSquare,
-  Database,
-  Box,
-  Film,
-  Key,
-  Tv
+  CheckSquare
 } from 'lucide-vue-next'
-import AppReliability from '../components/AppReliability.vue'
 import { useApi } from '../composables/useApi'
 
 const { apiFetch } = useApi()
@@ -277,7 +249,6 @@ function getExpose(id?: string): ExposureSettings {
 const selectedContainer = ref<ContainerDetail | null>(null)
 const selectedTab = ref<'overview' | 'access' | 'compose' | 'env' | 'files' | 'logs' | 'exec' | 'inspect'>('overview')
 const detailLoading = ref(false)
-const networkActionLoading = ref(false)
 const projectScaffolding = ref(false)
 
 // Compose state
@@ -324,24 +295,6 @@ async function fetchCfSettings() {
       localStorage.setItem('docktun_cf_api_token', s.api_token)
     }
   } catch {}
-}
-
-// Backdrop tracking to prevent modal from force-closing on text selection drag
-let backdropMouseDown = false
-function onBackdropMouseDown(e: MouseEvent) {
-  backdropMouseDown = (e.target === e.currentTarget)
-}
-function onBackdropClick(e: MouseEvent, closeFn: () => void) {
-  // Never close if user has an active text selection from dragging
-  const selection = window.getSelection()?.toString()
-  if (selection && selection.length > 0) {
-    backdropMouseDown = false
-    return
-  }
-  if (backdropMouseDown && e.target === e.currentTarget) {
-    closeFn()
-  }
-  backdropMouseDown = false
 }
 
 // Active Project Metadata in Control Center
@@ -929,25 +882,6 @@ watch(selectedTab, (newTab) => {
   handleTabChange(newTab)
 })
 
-async function toggleCloudflaredNetwork() {
-  if (!selectedContainer.value) return
-  networkActionLoading.value = true
-  const isConnected = !!selectedContainer.value.connected_to_cloudflared
-  const endpoint = isConnected ? 'disconnect' : 'connect'
-  try {
-    await apiFetch(`/api/docker/containers/${selectedContainer.value.id}/network/${endpoint}`, {
-      method: 'POST',
-      body: JSON.stringify({ network: 'cloudflared' }),
-    })
-    selectedContainer.value.connected_to_cloudflared = !isConnected
-    await fetchContainers()
-  } catch (e: any) {
-    alert(`Network action failed: ${e.message}`)
-  } finally {
-    networkActionLoading.value = false
-  }
-}
-
 async function scaffoldProject() {
   if (!selectedContainer.value) return
   projectScaffolding.value = true
@@ -1161,27 +1095,6 @@ async function confirmDeleteStack() {
 
 function openLaunchModal() {
   showLaunchModal.value = true
-}
-
-
-async function disconnectFromCloudflared(container: any) {
-  if (!container) return
-  disconnectingNetwork.value[container.id] = true
-  try {
-    await apiFetch(`/api/docker/containers/${container.id}/network/disconnect`, {
-      method: 'POST',
-      body: JSON.stringify({ network: 'cloudflared' }),
-    })
-    container.connected_to_cloudflared = false
-    if (selectedContainer.value && selectedContainer.value.id === container.id) {
-      selectedContainer.value.connected_to_cloudflared = false
-    }
-    await fetchContainers()
-  } catch (e: any) {
-    alert('Failed to disconnect from Cloudflare network: ' + e.message)
-  } finally {
-    disconnectingNetwork.value[container.id] = false
-  }
 }
 
 async function disconnectContainerNetwork(container: ContainerItem, network: string) {

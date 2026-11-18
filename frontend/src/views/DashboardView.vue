@@ -35,9 +35,9 @@ const resourceCards = computed(() => {
     { label: 'Container CPU', icon: Cpu, to: '/metrics', value: usage.value.cpuPercent !== null ? percent(usage.value.cpuPercent) : usage.value.cpuCores !== null ? `${usage.value.cpuCores.toFixed(2)} cores` : '—', progress: usage.value.cpuPercent,
       detail: usage.value.sampled ? `${usage.value.sampled}/${usage.value.running} running containers sampled${engine.value?.cpus ? ` · ${engine.value.cpus} CPUs` : ''}` : 'Waiting for container usage samples' },
     { label: 'Host memory', icon: MemoryStick, to: '/metrics', value: percent(usage.value.memoryPercent), progress: usage.value.memoryPercent,
-      detail: usage.value.memoryPercent !== null ? `${formatBytes(host.mem_used)} / ${formatBytes(host.mem_total)}` : 'Memory data unavailable' },
+      detail: usage.value.memoryPercent !== null ? `${formatBytes(host?.mem_used)} / ${formatBytes(host?.mem_total)}` : 'Memory data unavailable' },
     { label: 'Data filesystem', icon: HardDrive, to: '/storage', value: percent(usage.value.diskPercent), progress: usage.value.diskPercent,
-      detail: usage.value.diskPercent !== null ? `${formatBytes(host.disk_free)} free / ${formatBytes(host.disk_total)}` : 'Filesystem data unavailable' },
+      detail: usage.value.diskPercent !== null ? `${formatBytes(host?.disk_free)} free / ${formatBytes(host?.disk_total)}` : 'Filesystem data unavailable' },
     { label: 'Host uptime', icon: Clock, to: '/metrics', value: formatUptime(host?.uptime_seconds), progress: null,
       detail: host?.load_avg ? `Load average ${host.load_avg.map((v: number) => v.toFixed(2)).join(' / ')}` : 'Uptime data unavailable' },
   ]

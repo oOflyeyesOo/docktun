@@ -18,6 +18,14 @@ import (
 	"docktun/internal/service"
 )
 
+var (
+	reTunnelTotalRequests  = regexp.MustCompile(`cloudflared_tunnel_total_requests\s+(\d+)`)
+	reTunnelActiveStreams  = regexp.MustCompile(`cloudflared_tunnel_active_streams\s+(\d+)`)
+	reTunnelHAConnections  = regexp.MustCompile(`cloudflared_tunnel_ha_connections\s+(\d+)`)
+	reTunnelColoLocations = regexp.MustCompile(`cloudflared_tunnel_server_locations\{[^}]*location="([A-Za-z0-9_-]+)"[^}]*\}\s+1`)
+	reTunnelResponseByCode = regexp.MustCompile(`cloudflared_tunnel_response_by_code\{status_code="(\d+)"\}\s+(\d+)`)
+)
+
 type Metrics struct {
 	cfg        *config.Config
 	containers *service.DockerContainers
@@ -212,24 +220,20 @@ func (h *Metrics) readTunnelMetrics(ctx context.Context, running bool, resp *met
 			raw := string(body)
 			resp.Raw = raw
 
-			re := regexp.MustCompile(`cloudflared_tunnel_total_requests\s+(\d+)`)
-			if matches := re.FindStringSubmatch(raw); len(matches) > 1 {
+			if matches := reTunnelTotalRequests.FindStringSubmatch(raw); len(matches) > 1 {
 				resp.TotalRequests, _ = strconv.ParseInt(matches[1], 10, 64)
 			}
 
-			reConn := regexp.MustCompile(`cloudflared_tunnel_active_streams\s+(\d+)`)
-			if matches := reConn.FindStringSubmatch(raw); len(matches) > 1 {
+			if matches := reTunnelActiveStreams.FindStringSubmatch(raw); len(matches) > 1 {
 				resp.ActiveConns, _ = strconv.ParseInt(matches[1], 10, 64)
 			}
 
-			reHA := regexp.MustCompile(`cloudflared_tunnel_ha_connections\s+(\d+)`)
-			if matches := reHA.FindStringSubmatch(raw); len(matches) > 1 {
+			if matches := reTunnelHAConnections.FindStringSubmatch(raw); len(matches) > 1 {
 				resp.HAConnections, _ = strconv.ParseInt(matches[1], 10, 64)
 			}
 
-			reColo := regexp.MustCompile(`cloudflared_tunnel_server_locations\{[^}]*location="([A-Za-z0-9_-]+)"[^}]*\}\s+1`)
 			coloSet := make(map[string]bool)
-			for _, match := range reColo.FindAllStringSubmatch(raw, -1) {
+			for _, match := range reTunnelColoLocations.FindAllStringSubmatch(raw, -1) {
 				if len(match) > 1 {
 					coloSet[match[1]] = true
 				}
@@ -238,9 +242,8 @@ func (h *Metrics) readTunnelMetrics(ctx context.Context, running bool, resp *met
 				resp.ColoLocations = append(resp.ColoLocations, c)
 			}
 
-			reStatus := regexp.MustCompile(`cloudflared_tunnel_response_by_code\{status_code="(\d+)"\}\s+(\d+)`)
 			for _, line := range strings.Split(raw, "\n") {
-				if matches := reStatus.FindStringSubmatch(line); len(matches) > 2 {
+				if matches := reTunnelResponseByCode.FindStringSubmatch(line); len(matches) > 2 {
 					count, _ := strconv.ParseInt(matches[2], 10, 64)
 					resp.ResponseCodes[matches[1]] = count
 				}

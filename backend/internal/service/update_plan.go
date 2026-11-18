@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -243,7 +242,6 @@ func (s *DockerContainers) ImportPreview(ctx context.Context, id string) (map[st
 	}
 	return map[string]any{"container_id": detail.ID, "name": detail.Name, "project_id": detail.ProjectID, "project_path": detail.ProjectPath, "compose_file": detail.ComposeFile, "mounts": detail.Mounts, "networks": detail.Networks, "changes": []string{}, "read_only": true, "note": "Preview only. Import and file-write actions require an explicit request; unavailable host paths are not created."}, nil
 }
-func planJSON(p UpdatePlan) string { raw, _ := json.Marshal(p); return string(raw) }
 
 func databaseContainerVersion(ctx context.Context, container updateContainer) (string, string, error) {
 	image, _ := container.Config["Image"].(string)

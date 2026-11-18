@@ -13,10 +13,8 @@ import {
   Filter,
   ChevronLeft,
   ChevronRight,
-  ExternalLink,
   Eye,
-  X,
-  FileText
+  X
 } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
 import { useApi } from '../composables/useApi'
@@ -192,12 +190,6 @@ function downloadLogs() {
   URL.revokeObjectURL(url)
 }
 
-const currentSourceLabel = computed(() => {
-  if (selectedSource.value === 'cloudflared') return 'Cloudflare Tunnel (cloudflared)'
-  const c = containers.value.find((item) => item.id === selectedSource.value)
-  return c ? c.name : selectedSource.value
-})
-
 // ============================================================================
 // 2. AUDIT TRAIL STATE
 // ============================================================================
@@ -332,7 +324,10 @@ watch(activeTab, (tab) => {
 })
 
 onUnmounted(() => {
-  if (ws) ws.close()
+  if (ws) {
+    ws.onclose = null
+    ws.close()
+  }
   if (containerPollTimer) clearInterval(containerPollTimer)
 })
 </script>

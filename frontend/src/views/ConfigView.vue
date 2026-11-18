@@ -6,7 +6,6 @@ import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Globe,
-  Shield,
   ShieldCheck,
   Layers,
   Activity,
@@ -20,20 +19,13 @@ import {
   Check,
   AlertCircle,
   CheckCircle2,
-  Clock,
-  HardDrive,
-  Lock,
-  Settings,
   Code,
-  Eye,
   RefreshCw,
-  Server,
   Zap,
   KeyRound,
   Network,
   Gamepad2,
   Info,
-  Radio,
   Search
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'

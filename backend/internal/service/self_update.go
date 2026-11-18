@@ -49,13 +49,6 @@ func NewSelfUpdater(dataDir string) *SelfUpdater {
 	return &SelfUpdater{statePath: path}
 }
 
-func updateImage() string {
-	if image := strings.TrimSpace(os.Getenv("DOCKTUN_UPDATE_IMAGE")); image != "" {
-		return image
-	}
-	return defaultUpdateImage
-}
-
 // An explicitly configured immutable local image supports offline installations.
 func stageUpdateImage(ctx context.Context, image string) error {
 	if strings.HasPrefix(image, "sha256:") {
@@ -331,7 +324,11 @@ func (s *SelfUpdater) Start(ctx context.Context) (SelfUpdateState, error) {
 	if err = validateUpdateContainer(c); err != nil {
 		return state, err
 	}
-	helper := "docktun-updater-" + c.ID[:12]
+	shortCID := c.ID
+	if len(shortCID) > 12 {
+		shortCID = shortCID[:12]
+	}
+	helper := "docktun-updater-" + shortCID
 	state = SelfUpdateState{Phase: "pulling", Image: s.Channel().Image, CurrentImage: c.Image, Helper: helper, Message: "Preparing the update. This page will reconnect automatically."}
 	if err = s.save(state); err != nil {
 		return state, err
@@ -435,7 +432,11 @@ func replacementCreateBody(c updateContainer, image string, core bool) map[strin
 			filtered := []any{}
 			for _, alias := range aliases {
 				a, _ := alias.(string)
-				if a != c.ID && a != c.ID[:12] {
+				shortCID := c.ID
+				if len(shortCID) > 12 {
+					shortCID = shortCID[:12]
+				}
+				if a != c.ID && a != shortCID {
 					filtered = append(filtered, alias)
 				}
 			}
@@ -494,7 +495,11 @@ func RunSelfUpdateWorker(target, image, statePath string) error {
 		return s.save(state)
 	}
 	name := strings.TrimPrefix(old.Name, "/")
-	backup := name + "-rollback-" + old.ID[:12]
+	shortOldID := old.ID
+	if len(shortOldID) > 12 {
+		shortOldID = shortOldID[:12]
+	}
+	backup := name + "-rollback-" + shortOldID
 	body := updateCreateBody(old, imageID)
 	state.Phase = "restarting"
 	state.Message = "Installing the update and checking health. Reconnecting…"

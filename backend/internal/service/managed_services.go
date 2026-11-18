@@ -378,7 +378,11 @@ func (s *ManagedServices) Start(ctx context.Context, action string, ids []string
 	if len(wanted) > 0 || len(selected) == 0 {
 		return old, fmt.Errorf("select installed DockTun services; unrelated containers cannot be updated here")
 	}
-	job := ServiceUpdateJob{Phase: "checking", Action: action, Message: "Checking images before changing any services.", Services: selected, Helper: fmt.Sprintf("docktun-services-updater-%s-%x", own.ID[:12], time.Now().UnixNano())}
+	shortOwnID := own.ID
+	if len(shortOwnID) > 12 {
+		shortOwnID = shortOwnID[:12]
+	}
+	job := ServiceUpdateJob{Phase: "checking", Action: action, Message: "Checking images before changing any services.", Services: selected, Helper: fmt.Sprintf("docktun-services-updater-%s-%x", shortOwnID, time.Now().UnixNano())}
 	if err = s.save(&job); err != nil {
 		return job, err
 	}
@@ -568,7 +572,11 @@ func replaceManagedService(ctx context.Context, row ManagedService, core updateC
 		body["Entrypoint"] = []string{"/app/zeroconf"}
 		body["Cmd"] = []string{}
 	}
-	backup := row.Name + "-rollback-" + old.ID[:12]
+	shortOldID := old.ID
+	if len(shortOldID) > 12 {
+		shortOldID = shortOldID[:12]
+	}
+	backup := row.Name + "-rollback-" + shortOldID
 	if old.State.Running {
 		if _, err = updateDocker(ctx, "stop", "--time", "30", old.ID); err != nil {
 			return err

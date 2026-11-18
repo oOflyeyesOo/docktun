@@ -182,7 +182,7 @@ func (m *ConfigManager) ListBackups(limit, offset int) ([]ConfigBackup, error) {
 			backups = append(backups, b)
 		}
 	}
-	return backups, nil
+	return backups, rows.Err()
 }
 
 func (m *ConfigManager) GetBackup(id int) (*ConfigBackup, error) {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { Sliders, RotateCcw, Save, Copy, Check, Search, X } from 'lucide-vue-next'
+import { Sliders, RotateCcw, Save, Copy, Check, Search } from 'lucide-vue-next'
 import { useApi } from '../../../../composables/useApi'
 import { filterEnvContent } from '../../../../lib/containers-table.mjs'
 

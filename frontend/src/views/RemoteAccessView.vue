@@ -7,7 +7,6 @@ import {
   Globe,
   Radio,
   Shield,
-  ShieldCheck,
   CheckCircle2,
   AlertCircle,
   RefreshCw,
@@ -24,15 +23,9 @@ import {
   Smartphone,
   Laptop,
   Server,
-  Info,
   KeyRound,
   Network,
-  Cpu,
-  Layers,
-  ArrowRight,
   QrCode,
-  Share2,
-  Lock,
   Box
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'

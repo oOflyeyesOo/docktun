@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Plus, RefreshCw, Trash2, ArrowUp, ArrowDown, Code2, Eye, Activity, Globe, Copy, Pause, Play, ExternalLink } from 'lucide-vue-next'
+import { Plus, RefreshCw, Trash2, ArrowUp, ArrowDown, Code2, Eye, Activity, Copy, Pause, Play, ExternalLink } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 import { cloneConfiguration, effectiveOriginOption, originHost, originLocation, readIngressYaml, setOriginOption, validateIngressConfiguration, writeIngressYaml } from '../lib/cloudflare-ingress.mjs'
 const props = defineProps<{ remote: boolean; tunnelId?: string; containers?: any[] }>()

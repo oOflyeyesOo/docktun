@@ -14,9 +14,6 @@ var applicationUpdateLocks sync.Map
 
 // Image updates preserve the running Docker definition. They never invent a
 // one-service Compose stack or rewrite a database hostname, credential or mount.
-func replaceApplicationContainer(old updateContainer) (string, error) {
-	return replaceApplicationWithReadiness(old, "")
-}
 func replaceApplicationWithReadiness(old updateContainer, readiness string, expected ...string) (string, error) {
 	lock, _ := applicationUpdateLocks.LoadOrStore(strings.TrimPrefix(old.Name, "/"), &sync.Mutex{})
 	mu := lock.(*sync.Mutex)
@@ -62,7 +59,11 @@ func replaceApplicationWithReadiness(old updateContainer, readiness string, expe
 		return "", fmt.Errorf("container changed during image preparation; reload and retry")
 	}
 	name := strings.TrimPrefix(old.Name, "/")
-	backup := name + "-rollback-" + old.ID[:12]
+	shortID := old.ID
+	if len(shortID) > 12 {
+		shortID = shortID[:12]
+	}
+	backup := name + "-rollback-" + shortID
 	body := replacementCreateBody(old, imageID, false)
 	if old.State.Running {
 		if _, err = updateDocker(ctx, "stop", "--time", "30", old.ID); err != nil {
@@ -188,7 +189,11 @@ func verifyReplacementStorageNetworks(old, next updateContainer) error {
 		if aliases, ok := ep["Aliases"].([]any); ok {
 			for _, alias := range aliases {
 				value, _ := alias.(string)
-				if value == "" || value == old.ID || value == old.ID[:12] {
+				shortOldID := old.ID
+				if len(shortOldID) > 12 {
+					shortOldID = shortOldID[:12]
+				}
+				if value == "" || value == old.ID || value == shortOldID {
 					continue
 				}
 				found := false

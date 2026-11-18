@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { LayoutDashboard, ScrollText, Globe, Shield, LogOut, Bell, Cog, Server, Activity, HardDrive } from 'lucide-vue-next'
+import { LayoutDashboard, ScrollText, Globe, LogOut, Bell, Cog, Server, Activity, HardDrive } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
 import { useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'

@@ -780,6 +780,9 @@ func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
 					addLog(fmt.Sprintf("Verified network connectivity and database links for %s", cName))
 				}
 			}
+			if scanErr := rows.Err(); scanErr != nil {
+				addLog(fmt.Sprintf("Warning: error reading container exposures: %v", scanErr))
+			}
 		}
 	}
 
@@ -1554,6 +1557,9 @@ func (s *DockerContainers) loadAllExposuresFromDB() map[string]ExposureSettings 
 			res[name] = exp
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("loadAllExposuresFromDB error: %v", err)
+	}
 	return res
 }
 
@@ -2151,7 +2157,11 @@ func (s *DockerContainers) UpdateContainerPinned(id string, userID int, ip, expe
 		return "", fmt.Errorf("use Settings to update DockTun")
 	}
 	store := NewOperationStore(s.db)
-	job, err := store.Begin("container_update", "container:"+name, map[string]string{"original_id": old.ID, "rollback_name": name + "-rollback-" + old.ID[:12]})
+	shortID := old.ID
+	if len(shortID) > 12 {
+		shortID = shortID[:12]
+	}
+	job, err := store.Begin("container_update", "container:"+name, map[string]string{"original_id": old.ID, "rollback_name": name + "-rollback-" + shortID})
 	if err != nil {
 		return "", err
 	}
@@ -2236,6 +2246,9 @@ func (s *DockerContainers) loadAllUpdatesFromDB() map[string]UpdateCheckResult {
 				res[u.ContainerName] = u
 			}
 		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("loadAllUpdatesFromDB error: %v", err)
 	}
 	return res
 }
@@ -2359,27 +2372,31 @@ func fetchRemoteManifestDigest(ctx context.Context, registry, repo, tag string) 
 			tReq, tErr := http.NewRequestWithContext(ctx, "GET", tokenURL, nil)
 			if tErr == nil {
 				tResp, tErr := client.Do(tReq)
-				if tErr == nil && tResp.StatusCode == http.StatusOK {
-					var tokenData struct {
-						Token       string `json:"token"`
-						AccessToken string `json:"access_token"`
-					}
-					_ = json.NewDecoder(tResp.Body).Decode(&tokenData)
-					tResp.Body.Close()
+				if tErr == nil {
+					defer tResp.Body.Close()
+					if tResp.StatusCode == http.StatusOK {
+						var tokenData struct {
+							Token       string `json:"token"`
+							AccessToken string `json:"access_token"`
+						}
+						_ = json.NewDecoder(tResp.Body).Decode(&tokenData)
 
-					tok := tokenData.Token
-					if tok == "" {
-						tok = tokenData.AccessToken
-					}
-					if tok != "" {
-						bearerToken = tok
-						req2, _ := http.NewRequestWithContext(ctx, "GET", manifestURL, nil)
-						req2.Header.Set("Accept", "application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json")
-						req2.Header.Set("Authorization", "Bearer "+tok)
-						resp2, err2 := client.Do(req2)
-						if err2 == nil {
-							resp = resp2
-							defer resp.Body.Close()
+						tok := tokenData.Token
+						if tok == "" {
+							tok = tokenData.AccessToken
+						}
+						if tok != "" {
+							bearerToken = tok
+							req2, errReq2 := http.NewRequestWithContext(ctx, "GET", manifestURL, nil)
+							if errReq2 == nil {
+								req2.Header.Set("Accept", "application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json")
+								req2.Header.Set("Authorization", "Bearer "+tok)
+								resp2, err2 := client.Do(req2)
+								if err2 == nil {
+									resp = resp2
+									defer resp.Body.Close()
+								}
+							}
 						}
 					}
 				}
@@ -2450,18 +2467,20 @@ func fetchRemoteManifestDigest(ctx context.Context, registry, repo, tag string) 
 						cReq.Header.Set("Authorization", "Bearer "+bearerToken)
 					}
 					cResp, cErr := client.Do(cReq)
-					if cErr == nil && cResp.StatusCode == http.StatusOK {
-						var childDoc struct {
-							Config struct {
-								Digest string `json:"digest"`
-							} `json:"config"`
-						}
-						if json.NewDecoder(cResp.Body).Decode(&childDoc) == nil {
-							if childDoc.Config.Digest != "" {
-								subDigests = append(subDigests, childDoc.Config.Digest)
+					if cErr == nil {
+						defer cResp.Body.Close()
+						if cResp.StatusCode == http.StatusOK {
+							var childDoc struct {
+								Config struct {
+									Digest string `json:"digest"`
+								} `json:"config"`
+							}
+							if json.NewDecoder(cResp.Body).Decode(&childDoc) == nil {
+								if childDoc.Config.Digest != "" {
+									subDigests = append(subDigests, childDoc.Config.Digest)
+								}
 							}
 						}
-						cResp.Body.Close()
 					}
 				}
 			}
@@ -2635,10 +2654,6 @@ func (p ParsedPortMapping) FormatForCompose() string {
 		return fmt.Sprintf("%s:%s:%s%s", ip, h, c, proto)
 	}
 	return fmt.Sprintf("%s:%s%s", h, c, proto)
-}
-
-func (p ParsedPortMapping) FormatForDockerRun() string {
-	return p.FormatForCompose()
 }
 
 func parsePortMapping(raw string) (ParsedPortMapping, bool) {

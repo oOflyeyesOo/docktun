@@ -18,8 +18,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const PortainerCollection = "https://raw.githubusercontent.com/Lissy93/portainer-templates/main/templates.json"
-
 type templateCollection struct {
 	items   []CommunityTemplate
 	entries map[string]json.RawMessage

@@ -7,19 +7,13 @@ import {
   Layers,
   HardDrive,
   Clock,
-  ArrowDown,
-  ArrowUp,
   Search,
   RotateCcw,
-  SlidersHorizontal,
   ExternalLink,
   FileText,
   Server,
-  Play,
   Pause,
   Filter,
-  Check,
-  AlertCircle,
   Globe,
   Radio,
   Zap,
@@ -298,12 +292,6 @@ function formatUptime(seconds: number): string {
 function formatLoad(load?: [number, number, number]): string {
   if (!load) return '—'
   return `${load[0]?.toFixed(2) || '0.00'}, ${load[1]?.toFixed(2) || '0.00'}, ${load[2]?.toFixed(2) || '0.00'}`
-}
-
-function getCpuColorClass(pct: number): string {
-  if (pct >= 85) return 'text-rose-600 bg-rose-50 border-rose-200'
-  if (pct >= 50) return 'text-amber-600 bg-amber-50 border-amber-200'
-  return 'text-indigo-600 bg-indigo-50 border-indigo-200'
 }
 
 function getCpuBarClass(pct: number): string {

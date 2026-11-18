@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -158,6 +159,9 @@ func (s *StorageFilesService) ListTargets() ([]StorageTarget, error) {
 					RootPath:    ppath,
 				})
 			}
+		}
+		if scanErr := rows.Err(); scanErr != nil {
+			log.Printf("storage_files ListTargets projects error: %v", scanErr)
 		}
 	}
 

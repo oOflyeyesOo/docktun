@@ -525,7 +525,10 @@ func (s *CloudflareAPI) CreateWildcardRoute(domain, tunnelID string) error {
 	bodyBytes, _ := json.Marshal(recordPayload)
 
 	createURL := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records", zoneID)
-	postReq, _ := http.NewRequest("POST", createURL, bytes.NewReader(bodyBytes))
+	postReq, err := http.NewRequest("POST", createURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return err
+	}
 	postReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
 	postReq.Header.Set("Content-Type", "application/json")
 
@@ -968,7 +971,10 @@ func (s *CloudflareAPI) SyncZeroTrustAccess(opts ZeroTrustPolicyOptions) (string
 	pBytes, _ := json.Marshal(policyBody)
 
 	// Refuse to overwrite unrelated policy rules on a shared hostname.
-	listReq, _ := http.NewRequest("GET", policyURL, nil)
+	listReq, err := http.NewRequest("GET", policyURL, nil)
+	if err != nil {
+		return "", err
+	}
 	listReq.Header.Set("Authorization", "Bearer "+creds.APIToken)
 	response, err := s.client.Do(listReq)
 	if err != nil {

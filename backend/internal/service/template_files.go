@@ -11,7 +11,6 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -555,24 +554,4 @@ func (s *TemplateLibrary) TemplateFiles(ctx context.Context, input TemplateFiles
 		}
 	}
 	return result, nil
-}
-
-func templateFileMode(file TemplateProjectFile) string {
-	if file.Secret {
-		return "600"
-	}
-	if file.Executable {
-		return "755"
-	}
-	return "644"
-}
-func templateOwner(file TemplateProjectFile) string {
-	uid, gid := os.Getuid(), os.Getgid()
-	if file.OwnerUID != nil {
-		uid = *file.OwnerUID
-	}
-	if file.OwnerGID != nil {
-		gid = *file.OwnerGID
-	}
-	return strconv.Itoa(uid) + ":" + strconv.Itoa(gid)
 }

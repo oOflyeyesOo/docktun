@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   HardDrive,
@@ -18,26 +18,17 @@ import {
   Copy,
   Check,
   X,
-  ExternalLink,
   ChevronRight,
   ShieldAlert,
-  Server,
-  FileCode2,
-  RefreshCw,
   FolderOpen,
   Folder,
-  FileText,
   Upload,
   Download,
   FolderPlus,
   FilePlus,
-  ArrowLeft,
   ChevronLeft,
   Save,
-  Terminal,
-  FileCode,
-  FileArchive,
-  FileImage
+  FileCode
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 

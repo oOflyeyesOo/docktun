@@ -40,7 +40,7 @@ func (a *AuditLogger) ByDetail(detail string, limit int) ([]AuditEntry, error) {
 		rows.Scan(&e.ID, &e.UserID, &e.Action, &e.Detail, &e.IPAddress, &e.CreatedAt)
 		entries = append(entries, e)
 	}
-	return entries, nil
+	return entries, rows.Err()
 }
 
 func (a *AuditLogger) List(limit, offset int, action string) ([]AuditEntry, int, error) {
@@ -73,5 +73,5 @@ func (a *AuditLogger) List(limit, offset int, action string) ([]AuditEntry, int,
 		rows.Scan(&e.ID, &e.UserID, &e.Action, &e.Detail, &e.IPAddress, &e.CreatedAt)
 		entries = append(entries, e)
 	}
-	return entries, total, nil
+	return entries, total, rows.Err()
 }

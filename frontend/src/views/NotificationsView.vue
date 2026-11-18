@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive } from 'vue'
 import {
   Bell,
-  Check,
   Send,
   Save,
   AlertTriangle,
@@ -12,10 +11,8 @@ import {
   Server,
   Rocket,
   Cpu,
-  Layers,
   ShieldCheck,
   Radio,
-  ExternalLink,
   Info
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'

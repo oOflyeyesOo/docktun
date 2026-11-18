@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useApi } from '../composables/useApi'
 import {
   RefreshCw,
@@ -11,8 +11,7 @@ import {
   Zap,
   Clock,
   Layers,
-  X,
-  ExternalLink
+  X
 } from 'lucide-vue-next'
 
 const { apiFetch } = useApi()
@@ -100,17 +99,21 @@ async function startInstall() {
   }
 }
 
+let reconnectTimer: ReturnType<typeof setInterval> | null = null
+
 function pollReconnection() {
+  if (reconnectTimer) clearInterval(reconnectTimer)
   reconnecting.value = true
   let attempts = 0
   const maxAttempts = 60
 
-  const interval = setInterval(async () => {
+  reconnectTimer = setInterval(async () => {
     attempts++
     try {
       const res = await fetch('/healthz', { cache: 'no-store' })
       if (res.ok) {
-        clearInterval(interval)
+        if (reconnectTimer) clearInterval(reconnectTimer)
+        reconnectTimer = null
         message.value = 'Update successful! Reloading dashboard...'
         setTimeout(() => {
           window.location.reload()
@@ -121,13 +124,21 @@ function pollReconnection() {
     }
 
     if (attempts >= maxAttempts) {
-      clearInterval(interval)
+      if (reconnectTimer) clearInterval(reconnectTimer)
+      reconnectTimer = null
       reconnecting.value = false
       installing.value = false
       error.value = 'Reconnection timed out. Please refresh the page manually once the container restarts.'
     }
   }, 2500)
 }
+
+onUnmounted(() => {
+  if (reconnectTimer) {
+    clearInterval(reconnectTimer)
+    reconnectTimer = null
+  }
+})
 
 const isUpdateAvailable = computed(() => {
   return updateState.value?.available === true

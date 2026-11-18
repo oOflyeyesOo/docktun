@@ -39,7 +39,6 @@ const heading = computed(() => search.value ? 'Search results' : category.value 
 watch([search, source, category, sort, includeAdvanced], () => { visible.value = 24 })
 const description = (text: string) => text.replace(/\[([^\]]+)\]\(https?:\/\/[^)]+\)/g, '$1')
 const groupIcon = (item: any) => icons[item.icon] || icons[libraryCategories.find(group => group.id === libraryCategory(item))?.icon || 'Box']
-const sourceLabel = (item: any) => item.bundled ? 'Included starter' : item.collection ? 'Community' : 'Compose example'
 function resetFilters() { search.value = ''; source.value = 'all'; category.value = 'all'; includeAdvanced.value = false }
 async function catalog(refresh = false) {
   catalogLoading.value = true; warnings.value = []; readySources.value = 0
