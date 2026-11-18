@@ -37,11 +37,31 @@ type DiskSpace struct {
 }
 
 type DockerDFItem struct {
-	Type        string `json:"type"`
-	TotalCount  int    `json:"total_count"`
-	ActiveCount int    `json:"active_count"`
-	Size        string `json:"size"`
-	Reclaimable string `json:"reclaimable"`
+	Type             string `json:"type"`
+	TotalCount       int    `json:"total_count"`
+	ActiveCount      int    `json:"active_count"`
+	Size             string `json:"size"`
+	Reclaimable      string `json:"reclaimable"`
+	ReclaimableBytes int64  `json:"reclaimable_bytes"`
+}
+
+type ReclaimPreview struct {
+	TotalReclaimableBytes  int64          `json:"total_reclaimable_bytes"`
+	TotalReclaimableStr    string         `json:"total_reclaimable_str"`
+	Categories             []DockerDFItem `json:"categories"`
+	ImagesReclaimable      string         `json:"images_reclaimable"`
+	ImagesReclaimBytes     int64          `json:"images_reclaim_bytes"`
+	ContainersReclaimable  string         `json:"containers_reclaimable"`
+	ContainersReclaimBytes int64          `json:"containers_reclaim_bytes"`
+	VolumesReclaimable     string         `json:"volumes_reclaimable"`
+	VolumesReclaimBytes    int64          `json:"volumes_reclaim_bytes"`
+	BuildCacheReclaimable  string         `json:"build_cache_reclaimable"`
+	BuildCacheReclaimBytes int64          `json:"build_cache_reclaim_bytes"`
+	UnusedImagesCount      int            `json:"unused_images_count"`
+	DanglingImagesCount    int            `json:"dangling_images_count"`
+	StoppedContainersCount int            `json:"stopped_containers_count"`
+	DanglingVolumesCount   int            `json:"dangling_volumes_count"`
+	BuildCacheCount        int            `json:"build_cache_count"`
 }
 
 type StorageCounts struct {
@@ -300,15 +320,59 @@ func (s *StorageService) getDockerDF() ([]DockerDFItem, int64) {
 		totalReclaimBytes += recBytes
 
 		items = append(items, DockerDFItem{
-			Type:        typeStr,
-			TotalCount:  tot,
-			ActiveCount: act,
-			Size:        sizeStr,
-			Reclaimable: reclaimStr,
+			Type:             typeStr,
+			TotalCount:       tot,
+			ActiveCount:      act,
+			Size:             sizeStr,
+			Reclaimable:      reclaimStr,
+			ReclaimableBytes: recBytes,
 		})
 	}
 
 	return items, totalReclaimBytes
+}
+
+func (s *StorageService) GetReclaimPreview() (*ReclaimPreview, error) {
+	dfItems, totalReclaimBytes := s.getDockerDF()
+
+	preview := &ReclaimPreview{
+		TotalReclaimableBytes: totalReclaimBytes,
+		TotalReclaimableStr:   formatBytes(totalReclaimBytes),
+		Categories:            dfItems,
+	}
+
+	for _, item := range dfItems {
+		typeLower := strings.ToLower(item.Type)
+		switch {
+		case strings.Contains(typeLower, "image"):
+			preview.ImagesReclaimable = item.Reclaimable
+			preview.ImagesReclaimBytes = item.ReclaimableBytes
+			preview.UnusedImagesCount = item.TotalCount - item.ActiveCount
+			if preview.UnusedImagesCount < 0 {
+				preview.UnusedImagesCount = 0
+			}
+		case strings.Contains(typeLower, "container"):
+			preview.ContainersReclaimable = item.Reclaimable
+			preview.ContainersReclaimBytes = item.ReclaimableBytes
+			preview.StoppedContainersCount = item.TotalCount - item.ActiveCount
+			if preview.StoppedContainersCount < 0 {
+				preview.StoppedContainersCount = 0
+			}
+		case strings.Contains(typeLower, "volume"):
+			preview.VolumesReclaimable = item.Reclaimable
+			preview.VolumesReclaimBytes = item.ReclaimableBytes
+			preview.DanglingVolumesCount = item.TotalCount - item.ActiveCount
+			if preview.DanglingVolumesCount < 0 {
+				preview.DanglingVolumesCount = 0
+			}
+		case strings.Contains(typeLower, "build"):
+			preview.BuildCacheReclaimable = item.Reclaimable
+			preview.BuildCacheReclaimBytes = item.ReclaimableBytes
+			preview.BuildCacheCount = item.TotalCount
+		}
+	}
+
+	return preview, nil
 }
 
 func (s *StorageService) getDockTunStorage() DockTunStorageInfo {

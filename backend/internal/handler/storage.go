@@ -36,6 +36,16 @@ func (h *StorageHandler) GetOverview(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(data)
 }
 
+func (h *StorageHandler) GetReclaimPreview(w http.ResponseWriter, r *http.Request) {
+	data, err := h.svc.GetReclaimPreview()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
+}
+
 func (h *StorageHandler) ListVolumes(w http.ResponseWriter, r *http.Request) {
 	data, err := h.svc.ListVolumes()
 	if err != nil {

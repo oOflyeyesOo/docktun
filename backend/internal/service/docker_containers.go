@@ -154,6 +154,16 @@ type ContainerDetail struct {
 	NetworkAliases         map[string][]string `json:"network_aliases,omitempty"`
 	Cmd                    []string            `json:"cmd,omitempty"`
 	NetworkMode            string              `json:"network_mode,omitempty"`
+	Resources              ContainerResources  `json:"resources"`
+}
+
+type ContainerResources struct {
+	CPUs              float64 `json:"cpus"`                // e.g. 1.5, 0 = unlimited
+	MemoryBytes       int64   `json:"memory_bytes"`        // e.g. 536870912 (512MB), 0 = unlimited
+	MemoryReservation int64   `json:"memory_reservation"`  // soft limit in bytes
+	MemoryHuman       string  `json:"memory_human"`        // e.g. "512 MiB" or "Unlimited"
+	RestartPolicy     string  `json:"restart_policy"`      // "no", "on-failure", "always", "unless-stopped"
+	RestartRetries    int     `json:"restart_retries"`     // maximum retry count
 }
 
 type cfOriginRequest struct {
@@ -475,9 +485,12 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 				Name              string `json:"Name"`
 				MaximumRetryCount int    `json:"MaximumRetryCount"`
 			} `json:"RestartPolicy"`
-			Privileged  bool     `json:"Privileged"`
-			CapAdd      []string `json:"CapAdd"`
-			NetworkMode string   `json:"NetworkMode"`
+			Privileged        bool     `json:"Privileged"`
+			CapAdd            []string `json:"CapAdd"`
+			NetworkMode       string   `json:"NetworkMode"`
+			NanoCPUs          int64    `json:"NanoCpus"`
+			Memory            int64    `json:"Memory"`
+			MemoryReservation int64    `json:"MemoryReservation"`
 		} `json:"HostConfig"`
 		Mounts []struct {
 			Type        string `json:"Type"`
@@ -637,6 +650,23 @@ func (s *DockerContainers) Details(id string) (ContainerDetail, error) {
 	detail.RestartPolicy = inspect.HostConfig.RestartPolicy.Name
 	if detail.RestartPolicy == "on-failure" && inspect.HostConfig.RestartPolicy.MaximumRetryCount > 0 {
 		detail.RestartPolicy = fmt.Sprintf("on-failure:%d", inspect.HostConfig.RestartPolicy.MaximumRetryCount)
+	}
+
+	var cpus float64
+	if inspect.HostConfig.NanoCPUs > 0 {
+		cpus = float64(inspect.HostConfig.NanoCPUs) / 1e9
+	}
+	memHuman := "Unlimited"
+	if inspect.HostConfig.Memory > 0 {
+		memHuman = formatBytes(inspect.HostConfig.Memory)
+	}
+	detail.Resources = ContainerResources{
+		CPUs:              cpus,
+		MemoryBytes:       inspect.HostConfig.Memory,
+		MemoryReservation: inspect.HostConfig.MemoryReservation,
+		MemoryHuman:       memHuman,
+		RestartPolicy:     inspect.HostConfig.RestartPolicy.Name,
+		RestartRetries:    inspect.HostConfig.RestartPolicy.MaximumRetryCount,
 	}
 	detail.NetworkMode = inspect.HostConfig.NetworkMode
 	if detail.NetworkMode == "" {
@@ -2181,8 +2211,102 @@ func (s *DockerContainers) UpdateContainerPinned(id string, userID int, ip, expe
 		if s.audit != nil {
 			s.audit.Log(userID, "container_update", name+"\n"+output, ip)
 		}
+	} else {
+		if s.audit != nil {
+			s.audit.Log(userID, "container_update_rollback", fmt.Sprintf("Canary rollback on %s: %v\n%s", name, err, output), ip)
+		}
 	}
 	return output, err
+}
+
+func (s *DockerContainers) UpdateContainerResources(ctx context.Context, id string, req ContainerResources, userID int, remoteAddr string) (*ContainerResources, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, fmt.Errorf("container id is required")
+	}
+
+	detail, err := s.Details(id)
+	if err != nil {
+		return nil, fmt.Errorf("container not found: %w", err)
+	}
+
+	if req.CPUs < 0 {
+		return nil, fmt.Errorf("cpu limit cannot be negative")
+	}
+	if req.CPUs > 256 {
+		return nil, fmt.Errorf("cpu limit cannot exceed 256 cores")
+	}
+
+	if req.MemoryBytes < 0 {
+		return nil, fmt.Errorf("memory limit cannot be negative")
+	}
+	if req.MemoryBytes > 0 && req.MemoryBytes < 4*1024*1024 {
+		return nil, fmt.Errorf("memory limit must be at least 4MB or 0 (unlimited)")
+	}
+
+	validPolicies := map[string]bool{
+		"":               true,
+		"no":             true,
+		"always":         true,
+		"unless-stopped": true,
+		"on-failure":     true,
+	}
+	policy := strings.ToLower(strings.TrimSpace(req.RestartPolicy))
+	if !validPolicies[policy] {
+		return nil, fmt.Errorf("invalid restart policy '%s' (allowed: no, always, unless-stopped, on-failure)", req.RestartPolicy)
+	}
+
+	args := []string{"update"}
+
+	// CPU limit (0 = remove limit / unlimited)
+	if req.CPUs > 0 {
+		args = append(args, "--cpus", fmt.Sprintf("%.2f", req.CPUs))
+	} else if req.CPUs == 0 {
+		args = append(args, "--cpus", "0")
+	}
+
+	// Memory limit (0 = remove limit / unlimited)
+	if req.MemoryBytes > 0 {
+		args = append(args, "--memory", fmt.Sprintf("%d", req.MemoryBytes))
+	} else if req.MemoryBytes == 0 {
+		args = append(args, "--memory", "0")
+	}
+
+	// Memory reservation (soft limit)
+	if req.MemoryReservation > 0 {
+		args = append(args, "--memory-reservation", fmt.Sprintf("%d", req.MemoryReservation))
+	} else if req.MemoryReservation == 0 {
+		args = append(args, "--memory-reservation", "0")
+	}
+
+	// Restart policy
+	if policy != "" {
+		if policy == "on-failure" && req.RestartRetries > 0 {
+			args = append(args, "--restart", fmt.Sprintf("on-failure:%d", req.RestartRetries))
+		} else {
+			args = append(args, "--restart", policy)
+		}
+	}
+
+	args = append(args, id)
+
+	updateCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(updateCtx, "docker", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("docker update failed: %w - %s", err, strings.TrimSpace(string(out)))
+	}
+
+	if s.audit != nil {
+		s.audit.Log(userID, "container_update_resources", fmt.Sprintf("Updated resources for container %s (%s): CPUs=%.2f, Mem=%d, Restart=%s", detail.Name, id, req.CPUs, req.MemoryBytes, policy), remoteAddr)
+	}
+
+	fresh, err := s.Details(id)
+	if err != nil {
+		return &req, nil
+	}
+	return &fresh.Resources, nil
 }
 
 func (s *DockerContainers) setContainerUpToDate(id, name, image string) {

@@ -100,6 +100,54 @@ const reclaimOptions = ref({
   prune_build_cache: true
 })
 
+const reclaimPreview = ref<any>(null)
+const reclaimPreviewLoading = ref(false)
+
+function formatBytesClient(bytes: number): string {
+  if (bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(1024))
+  const val = (bytes / Math.pow(1024, i)).toFixed(2)
+  return `${val} ${units[i]}`
+}
+
+const estimatedReclaimStr = computed(() => {
+  if (!reclaimPreview.value) return overview.value?.reclaimable_str || '0 B'
+  let totalBytes = 0
+  if (reclaimOptions.value.prune_images_all) {
+    totalBytes += reclaimPreview.value.images_reclaim_bytes || 0
+  } else if (reclaimOptions.value.prune_images_dangling) {
+    totalBytes += Math.round((reclaimPreview.value.images_reclaim_bytes || 0) * 0.4)
+  }
+  if (reclaimOptions.value.prune_containers) {
+    totalBytes += reclaimPreview.value.containers_reclaim_bytes || 0
+  }
+  if (reclaimOptions.value.prune_volumes) {
+    totalBytes += reclaimPreview.value.volumes_reclaim_bytes || 0
+  }
+  if (reclaimOptions.value.prune_build_cache) {
+    totalBytes += reclaimPreview.value.build_cache_reclaim_bytes || 0
+  }
+  if (totalBytes === 0) return '0 B'
+  return formatBytesClient(totalBytes)
+})
+
+async function fetchReclaimPreview() {
+  reclaimPreviewLoading.value = true
+  try {
+    reclaimPreview.value = await apiFetch('/api/storage/reclaim-preview')
+  } catch (e: any) {
+    console.error('Failed to load reclaim preview', e)
+  } finally {
+    reclaimPreviewLoading.value = false
+  }
+}
+
+function openReclaimModal() {
+  showReclaimModal.value = true
+  fetchReclaimPreview()
+}
+
 const selectedItemInspect = ref<any | null>(null)
 const inspectType = ref<'volume' | 'image' | null>(null)
 
@@ -185,6 +233,7 @@ async function refreshAll() {
   refreshing.value = true
   await Promise.all([
     fetchOverview(),
+    fetchReclaimPreview(),
     fetchVolumes(),
     fetchImages(),
     fetchContainers(),
@@ -747,6 +796,7 @@ async function executeBatchReclaim() {
       targetType: 'volume_prune',
       details: [
         { label: 'Selected Tasks', value: 'Images, Containers, Build Cache + Dangling Volumes', highlight: true },
+        { label: 'Estimated Space to Reclaim', value: estimatedReclaimStr.value },
         { label: 'Volumes to be Destroyed', value: `${danglingList.length} unmounted volumes` }
       ],
       itemsList: danglingList.map(v => ({ name: v.name, size: v.size || 'N/A', info: v.is_anonymous ? 'Anonymous' : 'Named' })),
@@ -867,7 +917,7 @@ onMounted(async () => {
       <div class="flex items-center gap-2 flex-wrap">
         <!-- Smart Reclaim Button -->
         <button
-          @click="showReclaimModal = true"
+          @click="openReclaimModal"
           class="cyber-btn flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shadow-lg shadow-indigo-600/20"
         >
           <Sparkles class="h-4 w-4 text-amber-700" />
@@ -2137,12 +2187,42 @@ onMounted(async () => {
           </button>
         </div>
 
+        <!-- Space Reclamation Live Preview Banner -->
+        <div class="p-3 rounded-lg border border-indigo-200 bg-indigo-50/60 space-y-1.5 font-mono">
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-indigo-900 font-bold flex items-center gap-1.5">
+              <Sparkles class="h-3.5 w-3.5 text-indigo-600" />
+              Estimated Space Reclamation:
+            </span>
+            <span class="text-sm font-bold text-indigo-700">
+              {{ reclaimPreviewLoading ? 'Calculating…' : estimatedReclaimStr }}
+            </span>
+          </div>
+          <div class="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-600">
+            <span v-if="reclaimOptions.prune_images_dangling || reclaimOptions.prune_images_all" class="px-1.5 py-0.5 rounded bg-white border border-indigo-200 text-indigo-800">
+              Images: {{ reclaimPreview?.images_reclaimable || '0 B' }}
+            </span>
+            <span v-if="reclaimOptions.prune_build_cache" class="px-1.5 py-0.5 rounded bg-white border border-indigo-200 text-indigo-800">
+              Build Cache: {{ reclaimPreview?.build_cache_reclaimable || '0 B' }}
+            </span>
+            <span v-if="reclaimOptions.prune_containers" class="px-1.5 py-0.5 rounded bg-white border border-indigo-200 text-indigo-800">
+              Containers: {{ reclaimPreview?.containers_reclaimable || '0 B' }}
+            </span>
+            <span v-if="reclaimOptions.prune_volumes" class="px-1.5 py-0.5 rounded bg-white border border-amber-300 text-amber-800 font-semibold">
+              Volumes: {{ reclaimPreview?.volumes_reclaimable || '0 B' }}
+            </span>
+          </div>
+        </div>
+
         <div class="space-y-3 text-xs">
           <!-- Option 1: Dangling Images -->
           <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-white cursor-pointer">
             <input type="checkbox" v-model="reclaimOptions.prune_images_dangling" class="mt-0.5 rounded bg-slate-100 text-indigo-600" />
-            <div>
-              <span class="font-bold text-slate-900 block">Prune Dangling Images (&lt;none&gt;)</span>
+            <div class="flex-1">
+              <div class="flex items-center justify-between">
+                <span class="font-bold text-slate-900 block">Prune Dangling Images (&lt;none&gt;)</span>
+                <span class="text-[10px] font-mono text-indigo-600 font-semibold">~{{ reclaimPreview?.images_reclaimable || 'Estimated' }}</span>
+              </div>
               <span class="text-slate-600 text-[11px]">Removes untagged image layers left over from builds. Completely safe.</span>
             </div>
           </label>
@@ -2150,8 +2230,11 @@ onMounted(async () => {
           <!-- Option 2: All Unused Images -->
           <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-white cursor-pointer">
             <input type="checkbox" v-model="reclaimOptions.prune_images_all" class="mt-0.5 rounded bg-slate-100 text-indigo-600" />
-            <div>
-              <span class="font-bold text-slate-900 block">Prune All Unused Images</span>
+            <div class="flex-1">
+              <div class="flex items-center justify-between">
+                <span class="font-bold text-slate-900 block">Prune All Unused Images</span>
+                <span class="text-[10px] font-mono text-indigo-600 font-semibold">{{ reclaimPreview?.images_reclaimable || '0 B' }} ({{ reclaimPreview?.unused_images_count || 0 }} images)</span>
+              </div>
               <span class="text-slate-600 text-[11px]">Removes any image that does not have an active container currently running.</span>
             </div>
           </label>
@@ -2159,8 +2242,11 @@ onMounted(async () => {
           <!-- Option 3: Stopped Containers -->
           <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-white cursor-pointer">
             <input type="checkbox" v-model="reclaimOptions.prune_containers" class="mt-0.5 rounded bg-slate-100 text-indigo-600" />
-            <div>
-              <span class="font-bold text-slate-900 block">Prune Unmanaged Stopped Containers</span>
+            <div class="flex-1">
+              <div class="flex items-center justify-between">
+                <span class="font-bold text-slate-900 block">Prune Unmanaged Stopped Containers</span>
+                <span class="text-[10px] font-mono text-indigo-600 font-semibold">{{ reclaimPreview?.containers_reclaimable || '0 B' }} ({{ reclaimPreview?.stopped_containers_count || 0 }} stopped)</span>
+              </div>
               <span class="text-slate-600 text-[11px]">Disabled by default. DockTun services (WireGuard, etc.) and Compose stacks are strictly protected.</span>
             </div>
           </label>
@@ -2168,8 +2254,11 @@ onMounted(async () => {
           <!-- Option 4: Build Cache -->
           <label class="flex items-start gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-white cursor-pointer">
             <input type="checkbox" v-model="reclaimOptions.prune_build_cache" class="mt-0.5 rounded bg-slate-100 text-indigo-600" />
-            <div>
-              <span class="font-bold text-slate-900 block">Prune Docker Build Cache</span>
+            <div class="flex-1">
+              <div class="flex items-center justify-between">
+                <span class="font-bold text-slate-900 block">Prune Docker Build Cache</span>
+                <span class="text-[10px] font-mono text-indigo-600 font-semibold">{{ reclaimPreview?.build_cache_reclaimable || '0 B' }} ({{ reclaimPreview?.build_cache_count || 0 }} items)</span>
+              </div>
               <span class="text-slate-600 text-[11px]">Cleans up cached build steps and layers. Completely safe.</span>
             </div>
           </label>
@@ -2177,11 +2266,14 @@ onMounted(async () => {
           <!-- Option 5: Dangling Volumes (With Warning) -->
           <label class="flex items-start gap-3 p-3 rounded-lg border border-amber-900/50 bg-amber-50/20 hover:bg-amber-50/30 cursor-pointer">
             <input type="checkbox" v-model="reclaimOptions.prune_volumes" class="mt-0.5 rounded bg-slate-100 text-amber-500" />
-            <div>
-              <span class="font-bold text-amber-700 block flex items-center gap-1.5">
-                <AlertTriangle class="h-3.5 w-3.5 text-amber-600" />
-                Prune Dangling Volumes (CAUTION)
-              </span>
+            <div class="flex-1">
+              <div class="flex items-center justify-between">
+                <span class="font-bold text-amber-700 block flex items-center gap-1.5">
+                  <AlertTriangle class="h-3.5 w-3.5 text-amber-600" />
+                  Prune Dangling Volumes (CAUTION)
+                </span>
+                <span class="text-[10px] font-mono text-amber-700 font-semibold">{{ reclaimPreview?.volumes_reclaimable || '0 B' }} ({{ reclaimPreview?.dangling_volumes_count || 0 }} volumes)</span>
+              </div>
               <span class="text-amber-200/80 text-[11px] block mt-0.5">
                 Permanently deletes unattached volumes. If you have databases or Nextcloud data in unmounted volumes, that data will be lost!
               </span>
@@ -2207,7 +2299,7 @@ onMounted(async () => {
           >
             <RotateCcw v-if="reclaimLoading" class="h-3.5 w-3.5 animate-spin" />
             <Sparkles v-else class="h-3.5 w-3.5" />
-            <span>{{ reclaimLoading ? 'Reclaiming Disk…' : 'Execute Reclaim' }}</span>
+            <span>{{ reclaimLoading ? 'Reclaiming Disk…' : `Execute Reclaim (${estimatedReclaimStr})` }}</span>
           </button>
         </div>
       </div>

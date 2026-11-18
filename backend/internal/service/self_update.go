@@ -123,6 +123,7 @@ type updateContainer struct {
 		Running    bool
 		Paused     bool
 		Restarting bool
+		ExitCode   int
 		Health     struct{ Status string }
 	}
 }

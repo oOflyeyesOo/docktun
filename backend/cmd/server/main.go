@@ -361,6 +361,8 @@ func main() {
 		r.Post("/api/docker/containers/check-updates", dockerContainersHandler.CheckAllUpdates)
 		r.Post("/api/docker/containers/{id}/check-update", dockerContainersHandler.CheckUpdate)
 		r.Post("/api/docker/containers/{id}/update", dockerContainersHandler.Update)
+		r.Post("/api/docker/containers/{id}/resources", dockerContainersHandler.UpdateResources)
+		r.Put("/api/docker/containers/{id}/resources", dockerContainersHandler.UpdateResources)
 		r.Post("/api/docker/containers/{id}/relink-database", dockerContainersHandler.RelinkDatabase)
 		r.Get("/api/docker/system/df", dockerContainersHandler.SystemDF)
 		r.Post("/api/docker/system/prune", dockerContainersHandler.SystemPrune)
@@ -369,6 +371,7 @@ func main() {
 
 		// Storage Management & Reclaim Center
 		r.Get("/api/storage/overview", storageHandler.GetOverview)
+		r.Get("/api/storage/reclaim-preview", storageHandler.GetReclaimPreview)
 		r.Get("/api/storage/volumes", storageHandler.ListVolumes)
 		r.Delete("/api/storage/volumes/{name}", storageHandler.DeleteVolume)
 		r.Post("/api/storage/volumes/prune", storageHandler.PruneVolumes)

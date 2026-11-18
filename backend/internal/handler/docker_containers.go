@@ -367,3 +367,25 @@ func (h *DockerContainers) ExposurePreflight(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(plan)
 }
+
+func (h *DockerContainers) UpdateResources(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req service.ContainerResources
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	userID, _ := r.Context().Value("user_id").(int)
+	updated, err := h.svc.UpdateContainerResources(r.Context(), id, req, userID, r.RemoteAddr)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":    "ok",
+		"resources": updated,
+	})
+}

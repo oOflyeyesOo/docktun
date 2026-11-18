@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useApi } from '../../../composables/useApi'
 import {
   Activity,
   Globe,
@@ -154,6 +155,108 @@ function parseCpuPercent(cpuStr?: string): number {
   if (!cpuStr) return 0
   const n = parseFloat(cpuStr.replace('%', ''))
   return isNaN(n) ? 0 : Math.min(n, 100)
+}
+
+const { apiFetch } = useApi()
+
+// Resource limits tuning state
+const resourcesSaving = ref(false)
+const resourcesMsg = ref<{ type: 'success' | 'error'; text: string } | null>(null)
+let resourcesMsgTimer: any = null
+
+const resourceDraft = ref({
+  cpus: 0,
+  memory_mode: 'unlimited' as 'unlimited' | '256m' | '512m' | '1g' | '2g' | '4g' | 'custom',
+  memory_custom_mb: 512,
+  restart_policy: 'unless-stopped'
+})
+
+function initResourceDraft() {
+  if (!props.container) return
+  const res = props.container.resources || {}
+  const cpus = res.cpus || 0
+  const memBytes = res.memory_bytes || 0
+  let policy = res.restart_policy || props.container.restart_policy || 'unless-stopped'
+  if (policy.startsWith('on-failure')) policy = 'on-failure'
+
+  let memMode: 'unlimited' | '256m' | '512m' | '1g' | '2g' | '4g' | 'custom' = 'unlimited'
+  let customMb = 512
+
+  if (!memBytes || memBytes === 0) {
+    memMode = 'unlimited'
+  } else if (memBytes === 256 * 1024 * 1024) {
+    memMode = '256m'
+  } else if (memBytes === 512 * 1024 * 1024) {
+    memMode = '512m'
+  } else if (memBytes === 1024 * 1024 * 1024) {
+    memMode = '1g'
+  } else if (memBytes === 2048 * 1024 * 1024) {
+    memMode = '2g'
+  } else if (memBytes === 4096 * 1024 * 1024) {
+    memMode = '4g'
+  } else {
+    memMode = 'custom'
+    customMb = Math.round(memBytes / (1024 * 1024))
+  }
+
+  resourceDraft.value = {
+    cpus,
+    memory_mode: memMode,
+    memory_custom_mb: customMb,
+    restart_policy: policy
+  }
+}
+
+watch(() => props.container, () => {
+  initResourceDraft()
+}, { immediate: true })
+
+async function applyResourceLimits() {
+  if (!props.container) return
+  resourcesSaving.value = true
+  if (resourcesMsgTimer) clearTimeout(resourcesMsgTimer)
+  resourcesMsg.value = null
+
+  let memBytes = 0
+  if (resourceDraft.value.memory_mode === '256m') memBytes = 256 * 1024 * 1024
+  else if (resourceDraft.value.memory_mode === '512m') memBytes = 512 * 1024 * 1024
+  else if (resourceDraft.value.memory_mode === '1g') memBytes = 1024 * 1024 * 1024
+  else if (resourceDraft.value.memory_mode === '2g') memBytes = 2048 * 1024 * 1024
+  else if (resourceDraft.value.memory_mode === '4g') memBytes = 4096 * 1024 * 1024
+  else if (resourceDraft.value.memory_mode === 'custom') memBytes = Math.max(4, resourceDraft.value.memory_custom_mb) * 1024 * 1024
+
+  try {
+    const res: any = await apiFetch(`/api/docker/containers/${props.container.id}/resources`, {
+      method: 'POST',
+      body: JSON.stringify({
+        cpus: Number(resourceDraft.value.cpus) || 0,
+        memory_bytes: memBytes,
+        restart_policy: resourceDraft.value.restart_policy
+      })
+    })
+
+    if (props.container) {
+      if (res.resources) {
+        props.container.resources = res.resources
+        props.container.restart_policy = res.resources.restart_policy
+      }
+    }
+    resourcesMsg.value = {
+      type: 'success',
+      text: 'Live resource limits updated via docker update (no restart required)!'
+    }
+    emit('refresh-containers')
+  } catch (err: any) {
+    resourcesMsg.value = {
+      type: 'error',
+      text: err.message || 'Failed to update resource limits'
+    }
+  } finally {
+    resourcesSaving.value = false
+    resourcesMsgTimer = setTimeout(() => {
+      resourcesMsg.value = null
+    }, 5000)
+  }
 }
 
 const router = useRouter()
@@ -676,6 +779,252 @@ function onBackdropClick(e: MouseEvent) {
                 <span class="text-slate-500">Published Ports:</span>
                 <span class="ml-2 text-cyan-700">{{ container.ports || 'None (Internal only)' }}</span>
               </div>
+            </div>
+          </div>
+
+          <!-- Live Resource Limits Tuning Card -->
+          <div class="rounded-lg border border-cyan-800/40 bg-slate-50 p-4 space-y-4 shadow-xs">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-200/80 pb-3">
+              <div>
+                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                  <Sliders class="h-4 w-4 text-cyan-600" /> Live Resource Limits & Restart Policy
+                </h3>
+                <p class="text-[11px] text-slate-500 mt-0.5">
+                  Dynamically adjust container resources using <code class="text-cyan-700 font-bold">docker update</code>. Applied live without downtime or restart.
+                </p>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="text-[11px] px-2 py-0.5 rounded-full font-mono bg-cyan-100/70 text-cyan-800 border border-cyan-300">
+                  Live Tuning
+                </span>
+              </div>
+            </div>
+
+            <!-- Notice / Feedback Toast -->
+            <div
+              v-if="resourcesMsg"
+              class="p-2.5 rounded-lg text-xs font-mono flex items-center justify-between"
+              :class="resourcesMsg.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-300' : 'bg-rose-50 text-rose-800 border border-rose-300'"
+            >
+              <div class="flex items-center gap-2">
+                <CheckCircle2 v-if="resourcesMsg.type === 'success'" class="h-4 w-4 text-emerald-600 shrink-0" />
+                <AlertCircle v-else class="h-4 w-4 text-rose-600 shrink-0" />
+                <span>{{ resourcesMsg.text }}</span>
+              </div>
+              <button @click="resourcesMsg = null" class="text-slate-500 hover:text-slate-700">
+                <X class="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <!-- CPU Limits -->
+              <div class="space-y-2 p-3 rounded-lg bg-white border border-slate-200">
+                <div class="flex items-center justify-between">
+                  <label class="font-bold text-slate-800 flex items-center gap-1.5">
+                    <Cpu class="h-3.5 w-3.5 text-cyan-600" /> CPU Allocation
+                  </label>
+                  <span class="font-mono text-[11px] text-cyan-700 font-semibold">
+                    {{ resourceDraft.cpus > 0 ? `${resourceDraft.cpus} Cores` : 'Unlimited' }}
+                  </span>
+                </div>
+                <!-- Presets -->
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    @click="resourceDraft.cpus = 0"
+                    class="px-2 py-1 rounded text-[11px] font-mono border transition cursor-pointer"
+                    :class="resourceDraft.cpus === 0 ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-cyan-400'"
+                  >
+                    Unlimited
+                  </button>
+                  <button
+                    type="button"
+                    @click="resourceDraft.cpus = 0.5"
+                    class="px-2 py-1 rounded text-[11px] font-mono border transition cursor-pointer"
+                    :class="resourceDraft.cpus === 0.5 ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-cyan-400'"
+                  >
+                    0.5 CPU
+                  </button>
+                  <button
+                    type="button"
+                    @click="resourceDraft.cpus = 1"
+                    class="px-2 py-1 rounded text-[11px] font-mono border transition cursor-pointer"
+                    :class="resourceDraft.cpus === 1 ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-cyan-400'"
+                  >
+                    1.0 CPU
+                  </button>
+                  <button
+                    type="button"
+                    @click="resourceDraft.cpus = 2"
+                    class="px-2 py-1 rounded text-[11px] font-mono border transition cursor-pointer"
+                    :class="resourceDraft.cpus === 2 ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-cyan-400'"
+                  >
+                    2.0 CPUs
+                  </button>
+                  <button
+                    type="button"
+                    @click="resourceDraft.cpus = 4"
+                    class="px-2 py-1 rounded text-[11px] font-mono border transition cursor-pointer"
+                    :class="resourceDraft.cpus === 4 ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-cyan-400'"
+                  >
+                    4.0 CPUs
+                  </button>
+                </div>
+                <!-- Custom input -->
+                <div class="flex items-center gap-2 pt-1">
+                  <span class="text-[11px] text-slate-500">Custom cores:</span>
+                  <input
+                    type="number"
+                    v-model.number="resourceDraft.cpus"
+                    step="0.25"
+                    min="0"
+                    max="128"
+                    placeholder="0 for unlimited"
+                    class="w-24 px-2 py-1 rounded border border-slate-200 text-xs font-mono bg-white text-slate-800 focus:border-cyan-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <!-- Memory Limits -->
+              <div class="space-y-2 p-3 rounded-lg bg-white border border-slate-200">
+                <div class="flex items-center justify-between">
+                  <label class="font-bold text-slate-800 flex items-center gap-1.5">
+                    <Layers class="h-3.5 w-3.5 text-emerald-600" /> Memory Limit (RAM)
+                  </label>
+                  <span class="font-mono text-[11px] text-emerald-700 font-semibold">
+                    {{ resourceDraft.memory_mode === 'unlimited' ? 'Unlimited' : (resourceDraft.memory_mode === 'custom' ? `${resourceDraft.memory_custom_mb} MB` : resourceDraft.memory_mode.toUpperCase()) }}
+                  </span>
+                </div>
+                <!-- Presets -->
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    @click="resourceDraft.memory_mode = 'unlimited'"
+                    class="px-2 py-1 rounded text-[11px] font-mono border transition cursor-pointer"
+                    :class="resourceDraft.memory_mode === 'unlimited' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-emerald-400'"
+                  >
+                    Unlimited
+                  </button>
+                  <button
+                    type="button"
+                    @click="resourceDraft.memory_mode = '256m'"
+                    class="px-2 py-1 rounded text-[11px] font-mono border transition cursor-pointer"
+                    :class="resourceDraft.memory_mode === '256m' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-emerald-400'"
+                  >
+                    256M
+                  </button>
+                  <button
+                    type="button"
+                    @click="resourceDraft.memory_mode = '512m'"
+                    class="px-2 py-1 rounded text-[11px] font-mono border transition cursor-pointer"
+                    :class="resourceDraft.memory_mode === '512m' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-emerald-400'"
+                  >
+                    512M
+                  </button>
+                  <button
+                    type="button"
+                    @click="resourceDraft.memory_mode = '1g'"
+                    class="px-2 py-1 rounded text-[11px] font-mono border transition cursor-pointer"
+                    :class="resourceDraft.memory_mode === '1g' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-emerald-400'"
+                  >
+                    1GB
+                  </button>
+                  <button
+                    type="button"
+                    @click="resourceDraft.memory_mode = '2g'"
+                    class="px-2 py-1 rounded text-[11px] font-mono border transition cursor-pointer"
+                    :class="resourceDraft.memory_mode === '2g' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-emerald-400'"
+                  >
+                    2GB
+                  </button>
+                  <button
+                    type="button"
+                    @click="resourceDraft.memory_mode = 'custom'"
+                    class="px-2 py-1 rounded text-[11px] font-mono border transition cursor-pointer"
+                    :class="resourceDraft.memory_mode === 'custom' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-emerald-400'"
+                  >
+                    Custom
+                  </button>
+                </div>
+                <!-- Custom input -->
+                <div v-if="resourceDraft.memory_mode === 'custom'" class="flex items-center gap-2 pt-1">
+                  <span class="text-[11px] text-slate-500">Custom RAM (MB):</span>
+                  <input
+                    type="number"
+                    v-model.number="resourceDraft.memory_custom_mb"
+                    step="64"
+                    min="16"
+                    max="131072"
+                    placeholder="e.g. 768"
+                    class="w-24 px-2 py-1 rounded border border-slate-200 text-xs font-mono bg-white text-slate-800 focus:border-emerald-500 focus:outline-none"
+                  />
+                  <span class="text-[11px] text-slate-500">MB</span>
+                </div>
+              </div>
+
+              <!-- Restart Policy -->
+              <div class="space-y-2 p-3 rounded-lg bg-white border border-slate-200 md:col-span-2">
+                <div class="flex items-center justify-between">
+                  <label class="font-bold text-slate-800 flex items-center gap-1.5">
+                    <RotateCcw class="h-3.5 w-3.5 text-violet-600" /> Container Restart Policy
+                  </label>
+                  <span class="font-mono text-[11px] text-violet-700 font-semibold">
+                    Current: {{ container.resources?.restart_policy || container.restart_policy || 'unless-stopped' }}
+                  </span>
+                </div>
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <label
+                    class="flex items-center gap-2 p-2 rounded border cursor-pointer transition text-xs"
+                    :class="resourceDraft.restart_policy === 'unless-stopped' ? 'bg-violet-50/70 border-violet-500 text-violet-900 font-semibold' : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'"
+                  >
+                    <input type="radio" value="unless-stopped" v-model="resourceDraft.restart_policy" class="text-violet-600" />
+                    <span>unless-stopped</span>
+                  </label>
+                  <label
+                    class="flex items-center gap-2 p-2 rounded border cursor-pointer transition text-xs"
+                    :class="resourceDraft.restart_policy === 'always' ? 'bg-violet-50/70 border-violet-500 text-violet-900 font-semibold' : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'"
+                  >
+                    <input type="radio" value="always" v-model="resourceDraft.restart_policy" class="text-violet-600" />
+                    <span>always</span>
+                  </label>
+                  <label
+                    class="flex items-center gap-2 p-2 rounded border cursor-pointer transition text-xs"
+                    :class="resourceDraft.restart_policy === 'on-failure' ? 'bg-violet-50/70 border-violet-500 text-violet-900 font-semibold' : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'"
+                  >
+                    <input type="radio" value="on-failure" v-model="resourceDraft.restart_policy" class="text-violet-600" />
+                    <span>on-failure</span>
+                  </label>
+                  <label
+                    class="flex items-center gap-2 p-2 rounded border cursor-pointer transition text-xs"
+                    :class="resourceDraft.restart_policy === 'no' ? 'bg-violet-50/70 border-violet-500 text-violet-900 font-semibold' : 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700'"
+                  >
+                    <input type="radio" value="no" v-model="resourceDraft.restart_policy" class="text-violet-600" />
+                    <span>no (manual)</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Footer Action Bar -->
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-2 border-t border-slate-200">
+              <div class="text-[11px] text-slate-500 font-mono">
+                Current:
+                <span class="text-slate-700 font-semibold">
+                  {{ container.resources?.cpus ? `${container.resources.cpus} CPUs` : 'Unlimited CPU' }} •
+                  {{ container.resources?.memory_human || 'Unlimited RAM' }} •
+                  {{ container.resources?.restart_policy || container.restart_policy || 'unless-stopped' }}
+                </span>
+              </div>
+              <button
+                type="button"
+                @click="applyResourceLimits"
+                :disabled="resourcesSaving"
+                class="cyber-btn flex items-center justify-center gap-1.5 text-xs text-white bg-cyan-600 hover:bg-cyan-500 font-semibold px-3 py-1.5 shadow-sm cursor-pointer"
+              >
+                <RotateCcw v-if="resourcesSaving" class="h-3.5 w-3.5 animate-spin" />
+                <Save v-else class="h-3.5 w-3.5" />
+                <span>{{ resourcesSaving ? 'Updating Resources…' : 'Apply Resource Limits' }}</span>
+              </button>
             </div>
           </div>
 

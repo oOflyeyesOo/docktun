@@ -82,18 +82,18 @@ func replaceApplicationWithReadiness(old updateContainer, readiness string, expe
 		defer done()
 		if newID != "" {
 			if _, e := updateDocker(rb, "rm", "-f", newID); e != nil {
-				return "", &operationRecoveryRequired{fmt.Errorf("update failed: %v; replacement removal failed: %w; previous container retained as %s", cause, e, backup)}
+				return "", &operationRecoveryRequired{fmt.Errorf("canary auto-rollback failed: %v; replacement removal failed: %w; previous container retained as %s", cause, e, backup)}
 			}
 		}
 		if _, e := updateDocker(rb, "rename", old.ID, name); e != nil {
-			return "", &operationRecoveryRequired{fmt.Errorf("update failed: %v; previous container retained as %s: %w", cause, backup, e)}
+			return "", &operationRecoveryRequired{fmt.Errorf("canary auto-rollback failed: %v; previous container retained as %s: %w", cause, backup, e)}
 		}
 		if old.State.Running {
 			if _, e := updateDocker(rb, "start", old.ID); e != nil {
-				return "", &operationRecoveryRequired{fmt.Errorf("previous container restored but restart failed: %w", e)}
+				return "", &operationRecoveryRequired{fmt.Errorf("canary auto-rollback: previous container restored but restart failed: %w", e)}
 			}
 		}
-		return "Previous container restored with its original data and networks.", fmt.Errorf("update rolled back: %w", cause)
+		return "Canary auto-rollback completed: new container failed startup verification. Previous container restored with original data, networks, and configuration intact.", fmt.Errorf("canary auto-rollback: %w", cause)
 	}
 	var created struct {
 		ID string `json:"Id"`
@@ -116,30 +116,43 @@ func replaceApplicationWithReadiness(old updateContainer, readiness string, expe
 		deadline := time.Now().Add(90 * time.Second)
 		stable := 0
 		healthy := false
+		var failureCause error
 		for time.Now().Before(deadline) {
 			state, e := inspectUpdateContainer(ctx, newID)
-			if e == nil && state.State.Running && !state.State.Restarting {
-				if state.State.Health.Status == "healthy" {
+			if e != nil {
+				failureCause = fmt.Errorf("canary inspection probe error: %w", e)
+				break
+			}
+			if state.State.Restarting {
+				failureCause = fmt.Errorf("new container entered a crash / restart loop")
+				break
+			}
+			if !state.State.Running {
+				failureCause = fmt.Errorf("new container exited unexpectedly on startup with exit code %d", state.State.ExitCode)
+				break
+			}
+			if state.State.Health.Status == "unhealthy" {
+				failureCause = fmt.Errorf("Docker health check reported unhealthy status")
+				break
+			}
+			if state.State.Health.Status == "healthy" {
+				healthy = true
+				break
+			}
+			if state.State.Health.Status == "" {
+				stable++
+				if stable >= 10 {
 					healthy = true
 					break
 				}
-				if state.State.Health.Status == "unhealthy" {
-					break
-				}
-				if state.State.Health.Status == "" {
-					stable++
-					if stable >= 3 {
-						healthy = true
-						break
-					}
-				}
-			} else {
-				break
 			}
 			time.Sleep(time.Second)
 		}
 		if !healthy {
-			return rollback(fmt.Errorf("replacement failed its startup/health check"))
+			if failureCause == nil {
+				failureCause = fmt.Errorf("canary check timed out: container failed to reach healthy running state within 90 seconds")
+			}
+			return rollback(failureCause)
 		}
 	}
 	if old.State.Running && readiness != "" {
@@ -150,11 +163,11 @@ func replaceApplicationWithReadiness(old updateContainer, readiness string, expe
 				break
 			}
 			if time.Now().After(deadline) || ctx.Err() != nil {
-				return rollback(err)
+				return rollback(fmt.Errorf("readiness probe failed on %s: %w", readiness, err))
 			}
 			select {
 			case <-ctx.Done():
-				return rollback(ctx.Err())
+				return rollback(fmt.Errorf("readiness probe canceled: %w", ctx.Err()))
 			case <-time.After(2 * time.Second):
 			}
 		}
@@ -163,7 +176,7 @@ func replaceApplicationWithReadiness(old updateContainer, readiness string, expe
 	if _, err = updateDocker(ctx, "rm", old.ID); err != nil {
 		return "Replacement is active; previous container retained as " + backup, &operationRecoveryRequired{err}
 	}
-	return "Updated image with original mounts, environment, entrypoint, restart policy, ports and network aliases preserved. Previous running/stopped state retained. Containers without a Docker healthcheck are checked for stable running state only.", nil
+	return "Updated image with original mounts, environment, entrypoint, restart policy, ports and network aliases preserved. Canary verification passed. Previous running/stopped state retained.", nil
 }
 func verifyReplacementStorageNetworks(old, next updateContainer) error {
 	for _, mount := range old.Mounts {
