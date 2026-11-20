@@ -1243,6 +1243,15 @@ function onBackdropClick(e: MouseEvent) {
                     <span>{{ copiedKey === 'compose-yaml' ? 'Copied' : 'Copy YAML' }}</span>
                   </button>
 
+                  <router-link
+                    to="/projects"
+                    class="cyber-btn-secondary text-xs flex items-center gap-1 text-slate-700"
+                    title="Open compose revisions & rollback history"
+                  >
+                    <History class="h-3 w-3 text-indigo-600" />
+                    <span>Revisions &amp; History</span>
+                  </router-link>
+
                   <button
                     @click="emit('save-compose', false)"
                     :disabled="composeSaving || composeLoading || !composeEditor?.loaded || !projectFilesWritable"

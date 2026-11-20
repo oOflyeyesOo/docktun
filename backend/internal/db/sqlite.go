@@ -183,6 +183,18 @@ func (d *DB) migrate() error {
 		CREATE INDEX IF NOT EXISTS idx_container_updates_name ON container_updates(container_name);
 		CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
 		CREATE INDEX IF NOT EXISTS idx_projects_path ON projects(path);
+
+		CREATE TABLE IF NOT EXISTS compose_revisions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_id INTEGER NOT NULL,
+			filename TEXT NOT NULL,
+			content TEXT NOT NULL,
+			message TEXT NOT NULL DEFAULT '',
+			user_id INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_compose_revisions_project ON compose_revisions(project_id, id DESC);
 	`)
 	if err != nil {
 		return err

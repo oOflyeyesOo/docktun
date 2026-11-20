@@ -12,11 +12,12 @@ import (
 // The installed image is identified by the running container, not a mutable tag
 // that may already have been pulled for an update.
 type RunningBuildInfo struct {
-	Container string `json:"container,omitempty"`
-	Image     string `json:"image,omitempty"`
-	ImageID   string `json:"image_id,omitempty"`
-	Revision  string `json:"revision,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Container  string `json:"container,omitempty"`
+	Image      string `json:"image,omitempty"`
+	ImageID    string `json:"image_id,omitempty"`
+	Revision   string `json:"revision,omitempty"`
+	LocalBuild bool   `json:"local_build,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 var buildRevisionPattern = regexp.MustCompile(`^[a-fA-F0-9]{7,64}$`)
@@ -28,6 +29,9 @@ func inspectRunningBuild(ctx context.Context) (RunningBuildInfo, error) {
 	}
 	build := RunningBuildInfo{Container: strings.TrimPrefix(c.Name, "/"), ImageID: c.Image}
 	build.Image, _ = c.Config["Image"].(string)
+	if isLocalBuildContainer(c) {
+		build.LocalBuild = true
+	}
 	var installed struct {
 		ID     string `json:"Id"`
 		Config struct{ Labels map[string]string }

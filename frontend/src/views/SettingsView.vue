@@ -7,6 +7,7 @@ import SystemDiagnostics from '../components/SystemDiagnostics.vue'
 import LocalProxy from '../components/LocalProxy.vue'
 import OperationsCenter from '../components/OperationsCenter.vue'
 import RecoveryCenter from '../components/RecoveryCenter.vue'
+import DisasterRecovery from '../components/DisasterRecovery.vue'
 import ProjectBackups from '../components/ProjectBackups.vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
@@ -55,6 +56,7 @@ async function changePassword() {
     <LocalProxy />
     <ProjectBackups />
     <RecoveryCenter />
+    <DisasterRecovery />
     <OperationsCenter />
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">

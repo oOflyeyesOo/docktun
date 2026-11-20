@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { LayoutDashboard, ScrollText, Globe, LogOut, Bell, Cog, Server, Activity, HardDrive } from 'lucide-vue-next'
+import { LayoutDashboard, ScrollText, Globe, LogOut, Bell, Cog, Server, Activity, HardDrive, FileCode } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
 import { useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
@@ -12,6 +12,7 @@ const { apiFetch } = useApi()
 const nav = [
   { to: '/', label: 'Overview', icon: LayoutDashboard },
   { to: '/containers', label: 'Containers', icon: Server },
+  { to: '/projects', label: 'Projects & Stacks', icon: FileCode },
   { to: '/metrics', label: 'Metrics', icon: Activity },
   { to: '/storage', label: 'Storage', icon: HardDrive },
   { to: '/access', label: 'Exposure providers', icon: Globe },

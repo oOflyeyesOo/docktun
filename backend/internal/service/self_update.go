@@ -28,6 +28,8 @@ type SelfUpdateState struct {
 	Revision     string            `json:"revision,omitempty"`
 	Available    bool              `json:"available"`
 	Checked      bool              `json:"checked"`
+	LocalBuild   bool              `json:"local_build,omitempty"`
+	Error        string            `json:"error,omitempty"`
 	UpdatedAt    time.Time         `json:"updated_at"`
 	Helper       string            `json:"helper,omitempty"`
 }
@@ -42,11 +44,22 @@ type SelfUpdater struct {
 	build          RunningBuildInfo
 	buildAt        time.Time
 	inspectBuild   func(context.Context) (RunningBuildInfo, error)
+	selfContainer  func(context.Context) (updateContainer, error)
+	stageImage     func(context.Context, string) error
+	verifyUpdate   func(context.Context, string) (string, error)
+	inspectImage   func(context.Context, string) (string, error)
 }
 
 func NewSelfUpdater(dataDir string) *SelfUpdater {
 	path, _ := filepath.Abs(filepath.Join(dataDir, "self-update.json"))
 	return &SelfUpdater{statePath: path}
+}
+
+// SetCheckFailureForTest allows tests to simulate container or socket failures.
+func (s *SelfUpdater) SetCheckFailureForTest(err error) {
+	s.selfContainer = func(context.Context) (updateContainer, error) {
+		return updateContainer{}, err
+	}
 }
 
 // An explicitly configured immutable local image supports offline installations.
@@ -216,6 +229,87 @@ func validateCorePersistence(c updateContainer) error {
 	return fmt.Errorf("database directory %s is not on a writable persistent mount; back it up and mount it before updating", directory)
 }
 
+func isLocalBuildContainer(c updateContainer) bool {
+	if os.Getenv("DOCKTUN_LOCAL_BUILD") == "true" || os.Getenv("DOCKTUN_LOCAL_BUILD") == "1" {
+		return true
+	}
+	cfgImage, _ := c.Config["Image"].(string)
+	cfgImage = strings.TrimSpace(cfgImage)
+
+	// An untagged or raw image SHA (e.g. 956f684565cb, sha256:..., or hex string)
+	if cfgImage == "" || buildRevisionPattern.MatchString(cfgImage) || strings.HasPrefix(cfgImage, "sha256:") {
+		return true
+	}
+
+	// Official releases are always prefixed with ghcr.io/ooflyeyesoo/docktun: or ghcr.io/ooflyeyesoo/docktun@
+	if !strings.HasPrefix(cfgImage, "ghcr.io/ooflyeyesoo/docktun:") && !strings.HasPrefix(cfgImage, "ghcr.io/ooflyeyesoo/docktun@") {
+		return true
+	}
+
+	imageID := strings.TrimSpace(c.Image)
+	if imageID != "" && (buildRevisionPattern.MatchString(imageID) || strings.HasPrefix(imageID, "sha256:")) {
+		if !strings.HasPrefix(cfgImage, "ghcr.io/ooflyeyesoo/docktun:") && !strings.HasPrefix(cfgImage, "ghcr.io/ooflyeyesoo/docktun@") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func richDockerSocketError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	if strings.Contains(lower, "permission denied") {
+		return fmt.Errorf("Docker socket permission denied: %s. Verify container user has group permissions to access /var/run/docker.sock", msg)
+	}
+	if strings.Contains(lower, "no such file or directory") {
+		return fmt.Errorf("Docker socket not found: ensure /var/run/docker.sock is mounted into the container (%s)", msg)
+	}
+	if strings.Contains(lower, "cannot identify this docktun container") || strings.Contains(msg, "DOCKTUN_CONTAINER") {
+		return fmt.Errorf("container identification failed: %s", msg)
+	}
+	return fmt.Errorf("Docker daemon communication error: %s", msg)
+}
+
+func richPullError(image string, err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	if strings.Contains(lower, "timeout") || strings.Contains(lower, "deadline exceeded") {
+		return fmt.Errorf("registry pull timed out for image %s: check upstream network connectivity and latency (%s)", image, msg)
+	}
+	if strings.Contains(lower, "lookup") || strings.Contains(lower, "no such host") {
+		return fmt.Errorf("registry DNS lookup failed for %s: check Docker daemon DNS settings (%s)", image, msg)
+	}
+	if strings.Contains(lower, "unauthorized") || strings.Contains(lower, "authentication required") || strings.Contains(lower, "denied") {
+		return fmt.Errorf("registry authentication failed for %s: repository access denied (%s)", image, msg)
+	}
+	return fmt.Errorf("failed to pull image %s: %s", image, msg)
+}
+
+func richCosignError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	if strings.Contains(lower, "executable file not found") || strings.Contains(lower, "no such file or directory") || strings.Contains(lower, "binary is absent") {
+		return fmt.Errorf("Cosign binary is absent: cannot verify image signature cryptographically (%s)", msg)
+	}
+	if strings.Contains(lower, "token.actions.githubusercontent.com") || strings.Contains(lower, "dial tcp") || strings.Contains(lower, "timeout") {
+		return fmt.Errorf("Cosign verification could not reach certificate issuer (https://token.actions.githubusercontent.com): %s", msg)
+	}
+	if strings.Contains(lower, "no immutable registry digest") {
+		return fmt.Errorf("official update has no immutable registry digest; untagged or custom image cannot be verified (%s)", msg)
+	}
+	return fmt.Errorf("Cosign signature verification failed: %s", msg)
+}
+
 func (s *SelfUpdater) Status() SelfUpdateState {
 	state := SelfUpdateState{Phase: "idle", Image: s.Channel().Image, Message: "Check for a published DockTun update."}
 	if b, err := os.ReadFile(s.statePath); err == nil {
@@ -227,6 +321,9 @@ func (s *SelfUpdater) Status() SelfUpdateState {
 	}
 	build := s.runningBuild()
 	state.Running = &build
+	if build.LocalBuild {
+		state.LocalBuild = true
+	}
 	return state
 }
 
@@ -249,39 +346,94 @@ func (s *SelfUpdater) Check(ctx context.Context) (SelfUpdateState, error) {
 	if updateInProgress(previous.Phase) {
 		return previous, fmt.Errorf("an update is already running")
 	}
-	c, err := selfContainer(ctx)
-	if err != nil {
-		return previous, err
+	getContainer := s.selfContainer
+	if getContainer == nil {
+		getContainer = selfContainer
 	}
+	c, err := getContainer(ctx)
+	if err != nil {
+		diagErr := richDockerSocketError(err)
+		state := previous
+		state.Phase = "failed"
+		state.Checked = true
+		state.Error = diagErr.Error()
+		state.Message = diagErr.Error()
+		_ = s.save(state)
+		return state, diagErr
+	}
+
+	// Support environments running from local source or custom build
+	if isLocalBuildContainer(c) {
+		state := SelfUpdateState{
+			Phase:        "ready",
+			LocalBuild:   true,
+			Checked:      true,
+			Available:    false,
+			Image:        s.Channel().Image,
+			CurrentImage: c.Image,
+			Message:      "Running a local build or source checkout. Updates are managed via git pull & compose rebuild, or switch channel to official release.",
+		}
+		build := s.runningBuild()
+		state.Running = &build
+		if err = s.save(state); err != nil {
+			return state, err
+		}
+		return state, nil
+	}
+
 	// Pulling only stages the image; the running container is unchanged until Install.
 	state := SelfUpdateState{Phase: "checking", Image: s.Channel().Image, CurrentImage: c.Image, Message: "Downloading the latest published image for comparison."}
 	if err = s.save(state); err != nil {
 		return state, err
 	}
-	if err = stageUpdateImage(ctx, state.Image); err != nil {
-		state.Phase = "failed"
-		state.Message = err.Error()
-		_ = s.save(state)
-		return state, err
+	stageImg := s.stageImage
+	if stageImg == nil {
+		stageImg = stageUpdateImage
 	}
-	verified, verifyErr := verifyOfficialUpdate(ctx, state.Image)
-	if verifyErr != nil {
+	if err = stageImg(ctx, state.Image); err != nil {
+		diagErr := richPullError(state.Image, err)
 		state.Phase = "failed"
-		state.Message = verifyErr.Error()
+		state.Checked = true
+		state.Error = diagErr.Error()
+		state.Message = diagErr.Error()
 		_ = s.save(state)
-		return state, verifyErr
+		return state, diagErr
+	}
+	verify := s.verifyUpdate
+	if verify == nil {
+		verify = verifyOfficialUpdate
+	}
+	verified, verifyErr := verify(ctx, state.Image)
+	if verifyErr != nil {
+		diagErr := richCosignError(verifyErr)
+		state.Phase = "failed"
+		state.Checked = true
+		state.Error = diagErr.Error()
+		state.Message = diagErr.Error()
+		_ = s.save(state)
+		return state, diagErr
 	}
 	state.Image = verified
-	out, err := updateDocker(ctx, "image", "inspect", state.Image, "--format", "{{.Id}}")
+	inspectImg := s.inspectImage
+	var out string
+	if inspectImg != nil {
+		out, err = inspectImg(ctx, state.Image)
+	} else {
+		var rawOut []byte
+		rawOut, err = updateDocker(ctx, "image", "inspect", state.Image, "--format", "{{.Id}}")
+		out = string(rawOut)
+	}
 	if err != nil {
 		state.Phase = "failed"
-		state.Message = err.Error()
+		state.Checked = true
+		state.Error = fmt.Sprintf("failed to inspect staged image %s: %s", state.Image, err.Error())
+		state.Message = state.Error
 		_ = s.save(state)
 		return state, err
 	}
 	state.Phase = "ready"
 	state.Checked = true
-	state.Available = strings.TrimSpace(string(out)) != c.Image
+	state.Available = strings.TrimSpace(out) != c.Image
 	state.Message = "DockTun is up to date."
 	if state.Available {
 		state.Message = "An update is ready to install. The dashboard will briefly reconnect."

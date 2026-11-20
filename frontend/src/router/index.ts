@@ -11,7 +11,7 @@ const router = createRouter({
     { path: '/access', component: () => import('../views/RemoteAccessView.vue') },
     { path: '/remote-access', redirect: '/access' },
     { path: '/mesh', redirect: (to) => ({ path: '/access', query: { tab: 'tailscale', ...to.query } }) },
-    { path: '/projects', redirect: (to) => ({ path: '/containers', query: to.query }) },
+    { path: '/projects', component: () => import('../views/ProjectsView.vue') },
     { path: '/logs', component: () => import('../views/LogsView.vue') },
     { path: '/config', redirect: (to) => ({ path: '/access', query: { tab: 'cloudflare', ...to.query } }) },
     { path: '/cloudflare', redirect: (to) => ({ path: '/access', query: { tab: 'cloudflare', ...to.query } }) },

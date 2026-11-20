@@ -188,16 +188,15 @@ func ReviewCompose(ctx context.Context, input ComposeReviewInput) (ComposeReview
 		return result, nil
 	}
 	probes := map[string]string{}
-	var running []struct {
-		Names []string `json:"Names"`
-		Ports []struct {
-			IP         string
-			PublicPort int
-			Type       string
-		} `json:"Ports"`
-	}
-	if err := dockerJSON(ctx, "GET", "/containers/json", nil, &running); err != nil {
+	// Pre-flight port collision detection against running containers
+	desiredPorts := ExtractDesiredPortsFromMap(document)
+	if collisions, err := CheckPortCollisions(ctx, desiredPorts); err != nil {
 		return result, fmt.Errorf("cannot check published ports: %w", err)
+	} else {
+		for _, col := range collisions {
+			serviceName := col.ContainerName
+			result.Problems = append(result.Problems, fmt.Sprintf("%s: host port %d/%s is already used by %s; choose another host port in app setup", serviceName, col.Port, col.Protocol, col.OccupiedBy))
+		}
 	}
 	chosenPorts := map[string][]string{}
 	for name, value := range services {
@@ -217,13 +216,6 @@ func ReviewCompose(ctx context.Context, input ComposeReviewInput) (ComposeReview
 			ip, _ := port["host_ip"].(string)
 			conflicts := func(other string) bool {
 				return ip == "" || ip == "0.0.0.0" || ip == "::" || other == "" || other == "0.0.0.0" || other == "::" || other == ip
-			}
-			for _, container := range running {
-				for _, existing := range container.Ports {
-					if existing.PublicPort == number && existing.Type == protocol && conflicts(existing.IP) {
-						result.Problems = append(result.Problems, fmt.Sprintf("%s: host port %d/%s is already used by %s; choose another host port in app setup", name, number, protocol, strings.Join(container.Names, ", ")))
-					}
-				}
 			}
 			key := strconv.Itoa(number) + "/" + protocol
 			for _, previous := range chosenPorts[key] {

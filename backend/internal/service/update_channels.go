@@ -69,7 +69,7 @@ func verifyOfficialUpdate(ctx context.Context, image string) (string, error) {
 	}
 	var inspected struct{ RepoDigests []string }
 	if err := dockerJSON(ctx, "GET", "/images/"+url.PathEscape(image)+"/json", nil, &inspected); err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to inspect downloaded image metadata (%s): %w", image, err)
 	}
 	digest := ""
 	for _, ref := range inspected.RepoDigests {
@@ -79,15 +79,25 @@ func verifyOfficialUpdate(ctx context.Context, image string) (string, error) {
 		}
 	}
 	if digest == "" {
-		return "", fmt.Errorf("official update has no immutable registry digest")
+		return "", fmt.Errorf("official update has no immutable registry digest; untagged or custom image cannot be verified")
 	}
 	core, err := selfContainer(ctx)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("cannot identify running container to execute cosign verification: %w", err)
 	}
-	_, err = updateDocker(ctx, "run", "--rm", "--network", "bridge", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m", "-e", "HOME=/tmp", "--entrypoint", "/usr/local/bin/cosign", core.Image, "verify", "--certificate-identity-regexp", `^https://github\.com/oOflyeyesOo/docktun/\.github/workflows/(release|publish)\.yml@refs/(tags/v[0-9][^/]*|heads/main)$`, "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com", digest)
+	out, err := updateDocker(ctx, "run", "--rm", "--network", "bridge", "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=32m", "-e", "HOME=/tmp", "--entrypoint", "/usr/local/bin/cosign", core.Image, "verify", "--certificate-identity-regexp", `^https://github\.com/oOflyeyesOo/docktun/\.github/workflows/(release|publish)\.yml@refs/(tags/v[0-9][^/]*|heads/main)$`, "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com", digest)
 	if err != nil {
-		return "", fmt.Errorf("official update signature could not be verified; no container was replaced. Legacy unsigned images require a reviewed signed release or an explicit custom image override")
+		outStr := strings.TrimSpace(string(out))
+		if outStr == "" {
+			outStr = err.Error()
+		}
+		if strings.Contains(outStr, "executable file not found") || strings.Contains(outStr, "no such file or directory") {
+			return "", fmt.Errorf("cosign binary is absent in image (%s); cannot verify official signature: %s", core.Image, outStr)
+		}
+		if strings.Contains(outStr, "token.actions.githubusercontent.com") || strings.Contains(outStr, "dial tcp") || strings.Contains(outStr, "connection refused") || strings.Contains(outStr, "i/o timeout") {
+			return "", fmt.Errorf("cosign verification could not reach certificate issuer (https://token.actions.githubusercontent.com): %s", outStr)
+		}
+		return "", fmt.Errorf("official update signature could not be verified (%s)", outStr)
 	}
 	return digest, nil
 }

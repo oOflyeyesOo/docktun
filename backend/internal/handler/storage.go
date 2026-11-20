@@ -452,3 +452,9 @@ func (h *StorageHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		"filename": header.Filename,
 	})
 }
+
+func (h *StorageHandler) GetDoctor(w http.ResponseWriter, r *http.Request) {
+	report := h.svc.Doctor(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(report)
+}

@@ -5,6 +5,7 @@ import (
 	"docktun/internal/service"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -32,7 +33,23 @@ func (h *SelfUpdate) Check(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	state, err := h.svc.Check(ctx)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusConflict)
+		if err.Error() == "an update is already running" || strings.Contains(err.Error(), "already running") {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
+		// Recoverable diagnostic error: return HTTP 200 with state payload containing diagnostics
+		if state.Error == "" {
+			state.Error = err.Error()
+		}
+		if state.Message == "" {
+			state.Message = err.Error()
+		}
+		if state.Phase == "" || state.Phase == "idle" || state.Phase == "checking" {
+			state.Phase = "failed"
+		}
+		state.Checked = true
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(state)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

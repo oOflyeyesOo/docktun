@@ -421,20 +421,67 @@ func (h *Projects) ComposeSave(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Filename string `json:"filename"`
 		Content  string `json:"content"`
+		Message  string `json:"message"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if err := h.svc.SaveComposeFile(id, body.Filename, body.Content); err != nil {
+	userID, _ := r.Context().Value("user_id").(int)
+	if err := h.svc.SaveComposeFileWithUser(id, body.Filename, body.Content, body.Message, userID); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	userID, _ := r.Context().Value("user_id").(int)
 	h.audit.Log(userID, "project_compose_save", p.Name, r.RemoteAddr)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (h *Projects) GetRevisions(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	if _, err := h.svc.GetByID(id); err != nil {
+		jsonError(w, "project not found", http.StatusNotFound)
+		return
+	}
+	revisions, err := h.svc.ListRevisions(id)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if revisions == nil {
+		revisions = []service.ComposeRevision{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(revisions)
+}
+
+func (h *Projects) RollbackRevision(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	revID, _ := strconv.Atoi(chi.URLParam(r, "revID"))
+	p, err := h.svc.GetByID(id)
+	if err != nil {
+		jsonError(w, "project not found", http.StatusNotFound)
+		return
+	}
+	userID, _ := r.Context().Value("user_id").(int)
+	rev, err := h.svc.RollbackRevision(id, revID, userID)
+	if err != nil {
+		if errors.Is(err, service.ErrRevisionNotFound) {
+			jsonError(w, "revision not found", http.StatusNotFound)
+			return
+		}
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.audit.Log(userID, "project_compose_rollback", fmt.Sprintf("%s (rev #%d)", p.Name, revID), r.RemoteAddr)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":   "ok",
+		"message":  fmt.Sprintf("Successfully rolled back to revision #%d", revID),
+		"revision": rev,
+	})
 }
 
 func (h *Projects) EnvGet(w http.ResponseWriter, r *http.Request) {

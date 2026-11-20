@@ -147,6 +147,11 @@ func NewStorageService(database *db.DB, cfg *config.Config) *StorageService {
 	}
 }
 
+func (s *StorageService) Doctor(ctx context.Context) *StorageDoctorReport {
+	doc := NewStorageDoctor(s.db, s.cfg)
+	return doc.Diagnose(ctx)
+}
+
 // -----------------------------------------------------------------------------
 // Overview
 // -----------------------------------------------------------------------------

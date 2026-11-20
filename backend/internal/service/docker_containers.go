@@ -831,6 +831,15 @@ func (s *DockerContainers) ReconcileNetworks() (map[string]interface{}, error) {
 	// Network attachment does not require restarting the tunnel. Periodic
 	// reconciliation must not interrupt existing connections every ten minutes.
 
+	// 5. Ingress Network Auto-Healer: reconcile Cloudflare ingress rules with Docker networks
+	if healRes, healErr := s.ReconcileIngressNetworksDetailed(context.Background()); healErr == nil && healRes != nil {
+		if len(healRes.Connected) > 0 {
+			addLog(fmt.Sprintf("Auto-healed ingress network for containers: %s", strings.Join(healRes.Connected, ", ")))
+		}
+		result["ingress_connected"] = healRes.Connected
+		result["ingress_already_connected"] = healRes.AlreadyConnected
+	}
+
 	// 6. Automatically sync/reconcile Cloudflare DNS records for all public ingress routes
 	if s.cfAPI != nil && s.configMgr != nil && s.cloudflared != nil && s.cloudflared.Status().Status != "disabled" {
 		addLog("Re-verifying and syncing Cloudflare DNS routes for public services...")
@@ -1106,7 +1115,10 @@ func (s *DockerContainers) Start(id string) error {
 	_ = s.EnsureDatabaseLinks(id)
 	s.exposureMu.Lock()
 	defer s.exposureMu.Unlock()
-	if err := dockerCommand("start", id); err != nil {
+	err := RetryOnPortConflict(context.Background(), func() error {
+		return dockerCommand("start", id)
+	}, 4, 500*time.Millisecond)
+	if err != nil {
 		return err
 	}
 	return s.finishTailscaleStart(id)
@@ -1116,7 +1128,10 @@ func (s *DockerContainers) Restart(id string) error {
 	_ = s.EnsureDatabaseLinks(id)
 	s.exposureMu.Lock()
 	defer s.exposureMu.Unlock()
-	if err := dockerCommand("restart", id); err != nil {
+	err := RetryOnPortConflict(context.Background(), func() error {
+		return dockerCommand("restart", id)
+	}, 4, 500*time.Millisecond)
+	if err != nil {
 		return err
 	}
 	return s.finishTailscaleStart(id)

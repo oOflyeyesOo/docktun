@@ -11,7 +11,9 @@ import {
   Zap,
   Clock,
   Layers,
-  X
+  X,
+  GitBranch,
+  Terminal
 } from 'lucide-vue-next'
 
 const { apiFetch } = useApi()
@@ -26,6 +28,32 @@ const reconnecting = ref(false)
 const showConfirmModal = ref(false)
 const error = ref('')
 const message = ref('')
+const dismissedError = ref(false)
+
+const activeError = computed(() => {
+  if (dismissedError.value) return ''
+  return error.value || updateState.value?.error || ''
+})
+
+function dismissError() {
+  dismissedError.value = true
+  error.value = ''
+  if (updateState.value) {
+    updateState.value.error = ''
+  }
+}
+
+const isLocalBuild = computed(() => {
+  return updateState.value?.local_build === true || updateState.value?.running?.local_build === true
+})
+
+const runningImageShort = computed(() => {
+  const img = updateState.value?.current_image || updateState.value?.running?.image_id || updateState.value?.running?.image || ''
+  if (!img) return 'Local Build'
+  if (img.startsWith('sha256:')) return img.slice(7, 19)
+  if (img.length > 20) return img.slice(0, 12)
+  return img
+})
 
 async function fetchStatus() {
   try {
@@ -67,14 +95,19 @@ async function saveChannel() {
 async function checkForUpdates() {
   checking.value = true
   error.value = ''
+  dismissedError.value = false
   message.value = ''
   try {
     const res = await apiFetch('/api/self-update/check', { method: 'POST' })
     updateState.value = res
-    if (res.available) {
+    if (res.error) {
+      error.value = res.error
+    } else if (res.local_build) {
+      message.value = res.message || 'Running a local build or source checkout. Updates are managed via git pull & compose rebuild, or switch channel to official release.'
+    } else if (res.available) {
       message.value = 'A new DockTun update is available and verified!'
     } else {
-      message.value = 'DockTun is running the latest verified release.'
+      message.value = res.message || 'DockTun is running the latest verified release.'
     }
   } catch (e: any) {
     error.value = e.message
@@ -194,8 +227,9 @@ const lastCheckedText = computed(() => {
           {{ channelState?.image || updateState?.image || 'ghcr.io/ooflyeyesoo/docktun:latest' }}
         </div>
         <div class="text-[10px] text-slate-500 font-sans flex items-center gap-1">
-          <ShieldCheck class="h-3 w-3 text-emerald-600" />
-          <span>{{ channelState?.signed_updates ? 'Official Cosign Verified' : 'Operator Managed' }}</span>
+          <ShieldCheck v-if="!isLocalBuild" class="h-3 w-3 text-emerald-600" />
+          <GitBranch v-else class="h-3 w-3 text-blue-600" />
+          <span>{{ isLocalBuild ? 'Local Build / Source Checkout' : (channelState?.signed_updates ? 'Official Cosign Verified' : 'Operator Managed') }}</span>
         </div>
       </div>
 
@@ -207,11 +241,32 @@ const lastCheckedText = computed(() => {
         </div>
         <div class="flex items-center gap-2 font-bold">
           <span
-            v-if="isUpdateAvailable"
+            v-if="checking"
+            class="inline-flex items-center gap-1.5 rounded-full bg-cyan-100 text-cyan-700 px-2 py-0.5 text-xs"
+          >
+            <RefreshCw class="h-3.5 w-3.5 text-cyan-600 animate-spin" />
+            <span>Checking…</span>
+          </span>
+          <span
+            v-else-if="activeError"
+            class="inline-flex items-center gap-1.5 rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-xs"
+          >
+            <AlertCircle class="h-3.5 w-3.5 text-red-600" />
+            <span>Check Failed</span>
+          </span>
+          <span
+            v-else-if="isUpdateAvailable"
             class="inline-flex items-center gap-1.5 rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 text-xs"
           >
             <ArrowUpCircle class="h-3.5 w-3.5 text-amber-600" />
             <span>Update Available</span>
+          </span>
+          <span
+            v-else-if="isLocalBuild"
+            class="inline-flex items-center gap-1.5 rounded-full bg-blue-100 text-blue-700 px-2 py-0.5 text-xs"
+          >
+            <GitBranch class="h-3.5 w-3.5 text-blue-600" />
+            <span>Local Build</span>
           </span>
           <span
             v-else-if="updateState?.checked"
@@ -282,6 +337,62 @@ const lastCheckedText = computed(() => {
       </p>
     </div>
 
+    <!-- LOCAL BUILD DIAGNOSTIC BANNER -->
+    <div
+      v-if="isLocalBuild && !installing && !reconnecting"
+      class="rounded-xl border border-blue-300 bg-gradient-to-r from-blue-50 to-indigo-50 p-4 shadow-sm space-y-3"
+    >
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div class="flex items-start gap-3">
+          <div class="rounded-lg bg-blue-500/20 p-2 text-blue-600 border border-blue-500/30 shrink-0 mt-0.5">
+            <GitBranch class="h-5 w-5" />
+          </div>
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <h3 class="text-sm font-bold text-slate-900">Local Source / Custom Build Mode</h3>
+              <span class="rounded-full bg-blue-100 text-blue-800 text-[10px] font-mono font-semibold px-2 py-0.5">
+                {{ runningImageShort }}
+              </span>
+            </div>
+            <p class="text-xs text-slate-600 leading-relaxed">
+              {{ updateState?.message || 'Running a local build or source checkout. Updates are managed via git pull & compose rebuild, or switch channel to official release.' }}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="border-t border-blue-200/60 pt-3 text-xs text-slate-700 space-y-2">
+        <div class="font-semibold text-slate-800 text-[11px] uppercase tracking-wider">How to manage updates:</div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div class="rounded-lg bg-white/80 border border-blue-200/60 p-3 space-y-1.5 shadow-2xs">
+            <div class="font-semibold text-slate-900 flex items-center gap-1.5">
+              <Terminal class="h-3.5 w-3.5 text-blue-600" />
+              <span>Update Local Build</span>
+            </div>
+            <p class="text-[11px] text-slate-600">
+              Pull latest repository source changes and rebuild your containers locally:
+            </p>
+            <div class="font-mono text-[11px] bg-slate-900 text-slate-100 rounded p-2 select-all">
+              git pull &amp;&amp; docker compose up -d --build
+            </div>
+          </div>
+
+          <div class="rounded-lg bg-white/80 border border-blue-200/60 p-3 space-y-1.5 shadow-2xs">
+            <div class="font-semibold text-slate-900 flex items-center gap-1.5">
+              <Layers class="h-3.5 w-3.5 text-indigo-600" />
+              <span>Switch to Official Releases</span>
+            </div>
+            <p class="text-[11px] text-slate-600">
+              In your <code class="font-mono text-slate-800">docker-compose.yml</code>, replace <code class="font-mono text-slate-800">build: .</code> with the official signed image:
+            </p>
+            <div class="font-mono text-[11px] bg-slate-900 text-slate-100 rounded p-2 select-all">
+              image: ghcr.io/ooflyeyesoo/docktun:latest
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- INSTALLATION / RECONNECTION IN PROGRESS -->
     <div
       v-if="installing || reconnecting"
@@ -303,13 +414,29 @@ const lastCheckedText = computed(() => {
       </div>
     </div>
 
-    <!-- Messages / Alerts -->
-    <div v-if="error" class="rounded-lg border border-red-500/40 bg-red-50 p-3 text-xs text-red-700 flex items-start gap-2">
-      <AlertCircle class="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
-      <div>{{ error }}</div>
+    <!-- DISMISSIBLE ERROR BANNER -->
+    <div
+      v-if="activeError"
+      class="rounded-lg border border-red-500/40 bg-red-50 p-3 text-xs text-red-800 flex items-start justify-between gap-3 shadow-sm"
+    >
+      <div class="flex items-start gap-2">
+        <AlertCircle class="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+        <div class="space-y-0.5">
+          <div class="font-bold text-red-900">Update Diagnostics Notice</div>
+          <div class="text-red-700 leading-relaxed font-mono text-[11px] break-all">{{ activeError }}</div>
+        </div>
+      </div>
+      <button
+        @click="dismissError"
+        class="text-red-400 hover:text-red-700 p-0.5 rounded transition-colors shrink-0"
+        title="Dismiss notice"
+      >
+        <X class="h-4 w-4" />
+      </button>
     </div>
 
-    <div v-else-if="message && !isUpdateAvailable && !installing && !reconnecting" class="rounded-lg border border-emerald-500/40 bg-emerald-50 p-3 text-xs text-emerald-800 flex items-start gap-2">
+    <!-- Messages / Status Alerts -->
+    <div v-else-if="message && !isUpdateAvailable && !isLocalBuild && !installing && !reconnecting" class="rounded-lg border border-emerald-500/40 bg-emerald-50 p-3 text-xs text-emerald-800 flex items-start gap-2">
       <CheckCircle2 class="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
       <div>{{ message }}</div>
     </div>

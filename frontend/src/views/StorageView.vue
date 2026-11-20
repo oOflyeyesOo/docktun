@@ -45,7 +45,36 @@ const overview = ref<any>(null)
 const volumes = ref<any[]>([])
 const images = ref<any[]>([])
 const containers = ref<any[]>([])
-const activeTab = ref<'files' | 'volumes' | 'images' | 'containers' | 'system' | 'docktun'>('files')
+const activeTab = ref<'files' | 'volumes' | 'images' | 'containers' | 'system' | 'docktun' | 'doctor'>('files')
+
+// ---------------------------------------------------------------------------
+// DOCTOR (PROXMOX LXC & PERMISSIONS DIAGNOSTICS)
+// ---------------------------------------------------------------------------
+const doctorReport = ref<any>(null)
+const doctorLoading = ref(false)
+const doctorError = ref('')
+const copiedRemedyIndex = ref<number | null>(null)
+
+async function runDoctorScan() {
+  doctorLoading.value = true
+  doctorError.value = ''
+  try {
+    const res = await apiFetch<any>('/api/storage/doctor')
+    doctorReport.value = res
+  } catch (err: any) {
+    doctorError.value = err.message || 'Failed to run permissions doctor scan'
+  } finally {
+    doctorLoading.value = false
+  }
+}
+
+function copyRemedy(cmd: string, index: number) {
+  navigator.clipboard.writeText(cmd)
+  copiedRemedyIndex.value = index
+  setTimeout(() => {
+    copiedRemedyIndex.value = null
+  }, 2000)
+}
 
 // ---------------------------------------------------------------------------
 // 1. FILE MANAGER STATE
@@ -1088,6 +1117,19 @@ onMounted(async () => {
           <Database class="h-3.5 w-3.5 text-emerald-600" />
           <span>DockTun DB</span>
         </button>
+
+        <!-- 7. Permissions & LXC Doctor -->
+        <button
+          @click="activeTab = 'doctor'; if (!doctorReport && !doctorLoading) runDoctorScan()"
+          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition"
+          :class="activeTab === 'doctor' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-800'"
+        >
+          <ShieldAlert class="h-3.5 w-3.5 text-rose-500" />
+          <span>Permissions Doctor</span>
+          <span v-if="doctorReport?.error_count > 0" class="rounded bg-rose-500 text-white px-1.5 py-0.2 text-[10px] font-mono font-bold">{{ doctorReport.error_count }}</span>
+          <span v-else-if="doctorReport?.warning_count > 0" class="rounded bg-amber-500 text-white px-1.5 py-0.2 text-[10px] font-mono font-bold">{{ doctorReport.warning_count }}</span>
+          <span v-else-if="doctorReport" class="rounded bg-emerald-500 text-white px-1.5 py-0.2 text-[10px] font-mono font-bold">OK</span>
+        </button>
       </div>
     </div>
 
@@ -1979,6 +2021,183 @@ onMounted(async () => {
               <span>Manage Backups in Remote Access &rarr;</span>
             </router-link>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- TAB 7: PERMISSIONS & PROXMOX LXC DOCTOR                               -->
+    <!-- ===================================================================== -->
+    <div v-if="activeTab === 'doctor'" class="space-y-4">
+      <div class="cyber-card space-y-4">
+        <div class="flex items-center justify-between border-b border-slate-200 pb-3 flex-wrap gap-2">
+          <div class="flex items-center gap-2.5">
+            <div class="p-2 rounded-lg" :class="doctorReport?.healthy ? 'bg-emerald-500/10 text-emerald-600' : doctorReport?.error_count > 0 ? 'bg-rose-500/10 text-rose-600' : 'bg-amber-500/10 text-amber-600'">
+              <ShieldAlert class="h-5 w-5" />
+            </div>
+            <div>
+              <h3 class="text-sm font-bold text-slate-900 font-mono flex items-center gap-2">
+                <span>Proxmox LXC Mount &amp; Permission Doctor</span>
+                <span v-if="doctorReport?.is_lxc_container" class="rounded bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[10px] text-indigo-700 font-sans font-semibold">
+                  Proxmox LXC
+                </span>
+              </h3>
+              <p class="text-xs text-slate-500 mt-0.5">
+                Detects unprivileged LXC UID/GID ownership conflicts, read-only bind mounts, and database permissions.
+              </p>
+            </div>
+          </div>
+
+          <button
+            @click="runDoctorScan"
+            :disabled="doctorLoading"
+            class="cyber-btn text-xs flex items-center gap-2 !py-1.5 !px-3"
+          >
+            <RotateCcw class="h-3.5 w-3.5" :class="doctorLoading ? 'animate-spin' : ''" />
+            <span>{{ doctorLoading ? 'Scanning Storage...' : 'Run Diagnostics' }}</span>
+          </button>
+        </div>
+
+        <div v-if="doctorError" class="p-3 rounded-lg border border-rose-500/30 bg-rose-50 text-rose-700 text-xs font-mono">
+          {{ doctorError }}
+        </div>
+
+        <div v-if="doctorReport" class="space-y-4">
+          <!-- Overview Metrics -->
+          <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <div class="p-3 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-between">
+              <span class="text-xs text-slate-600">Health Status</span>
+              <span class="text-xs font-bold px-2 py-0.5 rounded" :class="doctorReport.healthy ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'">
+                {{ doctorReport.healthy ? 'HEALTHY' : 'ISSUES DETECTED' }}
+              </span>
+            </div>
+            <div class="p-3 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-between">
+              <span class="text-xs text-slate-600">Checks Performed</span>
+              <span class="text-xs font-bold font-mono text-slate-800">{{ doctorReport.checks_run }}</span>
+            </div>
+            <div class="p-3 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-between">
+              <span class="text-xs text-slate-600">Errors</span>
+              <span class="text-xs font-bold font-mono" :class="doctorReport.error_count > 0 ? 'text-rose-600 font-extrabold' : 'text-slate-800'">
+                {{ doctorReport.error_count }}
+              </span>
+            </div>
+            <div class="p-3 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-between">
+              <span class="text-xs text-slate-600">Warnings</span>
+              <span class="text-xs font-bold font-mono" :class="doctorReport.warning_count > 0 ? 'text-amber-600 font-extrabold' : 'text-slate-800'">
+                {{ doctorReport.warning_count }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Summary Message -->
+          <div class="p-3 rounded-lg border text-xs leading-relaxed font-mono" :class="doctorReport.healthy ? 'border-emerald-200 bg-emerald-50/50 text-emerald-800' : doctorReport.error_count > 0 ? 'border-rose-200 bg-rose-50/50 text-rose-800' : 'border-amber-200 bg-amber-50/50 text-amber-800'">
+            {{ doctorReport.summary }}
+          </div>
+
+          <!-- LXC Explanation banner if LXC or Warnings/Errors -->
+          <div v-if="doctorReport.is_lxc_container || doctorReport.warning_count > 0 || doctorReport.error_count > 0" class="p-3 rounded-lg border border-indigo-200 bg-indigo-50/30 text-xs space-y-1.5 text-slate-700">
+            <div class="font-semibold text-indigo-900 flex items-center gap-1.5">
+              <Info class="h-4 w-4 text-indigo-600 shrink-0" />
+              <span>Proxmox Unprivileged Container Storage Context</span>
+            </div>
+            <p class="text-slate-600 leading-relaxed">
+              In Proxmox VE unprivileged LXC containers, container <code class="font-mono bg-white px-1 py-0.2 rounded border">root (UID 0)</code> is mapped to host <code class="font-mono bg-white px-1 py-0.2 rounded border">UID 100000</code>. Bind mounted host folders owned by host root appear inside the container as <code class="font-mono bg-white px-1 py-0.2 rounded border">nobody:nogroup (65534:65534)</code>, which denies write permissions unless corrected on the Proxmox host.
+            </p>
+          </div>
+
+          <!-- Remediation Commands Box -->
+          <div v-if="doctorReport.remediations?.length > 0" class="space-y-2">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+              <Sparkles class="h-3.5 w-3.5 text-amber-500" />
+              <span>Recommended Fixes (Run on Proxmox VE Host)</span>
+            </h4>
+            <div class="space-y-2">
+              <div v-for="(rem, idx) in doctorReport.remediations" :key="idx" class="p-2.5 rounded-lg border border-slate-200 bg-slate-900 text-slate-100 font-mono text-xs flex items-center justify-between gap-3">
+                <div class="truncate">
+                  <div class="text-[10px] text-slate-400 mb-0.5">{{ rem.description }}</div>
+                  <code class="text-amber-300 font-semibold selection:bg-indigo-600">{{ rem.command }}</code>
+                </div>
+                <button
+                  @click="copyRemedy(rem.command, idx)"
+                  class="cyber-btn-secondary !bg-slate-800 hover:!bg-slate-700 !text-slate-200 !py-1 !px-2.5 shrink-0 text-xs flex items-center gap-1"
+                >
+                  <Check v-if="copiedRemedyIndex === idx" class="h-3.5 w-3.5 text-emerald-400" />
+                  <Copy v-else class="h-3.5 w-3.5" />
+                  <span>{{ copiedRemedyIndex === idx ? 'Copied' : 'Copy' }}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Storage Target Inspection Table -->
+          <div class="space-y-2 pt-2 border-t border-slate-200">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-slate-800">
+              Storage Inspection Findings ({{ doctorReport.checks?.length || 0 }})
+            </h4>
+
+            <div class="border border-slate-200 rounded-lg overflow-x-auto bg-white">
+              <table class="w-full text-left text-xs font-mono">
+                <thead class="bg-slate-50 border-b border-slate-200 text-slate-600 text-[11px]">
+                  <tr>
+                    <th class="p-2.5">Status</th>
+                    <th class="p-2.5">Category</th>
+                    <th class="p-2.5">Target &amp; Path</th>
+                    <th class="p-2.5">Ownership (UID:GID)</th>
+                    <th class="p-2.5 text-center">Read / Write</th>
+                    <th class="p-2.5">Diagnostics</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr v-for="(chk, i) in doctorReport.checks" :key="i" class="hover:bg-slate-50/70 transition">
+                    <td class="p-2.5 align-top">
+                      <span v-if="chk.status === 'ok'" class="inline-flex items-center gap-1 text-emerald-600 font-bold">
+                        <CheckCircle2 class="h-4 w-4" /> OK
+                      </span>
+                      <span v-else-if="chk.status === 'warning'" class="inline-flex items-center gap-1 text-amber-600 font-bold">
+                        <AlertTriangle class="h-4 w-4" /> WARN
+                      </span>
+                      <span v-else class="inline-flex items-center gap-1 text-rose-600 font-bold">
+                        <AlertCircle class="h-4 w-4" /> ERROR
+                      </span>
+                    </td>
+                    <td class="p-2.5 align-top">
+                      <span class="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase" :class="chk.category === 'database' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : chk.category === 'cloudflared' ? 'bg-cyan-50 text-cyan-700 border border-cyan-200' : chk.category === 'mount' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-indigo-50 text-indigo-700 border border-indigo-200'">
+                        {{ chk.category }}
+                      </span>
+                    </td>
+                    <td class="p-2.5 align-top">
+                      <div class="font-bold text-slate-900">{{ chk.name }}</div>
+                      <div class="text-[11px] text-slate-500 break-all select-all">{{ chk.path }}</div>
+                    </td>
+                    <td class="p-2.5 align-top whitespace-nowrap">
+                      <span :class="chk.uid === 65534 || chk.gid === 65534 ? 'text-rose-600 font-bold bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200' : 'text-slate-700'">
+                        {{ chk.owner || 'system' }}
+                      </span>
+                      <div class="text-[10px] text-slate-400">{{ chk.permissions }}</div>
+                    </td>
+                    <td class="p-2.5 align-top text-center whitespace-nowrap">
+                      <span class="inline-flex items-center gap-1">
+                        <span :class="chk.readable ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold'">{{ chk.readable ? 'R' : '-R' }}</span>
+                        <span>/</span>
+                        <span :class="chk.writable ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold'">{{ chk.writable ? 'W' : '-W' }}</span>
+                      </span>
+                    </td>
+                    <td class="p-2.5 align-top text-[11px]">
+                      <div class="text-slate-800 leading-relaxed">{{ chk.message }}</div>
+                      <div v-if="chk.remediation" class="mt-1 text-slate-500 font-mono text-[10px]">
+                        Fix: <code class="bg-slate-100 text-slate-800 px-1 py-0.2 rounded border">{{ chk.remediation }}</code>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div v-else-if="doctorLoading" class="py-12 text-center text-slate-500 space-y-2">
+          <RotateCcw class="h-6 w-6 animate-spin mx-auto text-indigo-600" />
+          <p class="text-xs font-mono">Running Proxmox LXC storage &amp; permission diagnostics...</p>
         </div>
       </div>
     </div>

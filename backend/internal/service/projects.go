@@ -553,6 +553,30 @@ func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
 		SanitizeComposeFile(sources[0])
 	}
 
+	// Pre-flight check: if running "up", verify host port collisions before execution
+	isUpAction := false
+	for _, arg := range args {
+		if arg == "up" {
+			isUpAction = true
+			break
+		}
+	}
+	if isUpAction && len(sources) > 0 {
+		if composeData, readErr := os.ReadFile(sources[0]); readErr == nil {
+			desired := ExtractDesiredPortsFromComposeContent(string(composeData))
+			if len(desired) > 0 {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				collisions, colErr := CheckPortCollisions(ctx, desired)
+				cancel()
+				if colErr == nil && len(collisions) > 0 {
+					for _, col := range collisions {
+						s.appendOutput(id, fmt.Sprintf("[WARN] Port conflict detected: port %d/%s desired for service '%s' is already in use by %s", col.Port, col.Protocol, col.ContainerName, col.OccupiedBy))
+					}
+				}
+			}
+		}
+	}
+
 	projectName := ""
 	if p, err := s.GetByID(id); err == nil {
 		projectName = p.Name
@@ -829,6 +853,10 @@ func (s *Projects) GetComposeFile(id int) (string, string, error) {
 }
 
 func (s *Projects) SaveComposeFile(id int, filename string, content string) error {
+	return s.SaveComposeFileWithUser(id, filename, content, "", 0)
+}
+
+func (s *Projects) SaveComposeFileWithUser(id int, filename string, content string, message string, userID int) error {
 	if filename == "" {
 		filename = "docker-compose.yml"
 	}
@@ -837,13 +865,34 @@ func (s *Projects) SaveComposeFile(id int, filename string, content string) erro
 			content = parsed.GenerateComposeYAML()
 		}
 	}
+
+	// Capture initial on-disk snapshot before first overwrite if no revisions recorded yet
+	SnapshotExistingComposeIfEmpty(s.db, s, id)
+
 	if err := s.SaveFile(id, filename, content); err != nil {
 		return err
 	}
 	if files, err := storedComposeSources(s.db, id); err == nil && len(files) == 0 {
 		rememberComposeSources(s.db, id, "", filename)
 	}
+
+	// Record versioned revision
+	if s.db != nil {
+		_, _ = RecordComposeRevision(s.db, id, filename, content, message, userID)
+	}
 	return nil
+}
+
+func (s *Projects) ListRevisions(id int) ([]ComposeRevision, error) {
+	return ListComposeRevisions(s.db, id)
+}
+
+func (s *Projects) GetRevision(id int, revID int) (*ComposeRevision, error) {
+	return GetComposeRevision(s.db, id, revID)
+}
+
+func (s *Projects) RollbackRevision(id int, revID int, userID int) (*ComposeRevision, error) {
+	return RollbackComposeRevision(s, id, revID, userID)
 }
 
 func (s *Projects) GetEnvFile(id int) (string, error) {

@@ -169,7 +169,7 @@ func main() {
 	statusHandler := handler.NewStatus(cfdSvc, cfg)
 	controlHandler := handler.NewControl(cfdSvc, auditSvc)
 	logsHandler := handler.NewLogs(hub, cfg.JWTSecret).WithSessionValidator(func(raw string) error { _, err := authHandler.Sessions().Verify(raw, "access"); return err })
-	configHandler := handler.NewConfig(configSvc, auditSvc, cfAPISvc)
+	configHandler := handler.NewConfig(configSvc, auditSvc, cfAPISvc).WithDockerContainers(dockerContainersSvc)
 	tcpHandler := handler.NewTcpAccess(cfdSvc)
 	auditHandler := handler.NewAudit(auditSvc)
 	healthHandler := handler.NewHealthCheck(cfg.CloudflaredConfig).WithActiveConfig(cfAPISvc, configSvc)
@@ -208,6 +208,15 @@ func main() {
 		log.Fatalf("recovery startup reconciliation: %v", err)
 	}
 	support := &handler.Support{Service: &service.SupportBundles{Directory: filepath.Join(dataDir, "support"), Operations: operations, Config: cfg}}
+	disasterRecoverySvc := service.NewDisasterRecoveryService(database, cfg)
+	disasterRecoveryHandler := handler.NewDisasterRecovery(disasterRecoverySvc, auditSvc)
+
+	// Ingress Network Auto-Healer: reconcile Cloudflare ingress targets with Docker network
+	go func() {
+		if err := dockerContainersSvc.ReconcileIngressNetworks(context.Background()); err != nil {
+			log.Printf("[docktun] auto-heal startup notice: %v", err)
+		}
+	}()
 
 	r.Get("/healthz", handler.Readiness(database))
 	r.Get("/downloads/recovery/{id}", recovery.NativeDownload)
@@ -239,6 +248,8 @@ func main() {
 		r.Post("/api/recovery/{id}/restore", recovery.Restore)
 		r.Post("/api/support-bundles", support.Create)
 		r.Get("/api/support-bundles/{id}", support.Download)
+		r.Get("/api/system/backup/export", disasterRecoveryHandler.Export)
+		r.Post("/api/system/backup/restore", disasterRecoveryHandler.Restore)
 		r.Get("/api/operations", maintenance.History)
 		r.Post("/api/operations/{id}/acknowledge", maintenance.Acknowledge)
 		r.Get("/api/docker/containers/{id}/update-plan", maintenance.Plan)
@@ -340,6 +351,8 @@ func main() {
 		r.Put("/api/projects/{id}/file", projectsHandler.FileSave)
 		r.Post("/api/projects/{id}/file", projectsHandler.FileCreate)
 		r.Delete("/api/projects/{id}/file", projectsHandler.FileDelete)
+		r.Get("/api/projects/{id}/revisions", projectsHandler.GetRevisions)
+		r.Post("/api/projects/{id}/revisions/{revID}/rollback", projectsHandler.RollbackRevision)
 
 		r.Get("/api/docker/containers", dockerContainersHandler.List)
 		r.Get("/api/docker/containers/{id}", dockerContainersHandler.Details)
@@ -383,6 +396,7 @@ func main() {
 		r.Post("/api/storage/build-cache/prune", storageHandler.PruneBuildCache)
 		r.Post("/api/storage/reclaim", storageHandler.ReclaimBatch)
 		r.Post("/api/storage/vacuum-db", storageHandler.VacuumDB)
+		r.Get("/api/storage/doctor", storageHandler.GetDoctor)
 
 		// Storage File Manager (browse/edit volumes, containers, projects, host storage)
 		r.Get("/api/storage/files/targets", storageHandler.ListTargets)
@@ -409,6 +423,7 @@ func main() {
 		r.Get("/api/cloudflare/access-apps", cloudflareHandler.ListAccessApps)
 		r.Post("/api/cloudflare/access-apps", cloudflareHandler.CreateAccessApp)
 		r.Delete("/api/cloudflare/access-apps/{id}", cloudflareHandler.DeleteAccessApp)
+		r.Post("/api/cloudflare/reconcile-networks", configHandler.ReconcileNetworks)
 	})
 
 	// ---------------------------------------------------------------------------

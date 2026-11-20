@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -13,13 +16,19 @@ import (
 )
 
 type Config struct {
-	mgr   *service.ConfigManager
-	audit *service.AuditLogger
-	cfAPI *service.CloudflareAPI
+	mgr        *service.ConfigManager
+	audit      *service.AuditLogger
+	cfAPI      *service.CloudflareAPI
+	containers *service.DockerContainers
 }
 
 func NewConfig(mgr *service.ConfigManager, audit *service.AuditLogger, cfAPI *service.CloudflareAPI) *Config {
 	return &Config{mgr: mgr, audit: audit, cfAPI: cfAPI}
+}
+
+func (h *Config) WithDockerContainers(containers *service.DockerContainers) *Config {
+	h.containers = containers
+	return h
 }
 
 func (h *Config) Get(w http.ResponseWriter, r *http.Request) {
@@ -72,8 +81,37 @@ func (h *Config) Update(w http.ResponseWriter, r *http.Request) {
 		go h.cfAPI.AutoSyncIngressDNS(h.mgr)
 	}
 
+	// Trigger ingress network auto-healing
+	if h.containers != nil {
+		go func() {
+			if err := h.containers.ReconcileIngressNetworks(context.Background()); err != nil {
+				log.Printf("[docktun] auto-heal error on config update: %v", err)
+			}
+		}()
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (h *Config) ReconcileNetworks(w http.ResponseWriter, r *http.Request) {
+	if h.containers == nil {
+		http.Error(w, `{"error":"docker containers service not available"}`, http.StatusInternalServerError)
+		return
+	}
+	res, err := h.containers.ReconcileIngressNetworksDetailed(r.Context())
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	userID, _ := r.Context().Value("user_id").(int)
+	if h.audit != nil {
+		h.audit.Log(userID, "cloudflare_reconcile_networks", fmt.Sprintf("connected %d containers to %s", len(res.Connected), res.Network), r.RemoteAddr)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
 }
 
 func (h *Config) Validate(w http.ResponseWriter, r *http.Request) {

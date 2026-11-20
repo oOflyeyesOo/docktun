@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Plus, RefreshCw, Trash2, ArrowUp, ArrowDown, Code2, Eye, Activity, Copy, Pause, Play, ExternalLink } from 'lucide-vue-next'
+import { Plus, RefreshCw, Trash2, ArrowUp, ArrowDown, Code2, Eye, Activity, Copy, Pause, Play, ExternalLink, Network } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 import { cloneConfiguration, effectiveOriginOption, originHost, originLocation, readIngressYaml, setOriginOption, validateIngressConfiguration, writeIngressYaml } from '../lib/cloudflare-ingress.mjs'
 const props = defineProps<{ remote: boolean; tunnelId?: string; containers?: any[] }>()
@@ -11,7 +11,28 @@ const config = ref<any>(null), rows = ref<Row[]>([])
 const loading = ref(false), saving = ref(false), rawMode = ref(false), rawDraft = ref('')
 const syncDNS = ref(true), revision = ref(''), sourceContent = ref(''), editingContent = ref('')
 const baseline = ref(''), error = ref(''), notice = ref<any>(null), probing = ref<number | null>(null)
+const healing = ref(false)
+const healStatus = ref<{
+  network?: string
+  connected?: string[]
+  already_connected?: string[]
+  skipped?: string[]
+  error?: string
+} | null>(null)
 let nextKey = 0, requestVersion = 0
+
+async function healNetworks() {
+  healing.value = true
+  healStatus.value = null
+  try {
+    const res = await apiFetch<any>('/api/cloudflare/reconcile-networks', { method: 'POST' })
+    healStatus.value = res
+  } catch (e: any) {
+    healStatus.value = { error: e.message }
+  } finally {
+    healing.value = false
+  }
+}
 const currentConfig = () => ({ ...config.value, ingress: rows.value.map(row => row.value) })
 const fingerprint = () => rawMode.value ? rawDraft.value : JSON.stringify(currentConfig())
 const dirty = computed(() => !!baseline.value && fingerprint() !== baseline.value)
@@ -157,7 +178,37 @@ const containerMatch = (target: string) => (props.containers || []).find(item =>
     <header class="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div><p class="text-[10px] uppercase tracking-wider font-semibold text-indigo-600">{{ remote ? 'Cloudflare-managed configuration' : 'Local YAML configuration' }}</p><h2 class="mt-1 text-lg font-semibold text-slate-900">Hostname routes &amp; origin services</h2><p class="mt-1 text-xs leading-relaxed text-slate-500">Route to a Docker container, another VM, a LAN address, or a reachable hostname. Targets are used exactly as entered.</p></div>
-        <button type="button" class="cyber-btn-secondary text-xs" :disabled="loading || saving" @click="reload"><RefreshCw class="inline h-3.5 w-3.5 mr-1" :class="{ 'animate-spin': loading }" />Reload routes</button>
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" class="cyber-btn-secondary text-xs" :disabled="loading || saving || healing" @click="healNetworks" title="Connect target Docker containers to the tunnel network">
+            <Network class="inline h-3.5 w-3.5 mr-1 text-indigo-600" :class="{ 'animate-spin': healing }" />
+            {{ healing ? 'Healing…' : 'Heal Ingress Networks' }}
+          </button>
+          <button type="button" class="cyber-btn-secondary text-xs" :disabled="loading || saving || healing" @click="reload"><RefreshCw class="inline h-3.5 w-3.5 mr-1" :class="{ 'animate-spin': loading }" />Reload routes</button>
+        </div>
+      </div>
+      <div v-if="healStatus" class="mt-3 rounded-xl border p-3 text-xs" :class="healStatus.error ? 'border-red-200 bg-red-50 text-red-800' : 'border-indigo-200 bg-indigo-50/70 text-indigo-900'">
+        <div class="flex items-center justify-between gap-2">
+          <span class="font-semibold flex items-center gap-1.5">
+            <Network class="h-3.5 w-3.5 text-indigo-600" />
+            Network Reconciliation Status {{ healStatus.network ? `· Network '${healStatus.network}'` : '' }}
+          </span>
+          <button type="button" class="text-[11px] underline opacity-70 hover:opacity-100" @click="healStatus = null">Dismiss</button>
+        </div>
+        <p v-if="healStatus.error" class="mt-1 font-medium">{{ healStatus.error }}</p>
+        <div v-else class="mt-1.5 space-y-1 text-[11px]">
+          <p v-if="healStatus.connected && healStatus.connected.length" class="text-emerald-700 font-medium">
+            ✓ Successfully attached to network: {{ healStatus.connected.join(', ') }}
+          </p>
+          <p v-if="healStatus.already_connected && healStatus.already_connected.length" class="text-slate-600">
+            Already attached to network: {{ healStatus.already_connected.join(', ') }}
+          </p>
+          <p v-if="healStatus.skipped && healStatus.skipped.length" class="text-slate-500">
+            Skipped (not running or external host): {{ healStatus.skipped.join(', ') }}
+          </p>
+          <p v-if="!healStatus.connected?.length && !healStatus.already_connected?.length && !healStatus.skipped?.length" class="text-slate-600">
+            All ingress container targets are verified and attached to the connector network.
+          </p>
+        </div>
       </div>
       <div class="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-500"><span class="rounded-md bg-slate-50 px-2 py-1">Container: <code>http://app:8080</code></span><span class="rounded-md bg-slate-50 px-2 py-1">VM / LAN: <code>http://192.168.1.50:8080</code></span><span class="rounded-md bg-slate-50 px-2 py-1">HTTPS: <code>https://server.lan:8443</code></span></div>
       <p class="mt-3 text-[11px] leading-relaxed text-slate-500">The cloudflared connector must be able to reach the target. <code>localhost</code> means the connector itself. Rule order matters; the first matching hostname and path wins.</p>

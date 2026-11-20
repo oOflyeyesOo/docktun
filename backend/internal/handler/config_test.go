@@ -29,3 +29,14 @@ func TestUnconfiguredCloudflareIsNotReadFailure(t *testing.T) {
 		t.Fatal("hid a real read failure", response.Code)
 	}
 }
+
+func TestReconcileNetworksEndpointWithoutContainersService(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yml")
+	h := NewConfig(service.NewConfigManager(&config.Config{CloudflaredConfig: path}, nil), nil, nil)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/cloudflare/reconcile-networks", nil)
+	h.ReconcileNetworks(rec, req)
+	if rec.Code != 500 {
+		t.Fatalf("expected 500 when containers service is nil, got %d", rec.Code)
+	}
+}
