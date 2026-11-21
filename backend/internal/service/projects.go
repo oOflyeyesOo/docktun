@@ -57,6 +57,11 @@ func NewProjects(database *db.DB, selfPath string) *Projects {
 	return &Projects{db: database, selfPath: selfPath, outputs: make(map[int]*projectOutput), runDocker: providerDocker}
 }
 
+// SetRequireMountInspectionForTest overrides mount inspection requirements for host-level test environments.
+func (s *Projects) SetRequireMountInspectionForTest(fn func() bool) {
+	s.requireMountInspection = fn
+}
+
 func (s *Projects) GetOutput(id int) ([]string, bool) {
 	s.outMu.RLock()
 	defer s.outMu.RUnlock()

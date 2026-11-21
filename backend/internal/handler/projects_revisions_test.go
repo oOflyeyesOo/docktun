@@ -34,6 +34,7 @@ func TestProjectsHandler_RevisionsAndRollback(t *testing.T) {
 	projectID := int(pID)
 
 	projectsSvc := service.NewProjects(database, tempDir)
+	projectsSvc.SetRequireMountInspectionForTest(func() bool { return false })
 	auditSvc := service.NewAuditLogger(database)
 	h := NewProjects(projectsSvc, auditSvc)
 
