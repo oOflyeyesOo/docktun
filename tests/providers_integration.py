@@ -115,14 +115,34 @@ try:
     with urllib.request.urlopen(req) as response:
         payload = response.read()
         assert connector.encode() not in payload and json.loads(payload)['has_token']
+    # Legacy connectors can live on a different origin network from DockTun.
+    # Authentication migration must preserve those routes and aliases.
+    inner('network', 'create', 'legacy-origin')
+    inner('network', 'create', 'legacy-extra')
+    inner('rm', 'docktun-cloudflared')
+    legacy_connector = inner('run', '-d', '--name', 'docktun-cloudflared',
+                             '--network', 'legacy-origin', '--network-alias', 'connector-origin',
+                             '--mount', 'type=volume,source=scoped-cloudflare,target=/etc/cloudflared,readonly',
+                             'cloudflare/cloudflared:latest')
+    inner('network', 'connect', '--alias', 'connector-extra', 'legacy-extra', 'docktun-cloudflared')
+    inner('run', '-d', '--name', 'legacy-web', '--network', 'legacy-origin',
+          '--network-alias', 'mediastorm', 'alpine:3.23', 'sleep', '3600')
     request('/api/remote-access/tailscale/control', {'action': 'start'})
     request('/api/control/start', {})
+    migrated = json.loads(inner('inspect', 'docktun-cloudflared'))[0]
+    assert migrated['Id'] != legacy_connector
+    assert set(migrated['NetworkSettings']['Networks']) == {'legacy-origin', 'legacy-extra'}, migrated
+    assert 'connector-origin' in migrated['NetworkSettings']['Networks']['legacy-origin']['Aliases']
+    assert 'connector-extra' in migrated['NetworkSettings']['Networks']['legacy-extra']['Aliases']
+    inner('exec', 'docktun-cloudflared', 'nslookup', 'mediastorm')
+
     request('/api/remote-access/wireguard/control', {'action': 'start'})
     for name in ['docktun-cloudflared', 'docktun-tailscale', 'docktun-wireguard']:
         assert state(name) == 'running', name
         attached = json.loads(inner('inspect', name))[0]['NetworkSettings']['Networks']
-        assert network in attached, attached
-        assert attached[network]['NetworkID'] == json.loads(inner('network', 'inspect', network))[0]['Id']
+        expected_network = 'legacy-origin' if name == 'docktun-cloudflared' else network
+        assert expected_network in attached, attached
+        assert attached[expected_network]['NetworkID'] == json.loads(inner('network', 'inspect', expected_network))[0]['Id']
     started_at = inner('inspect', '--format', '{{.State.StartedAt}}', 'docktun-cloudflared')
     request('/api/docker/network/reconcile', {})
     assert inner('inspect', '--format', '{{.State.StartedAt}}', 'docktun-cloudflared') == started_at
@@ -153,6 +173,6 @@ try:
     request('/api/control/restart', {})
     assert state('docktun-cloudflared') == 'running'
     assert request('/api/status')['running'] is True
-    print('Providers passed: prepared stopped, all three independently running, credentials required, exact named/bind mounts, no token disclosure, restart persistence, missing Cloudflare recreated')
+    print('Providers passed: prepared stopped, all three independently running, credentials required, exact named/bind mounts, no token disclosure, restart persistence, legacy origin networks/aliases, missing Cloudflare recreated')
 finally:
     subprocess.run(['docker', 'rm', '-f', '-v', engine], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

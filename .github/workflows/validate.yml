@@ -63,3 +63,5 @@ jobs:
       - run: python3 tests/application_update_integration.py
       - run: python3 tests/transfers_update_integration.py
       - run: python3 tests/service_updates_integration.py
+      - run: python3 tests/providers_integration.py
+      - run: python3 tests/stack_deletion_integration.py

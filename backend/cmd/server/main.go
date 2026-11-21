@@ -121,7 +121,7 @@ func main() {
 	})
 
 	r := chi.NewRouter()
-	r.Use(chimw.Logger)
+	r.Use(middleware.RequestLogger)
 	r.Use(chimw.Recoverer)
 	r.Use(middleware.SecurityHeaders)
 	r.Use(cors.Handler(cors.Options{

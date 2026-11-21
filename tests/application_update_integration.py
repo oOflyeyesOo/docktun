@@ -38,7 +38,8 @@ try:
  wait(lambda:request('/healthz'))
  secret=docker('exec',core,'cat','/app/data/setup.token')
  token=request('/api/setup/complete',{'setup_token':secret,'admin_username':'owner','admin_password':'fixture-password-123'})['access_token']
- dbtag=registry_url+'/'+prefix+'/postgres:current';apptag=registry_url+'/'+prefix+'/app:current';images += [dbtag,apptag]
+ # An aliased database image must receive the same migration guard as postgres.
+ dbtag=registry_url+'/'+prefix+'/database-alias:current';apptag=registry_url+'/'+prefix+'/app:current';images += [dbtag,apptag]
  docker('build','-t',dbtag,'-',input='FROM postgres:17-alpine\nLABEL fixture.version="old"\n');docker('push',dbtag)
  containers.append(db)
  docker('run','-d','--name',db,'--network',dbnet,'--network-alias','postgres','-e','POSTGRES_PASSWORD=fixture-db-password','-e','POSTGRES_DB=fixture','-v',pgdata+':/var/lib/postgresql/data',dbtag)
@@ -93,7 +94,7 @@ HTTPServer(('0.0.0.0',8080),Handler).serve_forever()
   docker('build','-t',dbtag,'-',input='FROM postgres:17-alpine\nENV PG_MAJOR=18\nLABEL fixture.version="migration-required"\n');docker('push',dbtag)
   request('/api/docker/containers/'+dbgood['Id']+'/update',{},expected=500)
   assert inspect(db)['Id']==dbgood['Id'];assert wait(login)=='v2:persistent-login'
-  print('Database migration guard passed: changed-major candidate refused before replacing or stopping the working database',flush=True)
+  print('Aliased database migration guard passed: changed-major candidate refused before replacing or stopping the working database',flush=True)
   # Bad candidate: original ID and database connectivity survive rollback.
   good=inspect(app);build('broken',bad=True)
   request('/api/docker/containers/'+good['Id']+'/update',{},expected=500)

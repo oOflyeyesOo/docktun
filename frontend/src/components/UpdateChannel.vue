@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useApi } from '../composables/useApi'
+import { updateMonitorOutcome } from '../lib/update-monitor.mjs'
 import {
   RefreshCw,
   ArrowUpCircle,
@@ -32,7 +33,7 @@ const dismissedError = ref(false)
 
 const activeError = computed(() => {
   if (dismissedError.value) return ''
-  return error.value || updateState.value?.error || ''
+  return error.value || updateState.value?.error || (updateMonitorOutcome(updateState.value) === 'failed' ? updateState.value.message : '') || ''
 })
 
 function dismissError() {
@@ -64,6 +65,10 @@ async function fetchStatus() {
     channelState.value = chanData
     channel.value = chanData.channel || 'stable'
     updateState.value = statusData
+    if (updateMonitorOutcome(statusData) === 'pending') {
+      installing.value = true
+      pollReconnection()
+    }
   } catch (e: any) {
     error.value = e.message
   }
@@ -132,45 +137,57 @@ async function startInstall() {
   }
 }
 
-let reconnectTimer: ReturnType<typeof setInterval> | null = null
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+let monitorRevision = 0
 
 function pollReconnection() {
-  if (reconnectTimer) clearInterval(reconnectTimer)
-  reconnecting.value = true
-  let attempts = 0
-  const maxAttempts = 60
+  if (reconnectTimer) clearTimeout(reconnectTimer)
+  const revision = ++monitorRevision
+  const deadline = Date.now() + 15 * 60 * 1000
+  reconnecting.value = false
 
-  reconnectTimer = setInterval(async () => {
-    attempts++
+  async function poll() {
+    if (revision !== monitorRevision) return
     try {
-      const res = await fetch('/healthz', { cache: 'no-store' })
-      if (res.ok) {
-        if (reconnectTimer) clearInterval(reconnectTimer)
-        reconnectTimer = null
-        message.value = 'Update successful! Reloading dashboard...'
-        setTimeout(() => {
-          window.location.reload()
-        }, 1500)
+      const state: any = await apiFetch('/api/self-update')
+      if (revision !== monitorRevision) return
+      updateState.value = state
+      reconnecting.value = false
+      message.value = state.message || 'Waiting for the update worker...'
+      const outcome = updateMonitorOutcome(state)
+      if (outcome === 'complete') {
+        installing.value = false
+        message.value = 'Update complete. Reloading dashboard...'
+        reconnectTimer = setTimeout(() => window.location.reload(), 1500)
+        return
+      }
+      if (outcome === 'idle') {
+        installing.value = false
+        return
+      }
+      if (outcome === 'failed') {
+        installing.value = false
+        error.value = state.message || 'The update needs attention.'
+        return
       }
     } catch {
-      // Waiting for container to finish restarting
+      if (revision !== monitorRevision) return
+      reconnecting.value = true
     }
-
-    if (attempts >= maxAttempts) {
-      if (reconnectTimer) clearInterval(reconnectTimer)
-      reconnectTimer = null
-      reconnecting.value = false
-      installing.value = false
-      error.value = 'Reconnection timed out. Please refresh the page manually once the container restarts.'
+    if (Date.now() >= deadline) {
+      installing.value = reconnecting.value = false
+      error.value = 'Update monitoring timed out. Refresh to check the worker status.'
+      return
     }
-  }, 2500)
+    reconnectTimer = setTimeout(poll, 2500)
+  }
+  reconnectTimer = setTimeout(poll, 1000)
 }
 
 onUnmounted(() => {
-  if (reconnectTimer) {
-    clearInterval(reconnectTimer)
-    reconnectTimer = null
-  }
+  monitorRevision++
+  if (reconnectTimer) clearTimeout(reconnectTimer)
+  reconnectTimer = null
 })
 
 const isUpdateAvailable = computed(() => {
@@ -280,7 +297,7 @@ const lastCheckedText = computed(() => {
           </span>
         </div>
         <div class="text-[10px] text-slate-500">
-          <span v-if="lastCheckedText">Last checked today at {{ lastCheckedText }}</span>
+          <span v-if="lastCheckedText">Last checked at {{ lastCheckedText }}</span>
           <span v-else>No check recorded yet</span>
         </div>
       </div>
@@ -296,7 +313,7 @@ const lastCheckedText = computed(() => {
           </select>
           <button
             @click="saveChannel"
-            :disabled="busy || !channelState || channel === channelState?.channel"
+            :disabled="busy || checking || installing || reconnecting || !channelState || channel === channelState?.channel"
             class="cyber-btn-secondary py-1 px-2.5 text-xs shrink-0"
           >
             Save
