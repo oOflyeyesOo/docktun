@@ -362,8 +362,8 @@ func (s *SelfUpdater) Check(ctx context.Context) (SelfUpdateState, error) {
 		return state, diagErr
 	}
 
-	// Support environments running from local source or custom build
-	if isLocalBuildContainer(c) {
+	// Support environments running from local source or custom build without explicit candidate overrides
+	if !s.Channel().Override && isLocalBuildContainer(c) {
 		state := SelfUpdateState{
 			Phase:        "ready",
 			LocalBuild:   true,
@@ -434,6 +434,9 @@ func (s *SelfUpdater) Check(ctx context.Context) (SelfUpdateState, error) {
 	state.Phase = "ready"
 	state.Checked = true
 	state.Available = strings.TrimSpace(out) != c.Image
+	if isLocalBuildContainer(c) {
+		state.LocalBuild = true
+	}
 	state.Message = "DockTun is up to date."
 	if state.Available {
 		state.Message = "An update is ready to install. The dashboard will briefly reconnect."

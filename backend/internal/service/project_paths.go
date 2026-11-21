@@ -175,7 +175,11 @@ func (directory projectDirectory) open(create bool) (*os.Root, error) {
 				return nil, err
 			}
 		}
-		return base.OpenRoot(relative)
+		sub, err := base.OpenRoot(relative)
+		if err != nil {
+			return nil, err
+		}
+		_ = sub.Close()
 	}
 	if create {
 		if err := os.MkdirAll(directory.Path, 0755); err != nil {
