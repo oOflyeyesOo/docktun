@@ -23,7 +23,7 @@ base = ''
 def docker(*args, input=None, timeout=240):
     result = subprocess.run(['docker', *map(str, args)], input=input, text=True, capture_output=True, timeout=timeout)
     if result.returncode:
-        raise RuntimeError(result.stderr[:2000])
+        raise RuntimeError((result.stderr or result.stdout)[:2000])
     return result.stdout.strip()
 
 def inner(*args, input=None):
@@ -134,7 +134,18 @@ try:
     assert set(migrated['NetworkSettings']['Networks']) == {'legacy-origin', 'legacy-extra'}, migrated
     assert 'connector-origin' in migrated['NetworkSettings']['Networks']['legacy-origin']['Aliases']
     assert 'connector-extra' in migrated['NetworkSettings']['Networks']['legacy-extra']['Aliases']
-    inner('exec', 'docktun-cloudflared', 'nslookup', 'mediastorm')
+    origin_ip = json.loads(inner('inspect', 'legacy-web'))[0]['NetworkSettings']['Networks']['legacy-origin']['IPAddress']
+    lookup_error = None
+    for _ in range(30):
+        try:
+            lookup = inner('exec', 'docktun-cloudflared', 'nslookup', '-type=A', 'mediastorm')
+            assert origin_ip in lookup.split(), lookup
+            break
+        except (RuntimeError, AssertionError) as error:
+            lookup_error = error
+            time.sleep(1)
+    else:
+        raise AssertionError(f'migrated connector could not resolve {origin_ip}: {lookup_error}')
 
     request('/api/remote-access/wireguard/control', {'action': 'start'})
     for name in ['docktun-cloudflared', 'docktun-tailscale', 'docktun-wireguard']:
