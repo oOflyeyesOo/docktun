@@ -138,7 +138,7 @@ try:
     lookup_error = None
     for _ in range(30):
         try:
-            lookup = inner('exec', 'docktun-cloudflared', 'nslookup', '-type=A', 'mediastorm')
+            lookup = inner('exec', 'docktun-cloudflared', 'nslookup', '-type=A', 'mediastorm.')
             assert origin_ip in lookup.split(), lookup
             break
         except (RuntimeError, AssertionError) as error:
