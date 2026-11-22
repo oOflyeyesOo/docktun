@@ -341,11 +341,10 @@ func (s *DockerContainers) checkGitUpstream(ctx context.Context, info ContainerG
 			res.UpdateAvailable = false
 			res.Error = ""
 		} else {
-			res.UpdateAvailable = true
 			if commitMsg != "" {
-				res.Error = fmt.Sprintf("Upstream git commit %s available (%s)", remoteSHA, commitMsg)
+				res.Error = fmt.Sprintf("Upstream git commit %s available for a source build (%s)", remoteSHA, commitMsg)
 			} else {
-				res.Error = fmt.Sprintf("Upstream git commit %s available", remoteSHA)
+				res.Error = fmt.Sprintf("Upstream git commit %s available for a source build", remoteSHA)
 			}
 		}
 	} else {

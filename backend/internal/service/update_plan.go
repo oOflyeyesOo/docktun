@@ -36,9 +36,10 @@ func operationContext() (context.Context, context.CancelFunc) {
 }
 
 type recoveryImageInfo struct {
-	Config      struct{ Env []string }
-	RepoTags    []string
-	RepoDigests []string
+	OS, Architecture, Variant string
+	Config                    struct{ Env []string }
+	RepoTags                  []string
+	RepoDigests               []string
 }
 
 func inspectUpdateImage(ctx context.Context, id string) (recoveryImageInfo, error) {
@@ -88,12 +89,24 @@ func databaseMajor(image string, env []string) (string, string) {
 			return family, parts[0]
 		}
 	}
+	switch family {
+	case "postgres", "mysql", "mariadb":
+		return family, ""
+	}
 	return "", ""
 }
 func validateDatabaseImageTransition(ctx context.Context, old updateContainer, candidate string) error {
 	image, _ := old.Config["Image"].(string)
-	familyName := strings.Split(path.Base(strings.Split(image, "@")[0]), ":")[0]
-	if familyName != "postgres" && familyName != "mysql" && familyName != "mariadb" {
+	metadata, err := inspectUpdateImage(ctx, old.Image)
+	if err != nil {
+		// Container environment remains available when a locally built image
+		// was removed from the daemon's metadata store.
+		for _, value := range interfaceStrings(old.Config["Env"]) {
+			metadata.Config.Env = append(metadata.Config.Env, value)
+		}
+	}
+	familyName, _ := databaseMajor(image, metadata.Config.Env)
+	if familyName == "" {
 		return nil
 	}
 	family, major, err := databaseContainerVersion(ctx, old)

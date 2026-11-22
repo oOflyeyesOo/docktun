@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -16,7 +15,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -158,12 +156,12 @@ type ContainerDetail struct {
 }
 
 type ContainerResources struct {
-	CPUs              float64 `json:"cpus"`                // e.g. 1.5, 0 = unlimited
-	MemoryBytes       int64   `json:"memory_bytes"`        // e.g. 536870912 (512MB), 0 = unlimited
-	MemoryReservation int64   `json:"memory_reservation"`  // soft limit in bytes
-	MemoryHuman       string  `json:"memory_human"`        // e.g. "512 MiB" or "Unlimited"
-	RestartPolicy     string  `json:"restart_policy"`      // "no", "on-failure", "always", "unless-stopped"
-	RestartRetries    int     `json:"restart_retries"`     // maximum retry count
+	CPUs              float64 `json:"cpus"`               // e.g. 1.5, 0 = unlimited
+	MemoryBytes       int64   `json:"memory_bytes"`       // e.g. 536870912 (512MB), 0 = unlimited
+	MemoryReservation int64   `json:"memory_reservation"` // soft limit in bytes
+	MemoryHuman       string  `json:"memory_human"`       // e.g. "512 MiB" or "Unlimited"
+	RestartPolicy     string  `json:"restart_policy"`     // "no", "on-failure", "always", "unless-stopped"
+	RestartRetries    int     `json:"restart_retries"`    // maximum retry count
 }
 
 type cfOriginRequest struct {
@@ -1938,14 +1936,9 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 		s.saveUpdateToDB(res)
 		return res, nil
 	}
-	// 1. Detect if this service is backed by a Git repository
+	// Published images take precedence over source commits. A Git lookup is
+	// still available below for applications that are built locally.
 	gitInfo := s.getContainerGitInfo(detail)
-	if isLocalOrCustomImage(detail.Image) && (gitInfo.RepoURL != "" || gitInfo.LocalDir != "") {
-		if gitRes, ok := s.checkGitUpstream(ctx, gitInfo, detail); ok {
-			s.saveUpdateToDB(gitRes)
-			return gitRes, nil
-		}
-	}
 	// 0. Detect local DockTun image tag (e.g. "docktun:latest" or "docktun" without remote registry repo)
 	if isLocalDocktunImage(detail.Image) {
 		localCommit := getLocalGitCommit(s.cfg.SelfPath, detail)
@@ -1955,7 +1948,7 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 			if localCommit != "" {
 				res.CurrentDigest = localCommit
 				if !strings.HasPrefix(commitSHA, localCommit) && !strings.HasPrefix(localCommit, commitSHA) {
-					res.UpdateAvailable = true
+					res.UpdateAvailable = false
 					res.Error = fmt.Sprintf("Upstream commit %s available (%s)", commitSHA, commitMsg)
 				} else {
 					res.UpdateAvailable = false
@@ -1976,93 +1969,47 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 		return res, nil
 	}
 
-	// 1. Inspect local image RepoDigests and ID
-	inspectCmd := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}\t{{.Id}}", detail.Image)
-	var localDigests []string
-	if out, err := inspectCmd.Output(); err == nil {
-		parts := strings.Split(strings.TrimSpace(string(out)), "\t")
-		if len(parts) >= 1 {
-			var repoDigests []string
-			if json.Unmarshal([]byte(parts[0]), &repoDigests) == nil {
-				for _, rd := range repoDigests {
-					if idx := strings.Index(rd, "@"); idx != -1 {
-						localDigests = append(localDigests, rd[idx+1:])
-					} else {
-						localDigests = append(localDigests, rd)
-					}
-				}
-			}
-		}
-		if len(parts) >= 2 {
-			localId := strings.TrimSpace(parts[1])
-			if localId != "" {
-				localDigests = append(localDigests, localId)
-			}
-		}
-	}
-
-	// If localDigests is still empty, inspect the container's running image ID directly
-	if len(localDigests) == 0 && detail.ID != "" {
-		contInspectCmd := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{.Image}}", detail.ID)
-		if cOut, cErr := contInspectCmd.Output(); cErr == nil {
-			cImgID := strings.TrimSpace(string(cOut))
-			if cImgID != "" {
-				localDigests = append(localDigests, cImgID)
-				imgCmd := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{json .RepoDigests}}", cImgID)
-				if iOut, iErr := imgCmd.Output(); iErr == nil {
-					var repoDigests []string
-					if json.Unmarshal([]byte(strings.TrimSpace(string(iOut))), &repoDigests) == nil {
-						for _, rd := range repoDigests {
-							if idx := strings.Index(rd, "@"); idx != -1 {
-								localDigests = append(localDigests, rd[idx+1:])
-							} else {
-								localDigests = append(localDigests, rd)
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	if len(localDigests) > 0 {
-		res.CurrentDigest = localDigests[0]
-	} else if detail.CurrentDigest != "" {
-		res.CurrentDigest = detail.CurrentDigest
-		localDigests = append(localDigests, detail.CurrentDigest)
-	}
-
-	// 2. Fetch remote manifest digest
-	reg, repo, tag := parseImageRef(detail.Image)
-	latestDigest, subDigests, err := fetchRemoteManifestDigest(ctx, reg, repo, tag)
+	// Compare the image Docker actually attached to the container, even if
+	// someone has already pulled a newer image under the same local tag.
+	running, err := inspectUpdateContainer(ctx, detail.ID)
 	if err != nil {
-		// Fallback: use docker manifest inspect CLI
-		manifestCmd := exec.CommandContext(ctx, "docker", "manifest", "inspect", detail.Image)
-		if mOut, mErr := manifestCmd.Output(); mErr == nil {
-			var mDoc struct {
-				Manifests []struct {
-					Digest string `json:"digest"`
-				} `json:"manifests"`
-				Config struct {
-					Digest string `json:"digest"`
-				} `json:"config"`
-			}
-			if json.Unmarshal(mOut, &mDoc) == nil {
-				for _, m := range mDoc.Manifests {
-					if m.Digest != "" {
-						subDigests = append(subDigests, m.Digest)
-					}
-				}
-				if len(subDigests) > 0 {
-					latestDigest = subDigests[0]
-					err = nil
-				} else if mDoc.Config.Digest != "" {
-					latestDigest = mDoc.Config.Digest
-					err = nil
-				}
+		res.Error = fmt.Sprintf("cannot inspect running image: %v", err)
+		s.saveUpdateToDB(res)
+		return res, nil
+	}
+	res.CurrentDigest = running.Image
+	if strings.Contains(detail.Image, "@") || isHexDigest(detail.Image) {
+		if isHexDigest(detail.Image) {
+			if source, ok := s.checkGitUpstream(ctx, gitInfo, detail); ok {
+				res = source
 			}
 		}
+		s.saveUpdateToDB(res)
+		return res, nil
 	}
+	platform, err := inspectUpdateImage(ctx, running.Image)
+	if err != nil {
+		res.Error = fmt.Sprintf("cannot inspect running image: %v", err)
+		s.saveUpdateToDB(res)
+		return res, nil
+	}
+	reg, repo, tag := parseImageRef(detail.Image)
+	fetch := func(ref string) (imageUpdateManifest, error) {
+		doc, err := fetchRemoteManifest(ctx, reg, repo, ref)
+		if err == nil {
+			return doc, nil
+		}
+		cliRegistry := reg
+		if reg == "registry-1.docker.io" {
+			cliRegistry = "docker.io"
+		}
+		out, fallbackErr := exec.CommandContext(ctx, "docker", "manifest", "inspect", cliRegistry+"/"+repo+ref).Output()
+		if fallbackErr == nil && json.Unmarshal(out, &doc) == nil {
+			return doc, nil
+		}
+		return imageUpdateManifest{}, err
+	}
+	latestDigest, err := publishedImageID(fetch, ":"+tag, platform)
 
 	if err != nil {
 		if s.isSelfContainer(detail.ID, cname) || isDocktunContainer(cname, detail.Image) {
@@ -2073,7 +2020,7 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 				if localCommit != "" {
 					res.CurrentDigest = localCommit
 					if !strings.HasPrefix(commitSHA, localCommit) && !strings.HasPrefix(localCommit, commitSHA) {
-						res.UpdateAvailable = true
+						res.UpdateAvailable = false
 						res.Error = fmt.Sprintf("Upstream commit %s available (%s)", commitSHA, commitMsg)
 					} else {
 						res.UpdateAvailable = false
@@ -2113,33 +2060,7 @@ func (s *DockerContainers) CheckContainerUpdate(id string) (UpdateCheckResult, e
 
 	res.LatestDigest = latestDigest
 
-	// 3. Compare local digests with remote digests
-	allRemote := append([]string{latestDigest}, subDigests...)
-	matched := false
-	for _, rem := range allRemote {
-		remClean := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(rem)), "sha256:")
-		if remClean == "" {
-			continue
-		}
-		for _, loc := range localDigests {
-			locClean := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(loc)), "sha256:")
-			if locClean == "" {
-				continue
-			}
-			if locClean == remClean || strings.HasPrefix(remClean, locClean) || strings.HasPrefix(locClean, remClean) {
-				matched = true
-				break
-			}
-		}
-		if matched {
-			break
-		}
-	}
-
-	res.UpdateAvailable = !matched && (latestDigest != "")
-	if matched {
-		res.Error = ""
-	}
+	res.UpdateAvailable = latestDigest != running.Image
 	s.saveUpdateToDB(res)
 	return res, nil
 }
@@ -2462,6 +2383,12 @@ func parseImageRef(image string) (registry, repo, tag string) {
 			repo = strings.Join(parts, "/")
 		}
 	}
+	if registry == "docker.io" || registry == "index.docker.io" {
+		registry = "registry-1.docker.io"
+		if !strings.Contains(repo, "/") {
+			repo = "library/" + repo
+		}
+	}
 	return
 }
 
@@ -2479,23 +2406,64 @@ func parseAuthHeader(header string) map[string]string {
 	return params
 }
 
-func fetchRemoteManifestDigest(ctx context.Context, registry, repo, tag string) (string, []string, error) {
+type imageUpdateManifest struct {
+	Config    struct{ Digest string }
+	Manifests []struct {
+		Digest   string
+		Platform struct{ OS, Architecture, Variant string }
+	}
+}
+
+func publishedImageID(fetch func(string) (imageUpdateManifest, error), ref string, platform recoveryImageInfo) (string, error) {
+	doc, err := fetch(ref)
+	if err != nil {
+		return "", err
+	}
+	if len(doc.Manifests) > 0 {
+		digest := ""
+		for _, child := range doc.Manifests {
+			if child.Platform.OS != platform.OS || child.Platform.Architecture != platform.Architecture || child.Digest == "" {
+				continue
+			}
+			if child.Platform.Variant == platform.Variant {
+				digest = child.Digest
+				break
+			}
+			// Some publishers omit the variant for the baseline platform.
+			if child.Platform.Variant == "" || (platform.Variant == "" && platform.Architecture == "arm64" && child.Platform.Variant == "v8") {
+				digest = child.Digest
+			}
+		}
+		if digest == "" {
+			return "", fmt.Errorf("no published manifest for %s/%s", platform.OS, platform.Architecture)
+		}
+		doc, err = fetch("@" + digest)
+		if err != nil {
+			return "", err
+		}
+	}
+	if doc.Config.Digest == "" {
+		return "", fmt.Errorf("registry response has no image config digest")
+	}
+	return doc.Config.Digest, nil
+}
+
+func fetchRemoteManifest(ctx context.Context, registry, repo, ref string) (imageUpdateManifest, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	manifestURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s", registry, repo, tag)
+	manifestURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s", registry, repo, ref[1:])
 
 	req, err := http.NewRequestWithContext(ctx, "GET", manifestURL, nil)
 	if err != nil {
-		return "", nil, err
+		return imageUpdateManifest{}, err
 	}
 	req.Header.Set("Accept", "application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", nil, err
+		return imageUpdateManifest{}, err
 	}
 	defer resp.Body.Close()
 
-	var bearerToken string
 	if resp.StatusCode == http.StatusUnauthorized {
 		authHeader := resp.Header.Get("Www-Authenticate")
 		if strings.HasPrefix(authHeader, "Bearer ") {
@@ -2525,7 +2493,6 @@ func fetchRemoteManifestDigest(ctx context.Context, registry, repo, tag string) 
 							tok = tokenData.AccessToken
 						}
 						if tok != "" {
-							bearerToken = tok
 							req2, errReq2 := http.NewRequestWithContext(ctx, "GET", manifestURL, nil)
 							if errReq2 == nil {
 								req2.Header.Set("Accept", "application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json")
@@ -2544,93 +2511,15 @@ func fetchRemoteManifestDigest(ctx context.Context, registry, repo, tag string) 
 	}
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusNotFound {
-		return "", nil, fmt.Errorf("public registry does not host this image (HTTP %d)", resp.StatusCode)
+		return imageUpdateManifest{}, fmt.Errorf("public registry does not host this image (HTTP %d)", resp.StatusCode)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", nil, fmt.Errorf("registry returned HTTP %d", resp.StatusCode)
+		return imageUpdateManifest{}, fmt.Errorf("registry returned HTTP %d", resp.StatusCode)
 	}
 
-	mainDigest := resp.Header.Get("Docker-Content-Digest")
-	bodyBytes, _ := io.ReadAll(resp.Body)
-
-	var subDigests []string
-	var manifestPayload struct {
-		Config struct {
-			Digest string `json:"digest"`
-		} `json:"config"`
-		Manifests []struct {
-			Digest   string `json:"digest"`
-			Platform struct {
-				Architecture string `json:"architecture"`
-				OS           string `json:"os"`
-			} `json:"platform"`
-		} `json:"manifests"`
-	}
-
-	if err := json.Unmarshal(bodyBytes, &manifestPayload); err == nil {
-		// Single image manifest: config.digest is the image ID in Docker
-		if manifestPayload.Config.Digest != "" {
-			subDigests = append(subDigests, manifestPayload.Config.Digest)
-		}
-
-		// Manifest list / OCI index: collect sub-digests and extract the config.digest for host architecture
-		if len(manifestPayload.Manifests) > 0 {
-			var matchingPlatformDigests []string
-			hostArch := runtime.GOARCH
-			if hostArch == "" {
-				hostArch = "amd64"
-			}
-			for _, m := range manifestPayload.Manifests {
-				if m.Digest != "" {
-					subDigests = append(subDigests, m.Digest)
-					if (m.Platform.Architecture == hostArch || m.Platform.Architecture == "amd64") &&
-						(m.Platform.OS == "linux" || m.Platform.OS == "") {
-						matchingPlatformDigests = append(matchingPlatformDigests, m.Digest)
-					}
-				}
-			}
-
-			targetPlatformDigest := ""
-			if len(matchingPlatformDigests) > 0 {
-				targetPlatformDigest = matchingPlatformDigests[0]
-			} else if len(manifestPayload.Manifests) > 0 {
-				targetPlatformDigest = manifestPayload.Manifests[0].Digest
-			}
-
-			if targetPlatformDigest != "" {
-				childURL := fmt.Sprintf("https://%s/v2/%s/manifests/%s", registry, repo, targetPlatformDigest)
-				cReq, cErr := http.NewRequestWithContext(ctx, "GET", childURL, nil)
-				if cErr == nil {
-					cReq.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json")
-					if bearerToken != "" {
-						cReq.Header.Set("Authorization", "Bearer "+bearerToken)
-					}
-					cResp, cErr := client.Do(cReq)
-					if cErr == nil {
-						defer cResp.Body.Close()
-						if cResp.StatusCode == http.StatusOK {
-							var childDoc struct {
-								Config struct {
-									Digest string `json:"digest"`
-								} `json:"config"`
-							}
-							if json.NewDecoder(cResp.Body).Decode(&childDoc) == nil {
-								if childDoc.Config.Digest != "" {
-									subDigests = append(subDigests, childDoc.Config.Digest)
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	if mainDigest == "" && len(subDigests) > 0 {
-		mainDigest = subDigests[0]
-	}
-
-	return mainDigest, subDigests, nil
+	var doc imageUpdateManifest
+	err = json.NewDecoder(resp.Body).Decode(&doc)
+	return doc, err
 }
 
 func fileExists(p string) bool {

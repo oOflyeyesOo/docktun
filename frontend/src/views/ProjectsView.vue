@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, toRefs, computed, onMounted } from 'vue'
 import {
   FolderOpen,
   FileCode,
@@ -19,6 +19,7 @@ import {
   Folder
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
+import { createProjectFileEditor } from '../lib/project-file-editor.mjs'
 
 interface Project {
   id: number
@@ -48,13 +49,12 @@ const selectedProject = ref<Project | null>(null)
 const projectSearch = ref('')
 
 // Compose Editor State
-const composeFilename = ref('docker-compose.yml')
-const composeContent = ref('')
+const composeEditor = reactive(createProjectFileEditor('Compose', 'docker-compose.yml'))
+const { filename: composeFilename, content: composeContent, loading: editorLoading, saving: editorSaving } = toRefs(composeEditor)
 const composeMessage = ref('')
-const editorLoading = ref(false)
-const editorSaving = ref(false)
 const editorSuccessMsg = ref('')
 const editorErrorMsg = ref('')
+let selectionRevision = 0
 
 // Revisions History State
 const revisions = ref<Revision[]>([])
@@ -90,60 +90,51 @@ async function loadProjects() {
 }
 
 async function selectProject(p: Project) {
+  selectionRevision++
   selectedProject.value = p
+  revisions.value = []
+  previewRevision.value = null
   editorSuccessMsg.value = ''
   editorErrorMsg.value = ''
   await Promise.all([loadCompose(p.id), loadRevisions(p.id)])
 }
 
 async function loadCompose(projectId: number) {
-  editorLoading.value = true
-  try {
-    const res = await apiFetch<{ filename: string; content: string }>(`/api/projects/${projectId}/compose`)
-    composeFilename.value = res.filename || 'docker-compose.yml'
-    composeContent.value = res.content || ''
-  } catch (err: any) {
-    editorErrorMsg.value = err.message || 'Failed to load compose file'
-  } finally {
-    editorLoading.value = false
-  }
+  await composeEditor.load(projectId, (id: number) => apiFetch(`/api/projects/${id}/compose`))
+  if (composeEditor.projectId === projectId && composeEditor.error) editorErrorMsg.value = composeEditor.message
 }
 
 async function loadRevisions(projectId: number) {
+  const revision = selectionRevision
   revisionsLoading.value = true
   revisionsError.value = ''
   try {
     const res = await apiFetch<Revision[]>(`/api/projects/${projectId}/revisions`)
-    revisions.value = Array.isArray(res) ? res : []
+    if (revision === selectionRevision) revisions.value = Array.isArray(res) ? res : []
   } catch (err: any) {
-    revisionsError.value = err.message || 'Failed to load compose revisions'
+    if (revision === selectionRevision) revisionsError.value = err.message || 'Failed to load compose revisions'
   } finally {
-    revisionsLoading.value = false
+    if (revision === selectionRevision) revisionsLoading.value = false
   }
 }
 
 async function saveCompose() {
-  if (!selectedProject.value) return
-  editorSaving.value = true
+  if (!selectedProject.value || composeEditor.projectId !== selectedProject.value.id) return
+  const revision = selectionRevision
+  const message = composeMessage.value
   editorSuccessMsg.value = ''
   editorErrorMsg.value = ''
-  try {
-    await apiFetch(`/api/projects/${selectedProject.value.id}/compose`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        filename: composeFilename.value,
-        content: composeContent.value,
-        message: composeMessage.value || 'Updated via Compose Editor'
-      })
-    })
+  const saved = await composeEditor.save((id: number, body: any) => apiFetch(`/api/projects/${id}/compose`, {
+    method: 'PUT',
+    body: JSON.stringify({ ...body, message: message || 'Updated via Compose Editor' })
+  }))
+  if (revision !== selectionRevision) return
+  if (saved) {
     editorSuccessMsg.value = 'Compose file saved and revision created successfully!'
     composeMessage.value = ''
     await loadRevisions(selectedProject.value.id)
-    setTimeout(() => { editorSuccessMsg.value = '' }, 4000)
-  } catch (err: any) {
-    editorErrorMsg.value = err.message || 'Failed to save compose file'
-  } finally {
-    editorSaving.value = false
+  } else if (composeEditor.error) {
+    editorErrorMsg.value = composeEditor.message
   }
 }
 
@@ -153,19 +144,23 @@ async function rollbackTo(rev: Revision) {
     return
   }
 
+  const projectId = selectedProject.value.id
+  const revision = selectionRevision
   rollingBackId.value = rev.id
   editorSuccessMsg.value = ''
   editorErrorMsg.value = ''
   try {
-    const res: any = await apiFetch(`/api/projects/${selectedProject.value.id}/revisions/${rev.id}/rollback`, {
+    const res: any = await apiFetch(`/api/projects/${projectId}/revisions/${rev.id}/rollback`, {
       method: 'POST'
     })
+    if (revision !== selectionRevision) return
     editorSuccessMsg.value = res.message || `Successfully rolled back to Revision #${rev.id}`
     composeContent.value = rev.content
+    composeFilename.value = rev.filename || composeFilename.value
     previewRevision.value = null
     await loadRevisions(selectedProject.value.id)
   } catch (err: any) {
-    editorErrorMsg.value = err.message || 'Rollback failed'
+    if (revision === selectionRevision) editorErrorMsg.value = err.message || 'Rollback failed'
   } finally {
     rollingBackId.value = null
   }
@@ -277,7 +272,7 @@ function formatDate(iso: string) {
 
               <button
                 @click="saveCompose"
-                :disabled="editorSaving || editorLoading || !selectedProject"
+                :disabled="editorSaving || editorLoading || !composeEditor.loaded || !selectedProject"
                 class="cyber-btn text-xs flex items-center gap-1.5 !py-1 !px-3"
               >
                 <RotateCcw v-if="editorSaving" class="h-3.5 w-3.5 animate-spin" />

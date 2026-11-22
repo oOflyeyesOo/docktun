@@ -11,7 +11,7 @@ RUN pnpm run build
 # ==============================================================================
 # Stage 2: Compile Pure Go Backend Server
 # ==============================================================================
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS backend-builder
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine AS backend-builder
 WORKDIR /app
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
@@ -27,7 +27,7 @@ RUN cd /zeroconf-src && go test ./... && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TA
 # Stage 3: Unified DockTun Minimal Runtime (No Nginx, Pure Go + Alpine)
 # ==============================================================================
 # Rebuild the pinned Cosign source with the patched compiler and HTML parser.
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS signature-verifier
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine AS signature-verifier
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /cosign

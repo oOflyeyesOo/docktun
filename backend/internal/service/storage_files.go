@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -173,13 +174,39 @@ func (s *StorageFilesService) ListTargets() ([]StorageTarget, error) {
 // -----------------------------------------------------------------------------
 
 func (s *StorageFilesService) ListFiles(targetType, targetID, relPath string) ([]FileNode, error) {
+	if _, err := transferPath(relPath); err != nil {
+		return nil, err
+	}
+	if err := transferTarget(targetType, targetID); err != nil {
+		return nil, err
+	}
 	relPath = cleanRelPath(relPath)
 
 	switch targetType {
 	case "docktun", "project":
-		basePath := s.resolveHostBasePath(targetType, targetID)
-		fullPath := filepath.Join(basePath, relPath)
-		return listLocalDirectory(fullPath, relPath)
+		basePath, err := s.resolveHostBasePath(targetType, targetID)
+		if err != nil {
+			return nil, err
+		}
+		root, err := os.OpenRoot(basePath)
+		if err != nil {
+			return nil, err
+		}
+		defer root.Close()
+		directory := relPath
+		if directory == "" {
+			directory = "."
+		}
+		file, err := root.Open(directory)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		entries, err := file.ReadDir(-1)
+		if err != nil {
+			return nil, err
+		}
+		return localDirectoryNodes(entries, relPath)
 
 	case "volume":
 		return s.listVolumeDirectory(targetID, relPath)
@@ -198,6 +225,10 @@ func listLocalDirectory(fullPath, relPath string) ([]FileNode, error) {
 		return nil, fmt.Errorf("failed to read directory: %w", err)
 	}
 
+	return localDirectoryNodes(entries, relPath)
+}
+
+func localDirectoryNodes(entries []os.DirEntry, relPath string) ([]FileNode, error) {
 	var nodes []FileNode
 	for _, e := range entries {
 		info, err := e.Info()
@@ -239,10 +270,10 @@ func (s *StorageFilesService) listVolumeDirectory(volName, relPath string) ([]Fi
 
 	// Run lightweight alpine runner with volume mounted read-only
 	// Output format: type|size|time|name
-	cmdStr := fmt.Sprintf(`cd "%s" 2>/dev/null || exit 1; for f in * .[!.]* ..?*; do [ -e "$f" ] || continue; if [ -d "$f" ]; then echo "dir|0|$(stat -c %%Y "$f" 2>/dev/null || echo 0)|$f"; else echo "file|$(stat -c %%s "$f" 2>/dev/null || echo 0)|$(stat -c %%Y "$f" 2>/dev/null || echo 0)|$f"; fi; done`, targetDir)
+	cmdStr := `cd "$1" 2>/dev/null || exit 1; for f in * .[!.]* ..?*; do [ -e "$f" ] || continue; if [ -d "$f" ]; then echo "dir|0|$(stat -c %Y "$f" 2>/dev/null || echo 0)|$f"; else echo "file|$(stat -c %s "$f" 2>/dev/null || echo 0)|$(stat -c %Y "$f" 2>/dev/null || echo 0)|$f"; fi; done`
 
 	runnerImg := s.getRunnerImage()
-	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-v", fmt.Sprintf("%s:%s:ro", volName, volMount), runnerImg, "sh", "-c", cmdStr)
+	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-v", fmt.Sprintf("%s:%s:ro", volName, volMount), runnerImg, "sh", "-c", cmdStr, "storage", targetDir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		// If dir is empty or didn't exist
@@ -267,9 +298,9 @@ func (s *StorageFilesService) listContainerDirectory(containerID, relPath string
 		targetDir = "/" + strings.TrimPrefix(relPath, "/")
 	}
 
-	cmdStr := fmt.Sprintf(`cd "%s" 2>/dev/null || exit 1; for f in * .[!.]* ..?*; do [ -e "$f" ] || continue; if [ -d "$f" ]; then echo "dir|0|$(stat -c %%Y "$f" 2>/dev/null || echo 0)|$f"; else echo "file|$(stat -c %%s "$f" 2>/dev/null || echo 0)|$(stat -c %%Y "$f" 2>/dev/null || echo 0)|$f"; fi; done`, targetDir)
+	cmdStr := `cd "$1" 2>/dev/null || exit 1; for f in * .[!.]* ..?*; do [ -e "$f" ] || continue; if [ -d "$f" ]; then echo "dir|0|$(stat -c %Y "$f" 2>/dev/null || echo 0)|$f"; else echo "file|$(stat -c %s "$f" 2>/dev/null || echo 0)|$(stat -c %Y "$f" 2>/dev/null || echo 0)|$f"; fi; done`
 
-	cmd := exec.CommandContext(ctx, "docker", "exec", containerID, "sh", "-c", cmdStr)
+	cmd := exec.CommandContext(ctx, "docker", "exec", containerID, "sh", "-c", cmdStr, "storage", targetDir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		// Fallback for containers without stat or custom shell: use ls -la
@@ -363,6 +394,12 @@ func sortNodes(nodes []FileNode) {
 // -----------------------------------------------------------------------------
 
 func (s *StorageFilesService) ReadFile(targetType, targetID, relPath string) (*FileReadResult, error) {
+	if _, err := transferPath(relPath); err != nil {
+		return nil, err
+	}
+	if err := transferTarget(targetType, targetID); err != nil {
+		return nil, err
+	}
 	relPath = cleanRelPath(relPath)
 	if relPath == "" || relPath == "." {
 		return nil, fmt.Errorf("file path required")
@@ -372,10 +409,21 @@ func (s *StorageFilesService) ReadFile(targetType, targetID, relPath string) (*F
 
 	switch targetType {
 	case "docktun", "project":
-		basePath := s.resolveHostBasePath(targetType, targetID)
-		fullPath := filepath.Join(basePath, relPath)
-
-		fi, err := os.Stat(fullPath)
+		basePath, err := s.resolveHostBasePath(targetType, targetID)
+		if err != nil {
+			return nil, err
+		}
+		root, err := os.OpenRoot(basePath)
+		if err != nil {
+			return nil, err
+		}
+		defer root.Close()
+		file, err := root.Open(relPath)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		fi, err := file.Stat()
 		if err != nil {
 			return nil, err
 		}
@@ -386,11 +434,14 @@ func (s *StorageFilesService) ReadFile(targetType, targetID, relPath string) (*F
 			return nil, fmt.Errorf("file is too large to preview (> 5MB)")
 		}
 
-		data, err := os.ReadFile(fullPath)
+		data, err := io.ReadAll(io.LimitReader(file, 5*1024*1024+1))
 		if err != nil {
 			return nil, err
 		}
 
+		if len(data) > 5*1024*1024 {
+			return nil, fmt.Errorf("file is too large to preview (> 5MB)")
+		}
 		isBin := isBinaryContent(data)
 		content := ""
 		if !isBin {
@@ -479,6 +530,12 @@ func (s *StorageFilesService) ReadFile(targetType, targetID, relPath string) (*F
 // -----------------------------------------------------------------------------
 
 func (s *StorageFilesService) WriteFile(targetType, targetID, relPath, content string) error {
+	if _, err := transferPath(relPath); err != nil {
+		return err
+	}
+	if err := transferTarget(targetType, targetID); err != nil {
+		return err
+	}
 	relPath = cleanRelPath(relPath)
 	if relPath == "" || relPath == "." {
 		return fmt.Errorf("target file path required")
@@ -486,13 +543,19 @@ func (s *StorageFilesService) WriteFile(targetType, targetID, relPath, content s
 
 	switch targetType {
 	case "docktun", "project":
-		basePath := s.resolveHostBasePath(targetType, targetID)
-		fullPath := filepath.Join(basePath, relPath)
-
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+		basePath, err := s.resolveHostBasePath(targetType, targetID)
+		if err != nil {
 			return err
 		}
-		return os.WriteFile(fullPath, []byte(content), 0644)
+		root, err := os.OpenRoot(basePath)
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		if err := root.MkdirAll(filepath.Dir(relPath), 0755); err != nil {
+			return err
+		}
+		return root.WriteFile(relPath, []byte(content), 0644)
 
 	case "volume":
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -538,6 +601,12 @@ func (s *StorageFilesService) WriteFile(targetType, targetID, relPath, content s
 // -----------------------------------------------------------------------------
 
 func (s *StorageFilesService) CreateItem(targetType, targetID, relPath string, isDir bool) error {
+	if _, err := transferPath(relPath); err != nil {
+		return err
+	}
+	if err := transferTarget(targetType, targetID); err != nil {
+		return err
+	}
 	relPath = cleanRelPath(relPath)
 	if relPath == "" || relPath == "." {
 		return fmt.Errorf("path required")
@@ -545,16 +614,22 @@ func (s *StorageFilesService) CreateItem(targetType, targetID, relPath string, i
 
 	switch targetType {
 	case "docktun", "project":
-		basePath := s.resolveHostBasePath(targetType, targetID)
-		fullPath := filepath.Join(basePath, relPath)
-
-		if isDir {
-			return os.MkdirAll(fullPath, 0755)
-		}
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+		basePath, err := s.resolveHostBasePath(targetType, targetID)
+		if err != nil {
 			return err
 		}
-		f, err := os.OpenFile(fullPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+		root, err := os.OpenRoot(basePath)
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		if isDir {
+			return root.MkdirAll(relPath, 0755)
+		}
+		if err := root.MkdirAll(filepath.Dir(relPath), 0755); err != nil {
+			return err
+		}
+		f, err := root.OpenFile(relPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
 		if err != nil {
 			return err
 		}
@@ -569,13 +644,13 @@ func (s *StorageFilesService) CreateItem(targetType, targetID, relPath string, i
 
 		var cmdStr string
 		if isDir {
-			cmdStr = fmt.Sprintf(`mkdir -p "%s"`, fullPath)
+			cmdStr = `mkdir -p -- "$2"`
 		} else {
-			cmdStr = fmt.Sprintf(`mkdir -p "%s" && touch "%s"`, filepath.ToSlash(filepath.Dir(fullPath)), fullPath)
+			cmdStr = `mkdir -p -- "$1" && touch -- "$2"`
 		}
 
 		runnerImg := s.getRunnerImage()
-		cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-v", fmt.Sprintf("%s:%s:rw", targetID, volMount), runnerImg, "sh", "-c", cmdStr)
+		cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-v", fmt.Sprintf("%s:%s:rw", targetID, volMount), runnerImg, "sh", "-c", cmdStr, "storage", filepath.ToSlash(filepath.Dir(fullPath)), fullPath)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("failed to create in volume: %s (%w)", strings.TrimSpace(string(out)), err)
@@ -589,12 +664,12 @@ func (s *StorageFilesService) CreateItem(targetType, targetID, relPath string, i
 		fullPath := "/" + strings.TrimPrefix(relPath, "/")
 		var cmdStr string
 		if isDir {
-			cmdStr = fmt.Sprintf(`mkdir -p "%s"`, fullPath)
+			cmdStr = `mkdir -p -- "$2"`
 		} else {
-			cmdStr = fmt.Sprintf(`mkdir -p "%s" && touch "%s"`, filepath.ToSlash(filepath.Dir(fullPath)), fullPath)
+			cmdStr = `mkdir -p -- "$1" && touch -- "$2"`
 		}
 
-		cmd := exec.CommandContext(ctx, "docker", "exec", targetID, "sh", "-c", cmdStr)
+		cmd := exec.CommandContext(ctx, "docker", "exec", targetID, "sh", "-c", cmdStr, "storage", filepath.ToSlash(filepath.Dir(fullPath)), fullPath)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("failed to create in container: %s (%w)", strings.TrimSpace(string(out)), err)
@@ -611,6 +686,12 @@ func (s *StorageFilesService) CreateItem(targetType, targetID, relPath string, i
 // -----------------------------------------------------------------------------
 
 func (s *StorageFilesService) DeleteItem(targetType, targetID, relPath string) error {
+	if _, err := transferPath(relPath); err != nil {
+		return err
+	}
+	if err := transferTarget(targetType, targetID); err != nil {
+		return err
+	}
 	relPath = cleanRelPath(relPath)
 	if relPath == "" || relPath == "." || relPath == "/" {
 		return fmt.Errorf("cannot delete root path")
@@ -618,16 +699,16 @@ func (s *StorageFilesService) DeleteItem(targetType, targetID, relPath string) e
 
 	switch targetType {
 	case "docktun", "project":
-		basePath := s.resolveHostBasePath(targetType, targetID)
-		fullPath := filepath.Join(basePath, relPath)
-
-		cleanBase := filepath.Clean(basePath)
-		cleanTarget := filepath.Clean(fullPath)
-		if cleanTarget == cleanBase || !strings.HasPrefix(cleanTarget, cleanBase+string(filepath.Separator)) {
-			return fmt.Errorf("access denied: cannot delete outside root")
+		basePath, err := s.resolveHostBasePath(targetType, targetID)
+		if err != nil {
+			return err
 		}
-
-		return os.RemoveAll(fullPath)
+		root, err := os.OpenRoot(basePath)
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		return root.RemoveAll(relPath)
 
 	case "volume":
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -636,9 +717,9 @@ func (s *StorageFilesService) DeleteItem(targetType, targetID, relPath string) e
 		volMount := "/mnt_vol"
 		fullPath := filepath.ToSlash(filepath.Join(volMount, relPath))
 
-		cmdStr := fmt.Sprintf(`rm -rf "%s"`, fullPath)
+		cmdStr := `rm -rf -- "$2"`
 		runnerImg := s.getRunnerImage()
-		cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-v", fmt.Sprintf("%s:%s:rw", targetID, volMount), runnerImg, "sh", "-c", cmdStr)
+		cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-v", fmt.Sprintf("%s:%s:rw", targetID, volMount), runnerImg, "sh", "-c", cmdStr, "storage", filepath.ToSlash(filepath.Dir(fullPath)), fullPath)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("failed to delete in volume: %s (%w)", strings.TrimSpace(string(out)), err)
@@ -650,8 +731,8 @@ func (s *StorageFilesService) DeleteItem(targetType, targetID, relPath string) e
 		defer cancel()
 
 		fullPath := "/" + strings.TrimPrefix(relPath, "/")
-		cmdStr := fmt.Sprintf(`rm -rf "%s"`, fullPath)
-		cmd := exec.CommandContext(ctx, "docker", "exec", targetID, "sh", "-c", cmdStr)
+		cmdStr := `rm -rf -- "$2"`
+		cmd := exec.CommandContext(ctx, "docker", "exec", targetID, "sh", "-c", cmdStr, "storage", filepath.ToSlash(filepath.Dir(fullPath)), fullPath)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("failed to delete in container: %s (%w)", strings.TrimSpace(string(out)), err)
@@ -680,31 +761,33 @@ func (s *StorageFilesService) getRunnerImage() string {
 	return "alpine:3.19"
 }
 
-func (s *StorageFilesService) resolveHostBasePath(targetType, targetID string) string {
+func (s *StorageFilesService) resolveHostBasePath(targetType, targetID string) (string, error) {
 	if targetType == "docktun" {
 		switch targetID {
 		case "app_data":
-			return "/app/data"
+			return "/app/data", nil
 		case "cloudflared":
-			return "/etc/cloudflared"
+			return "/etc/cloudflared", nil
 		case "projects":
-			return "/opt/projects"
-		default:
-			return "/app/data"
+			return "/opt/projects", nil
 		}
+		return "", fmt.Errorf("unknown DockTun storage target")
 	}
-
 	if targetType == "project" {
-		pid, _ := strconv.Atoi(targetID)
-		var path string
-		_ = s.db.QueryRow("SELECT path FROM projects WHERE id = ?", pid).Scan(&path)
-		if path != "" {
-			return path
+		pid, err := strconv.Atoi(targetID)
+		if err != nil || pid <= 0 || s.db == nil {
+			return "", fmt.Errorf("invalid project storage target")
 		}
-		return "/opt/projects"
+		var directory string
+		if err := s.db.QueryRow("SELECT path FROM projects WHERE id = ?", pid).Scan(&directory); err != nil {
+			return "", fmt.Errorf("project storage target is unavailable: %w", err)
+		}
+		if directory == "" {
+			return "", fmt.Errorf("project has no storage folder")
+		}
+		return directory, nil
 	}
-
-	return "/app/data"
+	return "", fmt.Errorf("unknown local storage target type")
 }
 
 func cleanRelPath(p string) string {

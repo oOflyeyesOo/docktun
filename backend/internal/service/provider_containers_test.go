@@ -40,7 +40,7 @@ func TestProvidersStageStoppedAndOperateIndependently(t *testing.T) {
 	}
 	p := cfd.providers
 	hostname, _ := os.Hostname()
-	own := map[string]any{"Config": map[string]any{"Hostname": hostname}, "State": map[string]bool{"Running": true}, "Mounts": []map[string]string{{"Type": "bind", "Source": "/volume1/docktun", "Destination": dir}}}
+	own := map[string]any{"Id": "fixture-core", "Config": map[string]any{"Hostname": hostname}, "State": map[string]bool{"Running": true}, "Mounts": []map[string]string{{"Type": "bind", "Source": "/volume1/docktun", "Destination": dir}}}
 	containers := map[string]map[string]any{}
 	var calls []string
 	p.run = func(_ context.Context, args ...string) ([]byte, error) {
@@ -66,7 +66,7 @@ func TestProvidersStageStoppedAndOperateIndependently(t *testing.T) {
 					labels[k] = v
 				}
 			}
-			containers[args[2]] = map[string]any{"Config": map[string]any{"Labels": labels}, "State": map[string]bool{"Running": false}}
+			containers[args[2]] = map[string]any{"Id": args[2] + "-fixture", "Name": "/" + args[2], "Config": map[string]any{"Labels": labels}, "State": map[string]bool{"Running": false}}
 		case "start", "restart", "stop":
 			containers[args[1]]["State"] = map[string]bool{"Running": args[0] != "stop"}
 		}

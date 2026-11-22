@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, reactive, toRefs, computed, watch, onMounted } from 'vue'
 import { Sliders, RotateCcw, Save, Copy, Check, Search } from 'lucide-vue-next'
 import { useApi } from '../../../../composables/useApi'
+import { createProjectFileEditor } from '../../../../lib/project-file-editor.mjs'
 import { filterEnvContent } from '../../../../lib/containers-table.mjs'
 
 const props = defineProps<{
@@ -22,11 +23,8 @@ const emit = defineEmits<{
 
 const { apiFetch } = useApi()
 
-const envContent = ref('')
-const envLoading = ref(false)
-const envSaving = ref(false)
-const envMsg = ref('')
-const envLoaded = ref(false)
+const editor = reactive(createProjectFileEditor('.env'))
+const { content: envContent, loading: envLoading, saving: envSaving, message: envMsg, loaded: envLoaded } = toRefs(editor)
 const searchQuery = ref('')
 const copied = ref(false)
 
@@ -45,47 +43,39 @@ function copyEnv() {
 }
 
 async function loadEnv() {
-  if (!props.container.project_id) return
-  envLoading.value = true
-  envMsg.value = ''
-  try {
-    const res = await apiFetch<{ content?: string; error?: string } | string>(
-      `/api/projects/${props.container.project_id}/env`
-    )
-    if (typeof res === 'string') {
-      envContent.value = res
-    } else {
-      envContent.value = res.content || ''
-    }
-    envLoaded.value = true
-  } catch (err: any) {
-    envMsg.value = 'Failed to load .env: ' + err.message
-  } finally {
-    envLoading.value = false
+  if (!props.container.project_id) {
+    editor.invalidate()
+    return
   }
+  await editor.load(props.container.project_id, async (id: number) => {
+    const res: any = await apiFetch(`/api/projects/${id}/env`)
+    return { content: typeof res === 'string' ? res : res.content || '' }
+  })
 }
 
-async function saveEnv(restart = false) {
-  if (!props.projectFilesWritable || !props.container.project_id || envSaving.value) return
-  envSaving.value = true
-  envMsg.value = ''
-  try {
-    await apiFetch(`/api/projects/${props.container.project_id}/env`, {
-      method: 'PUT',
-      body: JSON.stringify({ content: envContent.value }),
-    })
-    envMsg.value = restart ? 'Saved! Restarting stack...' : 'Saved successfully!'
-    if (restart) {
-      await apiFetch(`/api/projects/${props.container.project_id}/action/restart`, {
-        method: 'POST',
-      })
-      emit('restarted')
-      envMsg.value = 'Saved and restarted!'
-    }
-  } catch (err: any) {
-    envMsg.value = 'Save failed: ' + err.message
-  } finally {
-    envSaving.value = false
+async function saveEnv(apply = false) {
+  if (!props.projectFilesWritable || editor.projectId !== props.container.project_id) return
+  const revision = editor.revision
+  const saved = await editor.save(
+    (id: number, body: any) => apiFetch(`/api/projects/${id}/env`, { method: 'PUT', body: JSON.stringify({ content: body.content }) }),
+    apply ? async (id: number) => {
+      await apiFetch(`/api/projects/${id}/action/up`, { method: 'POST' })
+      const deadline = Date.now() + 120000
+      while (Date.now() < deadline) {
+        const output: any = await apiFetch(`/api/projects/${id}/output`)
+        if (output.done) {
+          const errors = (output.lines || []).filter((line: string) => line.includes('[ERROR]'))
+          if (errors.length) throw new Error(errors.join('\n'))
+          return
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+      throw new Error('Timed out waiting for the stack. Check stack history before retrying.')
+    } : undefined
+  )
+  if (saved && apply) {
+    emit('restarted')
+    if (editor.revision === revision) editor.message = '.env saved and stack changes applied.'
   }
 }
 
@@ -95,8 +85,7 @@ watch(
     if (newId) {
       loadEnv()
     } else {
-      envContent.value = ''
-      envLoaded.value = false
+      editor.invalidate()
     }
   }
 )
@@ -126,7 +115,7 @@ onMounted(() => {
           <span
             v-if="envMsg"
             class="text-xs font-medium"
-            :class="envMsg.startsWith('Failed') || envMsg.startsWith('Save failed') ? 'text-red-600' : 'text-emerald-600'"
+            :class="editor.error ? 'text-red-600' : 'text-emerald-600'"
           >
             {{ envMsg }}
           </span>
@@ -162,7 +151,7 @@ onMounted(() => {
             class="cyber-btn text-xs flex items-center gap-1.5 text-emerald-700 border-emerald-600 bg-emerald-50/40 hover:bg-emerald-100/50"
           >
             <RotateCcw class="h-3.5 w-3.5" />
-            <span>Save & Restart</span>
+            <span>Save & Apply</span>
           </button>
         </div>
       </div>

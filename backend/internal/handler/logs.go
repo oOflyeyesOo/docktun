@@ -48,6 +48,7 @@ func (h *Logs) Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	conn.SetReadLimit(4096)
 
 	client := &ws.Client{Send: make(chan []byte, 256)}
 	h.hub.Register <- client

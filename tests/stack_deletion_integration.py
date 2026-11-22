@@ -195,9 +195,12 @@ try:
     assert './content:/content:ro' in saved and '/var/lib/docker/volumes/' not in saved
 
     assert not inner('ps', '-aq', '--filter', 'label=com.docker.compose.project=managed-example', '--filter', 'label=com.docker.compose.service=optional')
-    request('/api/docker/containers/' + managed_id + '/update', {})
+    # There is no newer Alpine image in this fixture. An update must be a
+    # no-op and must not recreate containers or activate optional profiles.
+    update = request('/api/docker/containers/' + managed_id + '/update', {})
+    assert 'already uses the current image' in update['output'], update
     updated_id = inner('ps', '-q', '--filter', 'label=com.docker.compose.project=managed-example', '--filter', 'label=com.docker.compose.service=app')
-    assert updated_id and updated_id != managed_id
+    assert updated_id == managed_id
     assert inner('exec', updated_id, 'cat', '/content/marker') == 'shared-project-marker'
     assert inner('exec', updated_id, 'cat', '/run/secrets/key') == 'shared-secret-marker'
     assert inner('exec', updated_id, 'cat', '/etc/app.conf') == 'shared-config-marker'

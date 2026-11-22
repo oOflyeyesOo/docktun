@@ -23,7 +23,7 @@ base = ''
 def docker(*args, input=None, timeout=240):
     result = subprocess.run(['docker', *map(str, args)], input=input, text=True, capture_output=True, timeout=timeout)
     if result.returncode:
-        raise RuntimeError(result.stderr[:2000])
+        raise RuntimeError((result.stderr or result.stdout)[:2000])
     return result.stdout.strip()
 
 def inner(*args, input=None):
@@ -47,7 +47,7 @@ def state(name):
     return inner('inspect', '--format', '{{.State.Status}}', name)
 
 try:
-    docker('run', '-d', '--privileged', '--name', engine, '-e', 'DOCKER_TLS_CERTDIR=', '-p', '127.0.0.1::3001', os.environ.get('DOCKTUN_TEST_ENGINE_IMAGE', 'docker:29-dind'))
+    docker('run', '-d', '--privileged', '--name', engine, '--dns-search', 'fixture.invalid', '-e', 'DOCKER_TLS_CERTDIR=', '-p', '127.0.0.1::3001', os.environ.get('DOCKTUN_TEST_ENGINE_IMAGE', 'docker:29-dind'))
     for _ in range(90):
         try:
             inner('info'); break
@@ -115,14 +115,50 @@ try:
     with urllib.request.urlopen(req) as response:
         payload = response.read()
         assert connector.encode() not in payload and json.loads(payload)['has_token']
+    # Legacy connectors can live on a different origin network from DockTun.
+    # Authentication migration must preserve those routes and aliases.
+    inner('network', 'create', 'legacy-origin')
+    inner('network', 'create', 'legacy-extra')
+    inner('rm', 'docktun-cloudflared')
+    legacy_connector = inner('run', '-d', '--name', 'docktun-cloudflared',
+                             '--network', 'legacy-origin', '--network-alias', 'connector-origin',
+                             '--dns', '127.0.0.11', '--dns-search', 'fixture.invalid',
+                             '--dns-option', 'ndots:0', '--add-host', 'custom-origin:192.0.2.14',
+                             '--mount', 'type=volume,source=scoped-cloudflare,target=/etc/cloudflared,readonly',
+                             'cloudflare/cloudflared:latest')
+    inner('network', 'connect', '--alias', 'connector-extra', 'legacy-extra', 'docktun-cloudflared')
+    legacy_settings = json.loads(inner('inspect', 'docktun-cloudflared'))[0]['HostConfig']
+    inner('run', '-d', '--name', 'legacy-web', '--network', 'legacy-origin',
+          '--network-alias', 'mediastorm', 'alpine:3.23', 'sleep', '3600')
     request('/api/remote-access/tailscale/control', {'action': 'start'})
     request('/api/control/start', {})
+    migrated = json.loads(inner('inspect', 'docktun-cloudflared'))[0]
+    assert migrated['Id'] != legacy_connector
+    for setting in ['Dns', 'DnsSearch', 'DnsOptions', 'ExtraHosts']:
+        assert migrated['HostConfig'][setting] == legacy_settings[setting], setting
+    assert set(migrated['NetworkSettings']['Networks']) == {'legacy-origin', 'legacy-extra'}, migrated
+    assert 'connector-origin' in migrated['NetworkSettings']['Networks']['legacy-origin']['Aliases']
+    assert 'connector-extra' in migrated['NetworkSettings']['Networks']['legacy-extra']['Aliases']
+    origin_ip = json.loads(inner('inspect', 'legacy-web'))[0]['NetworkSettings']['Networks']['legacy-origin']['IPAddress']
+    lookup_error = None
+    for _ in range(30):
+        try:
+            lookup = inner('exec', 'docktun-cloudflared', 'nslookup', '-type=A', 'mediastorm.')
+            assert origin_ip in lookup.split(), lookup
+            break
+        except (RuntimeError, AssertionError) as error:
+            lookup_error = error
+            time.sleep(1)
+    else:
+        raise AssertionError(f'migrated connector could not resolve {origin_ip}: {lookup_error}')
+
     request('/api/remote-access/wireguard/control', {'action': 'start'})
     for name in ['docktun-cloudflared', 'docktun-tailscale', 'docktun-wireguard']:
         assert state(name) == 'running', name
         attached = json.loads(inner('inspect', name))[0]['NetworkSettings']['Networks']
-        assert network in attached, attached
-        assert attached[network]['NetworkID'] == json.loads(inner('network', 'inspect', network))[0]['Id']
+        expected_network = 'legacy-origin' if name == 'docktun-cloudflared' else network
+        assert expected_network in attached, attached
+        assert attached[expected_network]['NetworkID'] == json.loads(inner('network', 'inspect', expected_network))[0]['Id']
     started_at = inner('inspect', '--format', '{{.State.StartedAt}}', 'docktun-cloudflared')
     request('/api/docker/network/reconcile', {})
     assert inner('inspect', '--format', '{{.State.StartedAt}}', 'docktun-cloudflared') == started_at
@@ -153,6 +189,6 @@ try:
     request('/api/control/restart', {})
     assert state('docktun-cloudflared') == 'running'
     assert request('/api/status')['running'] is True
-    print('Providers passed: prepared stopped, all three independently running, credentials required, exact named/bind mounts, no token disclosure, restart persistence, missing Cloudflare recreated')
+    print('Providers passed: prepared stopped, all three independently running, credentials required, exact named/bind mounts, no token disclosure, restart persistence, legacy origin networks/aliases, missing Cloudflare recreated')
 finally:
     subprocess.run(['docker', 'rm', '-f', '-v', engine], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
