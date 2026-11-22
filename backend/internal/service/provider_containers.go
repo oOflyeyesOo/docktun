@@ -9,7 +9,6 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -277,6 +276,11 @@ func (p *ProviderContainers) definition(ctx context.Context, provider string) ([
 
 // ensure reports whether authentication migration already started the connector.
 func (p *ProviderContainers) ensure(ctx context.Context, provider string, refreshAuth bool) (bool, error) {
+	if provider == "cloudflare" {
+		if err := p.recoverCloudflareMigration(ctx); err != nil {
+			return false, err
+		}
+	}
 	existing, err := p.inspect(ctx, p.name(provider))
 	var args []string
 	if err == nil {
@@ -352,158 +356,6 @@ func cloudflareMigrationOwned(existing, own updateContainer, configFile string) 
 	return false
 }
 
-// Authentication migration preserves the connector's origin networks. Keep the
-// original until the replacement has started so a failed creation can recover.
-func (p *ProviderContainers) recreateCloudflare(ctx context.Context, old updateContainer, args []string) error {
-	type connection struct {
-		network string
-		args    []string
-	}
-	var networks []connection
-	names := make([]string, 0, len(old.NetworkSettings.Networks))
-	for name := range old.NetworkSettings.Networks {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	mode, _ := old.HostConfig["NetworkMode"].(string)
-	for i, name := range names {
-		id, _ := old.NetworkSettings.Networks[name]["NetworkID"].(string)
-		if name == mode || id == mode {
-			names[0], names[i] = names[i], names[0]
-			break
-		}
-	}
-	for _, name := range names {
-		endpoint := old.NetworkSettings.Networks[name]
-		if priority, ok := endpoint["GwPriority"].(float64); ok && priority != 0 {
-			return fmt.Errorf("connector uses a custom gateway priority on %s; review its network configuration before authentication migration", name)
-		}
-		if ipam, ok := endpoint["IPAMConfig"].(map[string]any); ok {
-			if ipam["IPv4Address"] != nil && ipam["IPv4Address"] != "" || ipam["IPv6Address"] != nil && ipam["IPv6Address"] != "" || len(interfaceStrings(ipam["LinkLocalIPs"])) > 0 {
-				return fmt.Errorf("connector uses a static address on %s; review its network configuration before authentication migration", name)
-			}
-		}
-		if mode == "host" || mode == "none" {
-			continue
-		}
-		network, _ := endpoint["NetworkID"].(string)
-		if network == "" {
-			network = name
-		}
-		connect := []string{"network", "connect"}
-		for _, alias := range interfaceStrings(endpoint["Aliases"]) {
-			if alias != "" && alias != old.ID && (len(old.ID) < 12 || alias != old.ID[:12]) {
-				connect = append(connect, "--alias", alias)
-			}
-		}
-		networks = append(networks, connection{network, connect})
-	}
-	if strings.HasPrefix(mode, "container:") {
-		return fmt.Errorf("connector shares another container's network namespace; review its configuration before authentication migration")
-	}
-	for i := range args {
-		if args[i] == "--network" && i+1 < len(args) {
-			args[i+1] = "none"
-			if mode == "host" {
-				args[i+1] = "host"
-			}
-			if len(networks) > 0 {
-				args[i+1] = networks[0].network
-				aliases := []string{}
-				for j := 2; j < len(networks[0].args); j += 2 {
-					aliases = append(aliases, "--network-alias", networks[0].args[j+1])
-				}
-				tail := append([]string{}, args[i+2:]...)
-				args = append(args[:i+2], aliases...)
-				args = append(args, tail...)
-				networks = networks[1:]
-			}
-			break
-		}
-	}
-	// Origin resolution can depend on explicit resolver settings or host entries.
-	// Preserve those options alongside the original network membership.
-	resolverArgs := []string{}
-	for _, setting := range []struct{ key, flag string }{
-		{"Dns", "--dns"}, {"DnsSearch", "--dns-search"},
-		{"DnsOptions", "--dns-option"}, {"ExtraHosts", "--add-host"},
-	} {
-		for _, value := range interfaceStrings(old.HostConfig[setting.key]) {
-			resolverArgs = append(resolverArgs, setting.flag, value)
-		}
-	}
-	// The generated definition supplies this default host entry. An explicit
-	// original hosts list takes precedence, including a custom mapping for it.
-	if len(interfaceStrings(old.HostConfig["ExtraHosts"])) > 0 {
-		for i := 0; i+1 < len(args); i++ {
-			if args[i] == "--add-host" && args[i+1] == "host.docker.internal:host-gateway" {
-				args = append(args[:i], args[i+2:]...)
-				break
-			}
-		}
-	}
-	if len(resolverArgs) > 0 {
-		withResolvers := []string{args[0]}
-		withResolvers = append(withResolvers, resolverArgs...)
-		args = append(withResolvers, args[1:]...)
-	}
-	name := p.name("cloudflare")
-	backup := fmt.Sprintf("%s-auth-backup-%x", name, time.Now().UnixNano())
-	if old.State.Running {
-		if _, err := p.run(ctx, "stop", name); err != nil {
-			return err
-		}
-	}
-	if _, err := p.run(ctx, "rename", name, backup); err != nil {
-		if old.State.Running {
-			if _, restartErr := p.run(ctx, "start", name); restartErr != nil {
-				return fmt.Errorf("connector rename failed (%v); original restart failed: %w", err, restartErr)
-			}
-		}
-		return err
-	}
-	created := false
-	rollback := func(cause error) error {
-		restore, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		if created {
-			if _, err := p.run(restore, "rm", "-f", name); err != nil {
-				return fmt.Errorf("connector migration failed (%v); replacement cleanup failed; original retained as %s: %w", cause, backup, err)
-			}
-		}
-		if _, err := p.run(restore, "rename", backup, name); err != nil {
-			return fmt.Errorf("connector migration failed (%v); original retained as %s: %w", cause, backup, err)
-		}
-		if old.State.Running {
-			if _, err := p.run(restore, "start", name); err != nil {
-				return fmt.Errorf("connector migration failed (%v); original restart failed: %w", cause, err)
-			}
-		}
-		return fmt.Errorf("connector migration failed; original restored: %w", cause)
-	}
-	if _, err := p.run(ctx, args...); err != nil {
-		return rollback(err)
-	}
-	created = true
-	for _, network := range networks {
-		connect := append(network.args, network.network, name)
-		if _, err := p.run(ctx, connect...); err != nil {
-			return rollback(err)
-		}
-	}
-	if _, err := p.run(ctx, "start", name); err != nil {
-		return rollback(err)
-	}
-	replacement, err := p.inspect(ctx, name)
-	if err != nil || !replacement.State.Running {
-		return rollback(fmt.Errorf("replacement did not reach running state"))
-	}
-	if _, err := p.run(ctx, "rm", backup); err != nil {
-		return fmt.Errorf("replacement active; previous connector retained as %s: %w", backup, err)
-	}
-	return nil
-}
-
 func (p *ProviderContainers) Prepare(provider string) error {
 	lock := providerLock(provider)
 	lock.Lock()
@@ -522,6 +374,11 @@ func (p *ProviderContainers) Control(provider, action string) error {
 	defer cancel()
 	if action != "start" && action != "stop" && action != "restart" {
 		return fmt.Errorf("invalid provider action")
+	}
+	if action == "stop" && provider == "cloudflare" {
+		if err := p.recoverCloudflareMigration(ctx); err != nil {
+			return err
+		}
 	}
 	if action != "stop" {
 		if provider == "cloudflare" {

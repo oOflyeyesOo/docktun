@@ -37,14 +37,36 @@ and prevents a deployment from appearing successful with replacement credentials
 or empty data. Real stack environment/literal-value and missing-source tests cover
 these regressions.
 
+## Audit follow-up acceptance (2026-11-22)
+
+Project actions now return operation IDs, reject overlapping mutations, and keep
+bounded output snapshots so a later action cannot replace an earlier action's
+result. Snapshots retain 100 completed operations, at most 1 MiB and 2,048 records
+per operation, and expire on server restart. Inspector and deployment polling
+discard stale responses after navigation, closure or unmounting.
+
+Cloudflare connector authentication migration journals its original identity and
+network settings before mutation. Recovery preserves static addresses, gateway
+priorities and shared-container network namespaces, with immutable identity checks
+before removing a replacement. Disposable Docker coverage is separate from live
+installation acceptance.
+
+An existing Proxmox-hosted Linux installation was checked through its existing
+Cloudflare route with the user's authorization. PostgreSQL and the application
+were running, the public health endpoint returned HTTP 200, and the authenticated
+application dashboard reported operational status. This verifies that existing
+route only. The follow-up candidate was not deployed there. Physical NAS/ARM and
+other live provider checks remain pending.
+
 ## Review and release gates
 
 1. The audit baseline and roadmap are merged into main through PRs #52 and #53.
 2. Publish the first reviewed release to transition legacy `latest` to signed stable.
    The release job must pass scans, signatures and the actual downloadable installer
    fixture before promoting a channel. No signed-release success is claimed locally.
-3. Docker Desktop is the only user-provided physical environment. Obtain separate
-   NAS/ARM hardware and live-provider acceptance before claiming those certifications.
+3. Docker Desktop and an existing Proxmox Linux installation have supplied scoped
+   acceptance evidence. Obtain separate NAS/ARM hardware and remaining live-provider
+   acceptance before claiming those certifications.
 4. Movie Night's missing external browser image remains disabled; do not substitute
    an unverified image or certify all community recipes from catalog metadata.
 

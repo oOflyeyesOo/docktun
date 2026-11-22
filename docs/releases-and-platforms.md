@@ -48,10 +48,12 @@ identity, not an independent fresh scan of every third-party application image.
 | Linux AMD64 CI | Same disposable fixtures in Validate and release gates | Consumer NAS permission/storage integration |
 | ARM64 cross-build/emulation | Multi-platform release build; local ARM64 emulation smoke passed on 2026-11-08 | Physical ARM64 performance, kernel networking, devices |
 | Synology/QNAP/other NAS | Deployment target with explicit path, privilege and port review | Physical acceptance pending; not runtime-certified here |
-| Live Cloudflare/Tailscale/WireGuard | Existing authenticated integration paths and local API/control-plane tests | No live-account credential or external-reachability acceptance supplied |
+| Existing Proxmox Linux installation | Existing application and PostgreSQL running, public Cloudflare health HTTP 200 and authenticated application dashboard operational on 2026-11-22 | Follow-up candidate deployment, upgrade/rollback on this host, physical NAS/ARM acceptance |
+| Live Cloudflare/Tailscale/WireGuard | Existing Cloudflare application route externally verified on 2026-11-22, plus local API/control-plane tests | New live route provisioning and live Tailscale/WireGuard acceptance |
 
-The user currently provides Docker Desktop only. Physical-device and live-account
-checks remain named acceptance gates, not silently marked complete.
+Docker Desktop supplies disposable candidate tests. The existing Proxmox
+installation supplies scoped live-route evidence. Physical NAS/ARM and remaining
+live-provider checks remain explicit acceptance gates.
 
 ## Template tiers
 

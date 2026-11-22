@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { applicationContainers, applicationProjects, matchesServiceID } from '../lib/managed-services.mjs'
 import { createProjectFileEditor } from '../lib/project-file-editor.mjs'
+import { createAsyncScope, createSerialPoller } from '../lib/async-lifecycle.mjs'
 import { settingsEqual, syncExposureDraft } from '../lib/exposure-draft.mjs'
 import { getPrimaryPort, hasLocalWebLink, localAddress } from '../lib/containerPorts.mjs'
 import { containerStack, stackProjectID } from '../lib/container-stacks.mjs'
@@ -290,9 +291,10 @@ function dismissServicesBanner() {
 // ==========================================
 const showLaunchModal = ref(false)
 
-function onStackDeployed(payload: { projectId: number; name: string }) {
+function onStackDeployed(payload: { projectId: number; name: string; operationId?: string }) {
+  stackActionScope.invalidate()
   fetchContainers()
-  startStackOutputPolling(payload.projectId, `Deploying Compose Stack: ${payload.name}`)
+  startStackOutputPolling(payload.projectId, `Deploying Compose Stack: ${payload.name}`, payload.operationId)
 }
 
 // Cloudflare Settings Cache for Zero Trust
@@ -321,7 +323,8 @@ const projectGitSaving = ref(false)
 // Stack Operations & Output Polling
 const stackActionLoading = ref<Record<number, boolean>>({})
 const stackOutputModal = ref<{ title: string; lines: string[]; done: boolean; projectId: number } | null>(null)
-let stackPollTimer: any = null
+let stackPoller: ReturnType<typeof createSerialPoller> | null = null
+const stackActionScope = createAsyncScope()
 
 const stackOutputFailed = computed(() => {
   if (!stackOutputModal.value || !stackOutputModal.value.lines) return false
@@ -988,28 +991,44 @@ async function saveProjectGit() {
   }
 }
 
-function startStackOutputPolling(projectId: number, title: string) {
+function stopStackOutputPolling() {
+  stackPoller?.stop()
+  stackPoller = null
+  if (stackOutputModal.value) delete stackActionLoading.value[stackOutputModal.value.projectId]
+}
+
+function closeStackOutput() {
+  stackActionScope.invalidate()
+  stopStackOutputPolling()
+  stackOutputModal.value = null
+}
+
+function startStackOutputPolling(projectId: number, title: string, operationId?: string) {
+  stopStackOutputPolling()
+  stackActionLoading.value[projectId] = true
   stackOutputModal.value = { title, lines: ['Initializing stack action...'], done: false, projectId }
-  if (stackPollTimer) clearInterval(stackPollTimer)
-  stackPollTimer = setInterval(async () => {
-    try {
-      const res: any = await apiFetch(`/api/projects/${projectId}/output`)
-      if (stackOutputModal.value && res.lines && res.lines.length) {
-        stackOutputModal.value.lines = res.lines
-      }
-      if (res.done) {
-        if (stackOutputModal.value) stackOutputModal.value.done = true
-        clearInterval(stackPollTimer)
-        stackPollTimer = null
-        delete stackActionLoading.value[projectId]
-        await fetchContainers()
-      }
-    } catch {
-      clearInterval(stackPollTimer)
-      stackPollTimer = null
+  const modal = stackOutputModal.value
+  const query = operationId ? '?operation_id=' + encodeURIComponent(operationId) : ''
+  stackPoller = createSerialPoller(async (current: () => boolean) => {
+    const res: any = await apiFetch(`/api/projects/${projectId}/output${query}`)
+    if (!current() || stackOutputModal.value !== modal) return true
+    modal.lines = res.lines || []
+    if (res.done) {
+      modal.done = true
       delete stackActionLoading.value[projectId]
+      await fetchContainers()
+      return true
     }
-  }, 1000)
+    return false
+  }, 1000, {
+    onError(error: any) {
+      if (stackOutputModal.value !== modal) return
+      modal.lines.push('[ERROR] ' + (error.message || 'Could not read operation output'))
+      modal.done = true
+      delete stackActionLoading.value[projectId]
+    },
+  })
+  stackPoller.start(1000)
 }
 
 async function runStackAction(projectId: number, action: 'up' | 'down' | 'restart') {
@@ -1017,13 +1036,16 @@ async function runStackAction(projectId: number, action: 'up' | 'down' | 'restar
     alert('This stack does not have an active compose project ID linked yet.')
     return
   }
+  if (stackActionLoading.value[projectId]) return
   if (!confirm(`Are you sure you want to run compose "${action}" on this stack?`)) return
   stackActionLoading.value[projectId] = true
+  const current = stackActionScope.begin()
   try {
-    await apiFetch(`/api/projects/${projectId}/action/${action}`, { method: 'POST' })
-    startStackOutputPolling(projectId, `Compose ${action.toUpperCase()}`)
+    const res: any = await apiFetch(`/api/projects/${projectId}/action/${action}`, { method: 'POST' })
+    if (!current()) { delete stackActionLoading.value[projectId]; return }
+    startStackOutputPolling(projectId, `Compose ${action.toUpperCase()}`, res.operation_id)
   } catch (e: any) {
-    alert(`Stack action "${action}" failed: ` + (e.message || e))
+    if (current()) alert(`Stack action "${action}" failed: ` + (e.message || e))
     delete stackActionLoading.value[projectId]
   }
 }
@@ -1036,18 +1058,21 @@ function openDeployPrompt(projectId: number, projectName: string) {
 async function confirmDeploy(optionalBranch?: string) {
   if (!showDeployPromptModal.value) return
   const pId = showDeployPromptModal.value.projectId
+  if (stackActionLoading.value[pId]) return
   const branch = (typeof optionalBranch === 'string' && optionalBranch.trim()) ? optionalBranch.trim() : (deployBranchName.value.trim() || 'main')
   showDeployPromptModal.value = null
 
   stackActionLoading.value[pId] = true
+  const current = stackActionScope.begin()
   try {
-    await apiFetch(`/api/projects/${pId}/action/deploy`, {
+    const res: any = await apiFetch(`/api/projects/${pId}/action/deploy`, {
       method: 'POST',
       body: JSON.stringify({ ref: branch }),
     })
-    startStackOutputPolling(pId, `Deploy Branch/Tag: ${branch}`)
+    if (!current()) { delete stackActionLoading.value[pId]; return }
+    startStackOutputPolling(pId, `Deploy Branch/Tag: ${branch}`, res.operation_id)
   } catch (e: any) {
-    alert('Deploy failed: ' + (e.message || e))
+    if (current()) alert('Deploy failed: ' + (e.message || e))
     delete stackActionLoading.value[pId]
   }
 }
@@ -1222,7 +1247,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
-  if (stackPollTimer) clearInterval(stackPollTimer)
+  stackActionScope.dispose()
+  stopStackOutputPolling()
 })
 </script>
 
@@ -2138,7 +2164,7 @@ onUnmounted(() => {
       v-if="stackOutputModal"
       :modal="stackOutputModal"
       :failed="stackOutputFailed"
-      @close="stackOutputModal = null"
+      @close="closeStackOutput"
     />
 
     <!-- ============================================== -->

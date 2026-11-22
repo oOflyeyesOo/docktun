@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, reactive, toRefs, computed, watch, onMounted } from 'vue'
+import { ref, reactive, toRefs, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Sliders, RotateCcw, Save, Copy, Check, Search } from 'lucide-vue-next'
 import { useApi } from '../../../../composables/useApi'
 import { createProjectFileEditor } from '../../../../lib/project-file-editor.mjs'
+import { createAsyncScope } from '../../../../lib/async-lifecycle.mjs'
 import { filterEnvContent } from '../../../../lib/containers-table.mjs'
 
 const props = defineProps<{
@@ -23,10 +24,12 @@ const emit = defineEmits<{
 
 const { apiFetch } = useApi()
 
+const applyScope = createAsyncScope()
 const editor = reactive(createProjectFileEditor('.env'))
 const { content: envContent, loading: envLoading, saving: envSaving, message: envMsg, loaded: envLoaded } = toRefs(editor)
 const searchQuery = ref('')
 const copied = ref(false)
+let copyTimer: ReturnType<typeof setTimeout> | undefined
 
 const filteredLines = computed(() => {
   return filterEnvContent(envContent.value, searchQuery.value)
@@ -34,15 +37,22 @@ const filteredLines = computed(() => {
 
 function copyEnv() {
   if (!envContent.value) return
+  const current = applyScope.capture()
   navigator.clipboard.writeText(envContent.value).then(() => {
+    if (!current()) return
+    if (copyTimer) clearTimeout(copyTimer)
     copied.value = true
-    setTimeout(() => {
-      copied.value = false
+    copyTimer = setTimeout(() => {
+      if (current()) copied.value = false
     }, 2000)
-  })
+  }).catch(() => {})
 }
 
 async function loadEnv() {
+  if (editor.saving && editor.projectId === props.container.project_id) return
+  applyScope.invalidate()
+  if (copyTimer) clearTimeout(copyTimer)
+  copied.value = false
   if (!props.container.project_id) {
     editor.invalidate()
     return
@@ -56,13 +66,17 @@ async function loadEnv() {
 async function saveEnv(apply = false) {
   if (!props.projectFilesWritable || editor.projectId !== props.container.project_id) return
   const revision = editor.revision
+  const current = applyScope.capture()
   const saved = await editor.save(
     (id: number, body: any) => apiFetch(`/api/projects/${id}/env`, { method: 'PUT', body: JSON.stringify({ content: body.content }) }),
     apply ? async (id: number) => {
-      await apiFetch(`/api/projects/${id}/action/up`, { method: 'POST' })
+      const action: any = await apiFetch(`/api/projects/${id}/action/up`, { method: 'POST' })
+      const query = action.operation_id ? '?operation_id=' + encodeURIComponent(action.operation_id) : ''
       const deadline = Date.now() + 120000
       while (Date.now() < deadline) {
-        const output: any = await apiFetch(`/api/projects/${id}/output`)
+        if (!current()) throw new Error('Monitoring stopped after leaving this project. The stack action continues.')
+        const output: any = await apiFetch(`/api/projects/${id}/output${query}`)
+        if (!current()) throw new Error('Monitoring stopped after leaving this project. The stack action continues.')
         if (output.done) {
           const errors = (output.lines || []).filter((line: string) => line.includes('[ERROR]'))
           if (errors.length) throw new Error(errors.join('\n'))
@@ -73,7 +87,7 @@ async function saveEnv(apply = false) {
       throw new Error('Timed out waiting for the stack. Check stack history before retrying.')
     } : undefined
   )
-  if (saved && apply) {
+  if (saved && apply && current()) {
     emit('restarted')
     if (editor.revision === revision) editor.message = '.env saved and stack changes applied.'
   }
@@ -82,6 +96,7 @@ async function saveEnv(apply = false) {
 watch(
   () => props.container.project_id,
   (newId) => {
+    applyScope.invalidate()
     if (newId) {
       loadEnv()
     } else {
@@ -94,6 +109,11 @@ onMounted(() => {
   if (props.container.project_id) {
     loadEnv()
   }
+})
+onUnmounted(() => {
+  applyScope.dispose()
+  if (copyTimer) clearTimeout(copyTimer)
+  editor.invalidate()
 })
 </script>
 
@@ -121,7 +141,7 @@ onMounted(() => {
           </span>
           <button
             @click="loadEnv"
-            :disabled="envLoading"
+            :disabled="envLoading || envSaving"
             class="cyber-btn-secondary text-xs flex items-center gap-1"
           >
             <RotateCcw class="h-3 w-3" :class="envLoading ? 'animate-spin' : ''" />

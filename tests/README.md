@@ -73,6 +73,16 @@ non-default ports and rollback. Run the listed scripts serially per job.
 
 ## Roadmap acceptance
 
+- Project-operation backend regressions cover concurrent mutation rejection,
+  operation-specific output, retention/truncation, and stopping deployment after
+  a failed image pull. Frontend lifecycle tests cover stale responses and serial
+  polling across navigation, restart and disposal.
+- Connector migration regressions cover durable recovery, immutable container
+  identity, static addresses, gateway priorities and shared network namespaces.
+  `providers_integration.py` exercises static-address rollback and namespace
+  migration in a disposable engine. `DOCKTUN_TEST_ENGINE_IMAGE` selects an older
+  engine for compatibility checks. Gateway-priority cases require API 1.48 or newer.
+
 - `historical_upgrade_integration.py` upgrades a genuine previously published image
   and checks changed-password login, data and new-session restart continuity.
 - `recovery_integration.py` uses only unique fixtures: refuses live-writer volume

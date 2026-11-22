@@ -212,17 +212,26 @@ func (h *Projects) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	operationID := ""
+	operationError := ""
 	if body.AutoStart && strings.TrimSpace(body.ComposeContent) != "" {
 		onDone := func(output string) {
 			h.audit.Log(userID, "project_up", p.Name+"\n"+output, r.RemoteAddr)
 			h.deployed(p.Name, output)
 		}
-		h.svc.ComposeAction(p.ID, p.Path, onDone, "up", "-d")
+		operationID, err = h.svc.ComposeAction(p.ID, p.Path, onDone, "up", "-d")
+		if err != nil {
+			operationError = err.Error()
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(p)
+	json.NewEncoder(w).Encode(struct {
+		service.Project
+		OperationID    string `json:"operation_id,omitempty"`
+		OperationError string `json:"operation_error,omitempty"`
+	}{p, operationID, operationError})
 }
 
 func (h *Projects) Update(w http.ResponseWriter, r *http.Request) {
@@ -295,7 +304,11 @@ func (h *Projects) Delete(w http.ResponseWriter, r *http.Request) {
 	removeFiles := r.URL.Query().Get("remove_files") == "true"
 
 	if err := h.svc.DeleteProject(id, down, removeFiles); err != nil {
-		jsonError(w, err.Error(), http.StatusInternalServerError)
+		status := http.StatusInternalServerError
+		if errors.Is(err, service.ErrProjectBusy) {
+			status = http.StatusConflict
+		}
+		jsonError(w, err.Error(), status)
 		return
 	}
 
@@ -338,9 +351,19 @@ func (h *Projects) History(w http.ResponseWriter, r *http.Request) {
 
 func (h *Projects) Output(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(chi.URLParam(r, "id"))
+	operationID := r.URL.Query().Get("operation_id")
 	lines, done := h.svc.GetOutput(id)
+	if operationID != "" {
+		var err error
+		lines, done, err = h.svc.GetOperationOutput(id, operationID)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusNotFound)
+			return
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"lines": lines, "done": done})
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(map[string]interface{}{"lines": lines, "done": done, "operation_id": operationID})
 }
 
 func (h *Projects) Action(w http.ResponseWriter, r *http.Request) {
@@ -377,24 +400,33 @@ func (h *Projects) Action(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var operationID string
 	switch action {
 	case "up":
-		h.svc.ComposeAction(id, p.Path, onDone, "up", "-d")
+		operationID, err = h.svc.ComposeAction(id, p.Path, onDone, "up", "-d")
 	case "down":
-		h.svc.ComposeAction(id, p.Path, onDone, "down")
+		operationID, err = h.svc.ComposeAction(id, p.Path, onDone, "down")
 	case "stop":
-		h.svc.ComposeAction(id, p.Path, onDone, "stop")
+		operationID, err = h.svc.ComposeAction(id, p.Path, onDone, "stop")
 	case "restart":
-		h.svc.ComposeAction(id, p.Path, onDone, "restart")
+		operationID, err = h.svc.ComposeAction(id, p.Path, onDone, "restart")
 	case "deploy":
-		h.svc.DeployStream(id, p, reqBody.Ref, onDone)
+		operationID, err = h.svc.DeployStream(id, p, reqBody.Ref, onDone)
 	default:
 		jsonError(w, "invalid action", http.StatusBadRequest)
 		return
 	}
 
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, service.ErrProjectBusy) {
+			status = http.StatusConflict
+		}
+		jsonError(w, err.Error(), status)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "operation_id": operationID})
 }
 
 func (h *Projects) ComposeGet(w http.ResponseWriter, r *http.Request) {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch, onUnmounted } from 'vue'
 import {
   Rocket,
   X,
@@ -13,6 +13,7 @@ import {
   Play,
   Package,
 } from 'lucide-vue-next'
+import { createAsyncScope, createSerialPoller } from '../../../lib/async-lifecycle.mjs'
 import { defaultComposeExample } from '../../../lib/compose-templates.mjs'
 import { useApi } from '../../../composables/useApi'
 import TemplateSetup from '../../TemplateSetup.vue'
@@ -27,11 +28,12 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
   (e: 'close'): void
-  (e: 'deployed', payload: { projectId: number; name: string }): void
+  (e: 'deployed', payload: { projectId: number; name: string; operationId?: string }): void
   (e: 'refresh'): void
 }>()
 
 const { apiFetch } = useApi()
+const launchScope = createAsyncScope()
 
 const launchTab = ref<'compose' | 'templates' | 'dockerrun' | 'gitstack'>('compose')
 
@@ -54,17 +56,19 @@ const composeReview = ref<any>(null)
 const composeSetupDirty = ref(false)
 
 async function applyTemplateFiles(files: Record<string, any>) {
+  const current = launchScope.capture()
   composeFiles.value = files
   composeFilesDirty.value = false
   await nextTick()
-  await composeReview.value?.review()
+  if (current()) await composeReview.value?.review()
 }
 
 async function applyTemplateSetup(result: any) {
+  const current = launchScope.capture()
   composeDeployForm.value.compose_content = result.compose_content
   composeDeployForm.value.env_content = result.env_content
   await nextTick()
-  await composeReview.value?.review()
+  if (current()) await composeReview.value?.review()
 }
 
 function selectCommunityTemplate(template: any) {
@@ -92,6 +96,7 @@ function insertComposeSnippet(type: 'network' | 'restart' | 'ports' | 'volumes' 
 }
 
 async function deployComposeStack() {
+  if (composeDeploying.value || dockerRunLoading.value || newProjectSaving.value) return
   if (composeTemplateSource.value && (composeSetupDirty.value || composeFilesDirty.value)) {
     alert('Apply the app setup settings before deploying')
     return
@@ -112,6 +117,7 @@ async function deployComposeStack() {
     alert('Review storage after editing this stack before deploying.')
     return
   }
+  const current = launchScope.begin()
   composeDeploying.value = true
   try {
     const res: any = await apiFetch('/api/projects', {
@@ -128,15 +134,20 @@ async function deployComposeStack() {
         compatibility: Boolean(composeTemplateSource.value) && composeCompatibility.value,
       }),
     })
+    if (!current()) return
     closeModal()
     emit('refresh')
+    if (res.operation_error) {
+      alert('Stack saved. Could not start the stack. ' + res.operation_error)
+      return
+    }
     if (res.id) {
-      emit('deployed', { projectId: res.id, name })
+      emit('deployed', { projectId: res.id, name, operationId: res.operation_id })
     }
   } catch (err: any) {
-    alert('Failed to deploy Compose stack: ' + (err.message || err))
+    if (current()) alert('Failed to deploy Compose stack: ' + (err.message || err))
   } finally {
-    composeDeploying.value = false
+    if (current()) composeDeploying.value = false
   }
 }
 
@@ -150,6 +161,25 @@ const dockerRunCustomName = ref('')
 const dockerRunLoading = ref(false)
 const dockerRunJob = ref<any>(null)
 const dockerRunLines = ref<string[]>([])
+let activeDockerRunJob = ''
+const dockerRunPoller = createSerialPoller(async (pollCurrent: () => boolean) => {
+  const current = launchScope.capture()
+  const jobId = activeDockerRunJob
+  const job: any = await apiFetch(`/api/docker/run/output/${jobId}`)
+  if (!current() || !pollCurrent()) return true
+  dockerRunJob.value = job
+  dockerRunLines.value = job.lines || job.output || []
+  if (job.done || job.status === 'completed' || job.status === 'failed') {
+    dockerRunLoading.value = false
+    emit('refresh')
+    return true
+  }
+}, 1000, {
+  onError: (error: any) => {
+    dockerRunLoading.value = false
+    dockerRunLines.value = [...dockerRunLines.value, 'Failed to load command output: ' + error.message]
+  },
+})
 
 function insertDockerSnippet(snip: string) {
   if (dockerRunCmd.value.trim() === defaultExampleCmd.trim()) {
@@ -159,7 +189,9 @@ function insertDockerSnippet(snip: string) {
 }
 
 async function runDockerCommand() {
-  if (!dockerRunCmd.value.trim()) return
+  if (composeDeploying.value || dockerRunLoading.value || newProjectSaving.value || !dockerRunCmd.value.trim()) return
+  dockerRunPoller.stop()
+  const current = launchScope.begin()
   dockerRunLoading.value = true
   dockerRunLines.value = []
   dockerRunJob.value = null
@@ -175,24 +207,12 @@ async function runDockerCommand() {
         project_name: dockerRunCustomName.value.trim(),
       }),
     })
-
-    const jobId = res.job_id
-    const poll = setInterval(async () => {
-      try {
-        const job: any = await apiFetch(`/api/docker/run/output/${jobId}`)
-        dockerRunJob.value = job
-        dockerRunLines.value = job.lines || job.output || []
-        if (job.done || job.status === 'completed' || job.status === 'failed') {
-          clearInterval(poll)
-          dockerRunLoading.value = false
-          emit('refresh')
-        }
-      } catch {
-        clearInterval(poll)
-        dockerRunLoading.value = false
-      }
-    }, 1000)
+    if (!current()) return
+    if (!res.job_id) throw new Error('Command started without an output job ID')
+    activeDockerRunJob = String(res.job_id)
+    dockerRunPoller.start(1000)
   } catch (e: any) {
+    if (!current()) return
     dockerRunLoading.value = false
     alert(e.message || 'Failed to execute Docker run')
   }
@@ -348,28 +368,39 @@ const newProjectForm = ref({
 const newProjectSaving = ref(false)
 
 async function submitNewProject() {
+  if (composeDeploying.value || dockerRunLoading.value || newProjectSaving.value) return
   if (!newProjectForm.value.name.trim() || !newProjectForm.value.path.trim()) {
     alert('Stack name and folder path are required.')
     return
   }
+  const current = launchScope.begin()
   newProjectSaving.value = true
   try {
     await apiFetch('/api/projects', {
       method: 'POST',
       body: JSON.stringify(newProjectForm.value),
     })
+    if (!current()) return
     closeModal()
     newProjectForm.value = { name: '', path: '', repo_url: '', git_username: '', git_token: '' }
     emit('refresh')
     alert('Stack created successfully!')
   } catch (e: any) {
-    alert('Failed to create stack: ' + (e.message || e))
+    if (current()) alert('Failed to create stack: ' + (e.message || e))
   } finally {
-    newProjectSaving.value = false
+    if (current()) newProjectSaving.value = false
   }
 }
 
+function resetLaunchMonitoring() {
+  launchScope.invalidate()
+  dockerRunPoller.stop()
+  activeDockerRunJob = ''
+  composeDeploying.value = dockerRunLoading.value = newProjectSaving.value = false
+}
+
 function closeModal() {
+  resetLaunchMonitoring()
   emit('close')
   emit('update:modelValue', false)
 }
@@ -397,12 +428,19 @@ function onBackdropClick(e: MouseEvent) {
 watch(
   () => props.modelValue,
   (val) => {
+    resetLaunchMonitoring()
     if (val) {
       dockerRunLines.value = []
       dockerRunJob.value = null
     }
-  }
+  },
+  { flush: 'sync' }
 )
+
+onUnmounted(() => {
+  launchScope.dispose()
+  dockerRunPoller.stop()
+})
 </script>
 
 <template>
