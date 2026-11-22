@@ -151,3 +151,31 @@ func TestCloudflareMigrationRetainsPrimaryNetwork(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCloudflareMigrationPreservesExplicitOriginResolvers(t *testing.T) {
+	p := NewProviderContainers(nil)
+	var old updateContainer
+	if err := json.Unmarshal([]byte(`{"HostConfig":{"NetworkMode":"host","Dns":["192.0.2.53"],"DnsSearch":["fixture.invalid"],"DnsOptions":["ndots:0"],"ExtraHosts":["custom-origin:192.0.2.14"]}}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	p.run = func(_ context.Context, args ...string) ([]byte, error) {
+		if args[0] == "create" {
+			command := strings.Join(args, " ")
+			for _, flag := range []string{"--dns 192.0.2.53", "--dns-search fixture.invalid", "--dns-option ndots:0", "--add-host custom-origin:192.0.2.14"} {
+				if !strings.Contains(command, flag) {
+					t.Fatalf("replacement lost resolver setting %q: %v", flag, args)
+				}
+			}
+			if strings.Contains(command, "host.docker.internal") {
+				t.Fatalf("replacement changed explicitly configured host entries: %v", args)
+			}
+		}
+		if args[0] == "inspect" {
+			return []byte(`[{"State":{"Running":true}}]`), nil
+		}
+		return nil, nil
+	}
+	if err := p.recreateCloudflare(context.Background(), old, []string{"create", "--name", "docktun-cloudflared", "--network", "docktun", "--add-host", "host.docker.internal:host-gateway", "cloudflare/cloudflared:latest"}); err != nil {
+		t.Fatal(err)
+	}
+}

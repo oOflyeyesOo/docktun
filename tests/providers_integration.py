@@ -47,7 +47,7 @@ def state(name):
     return inner('inspect', '--format', '{{.State.Status}}', name)
 
 try:
-    docker('run', '-d', '--privileged', '--name', engine, '-e', 'DOCKER_TLS_CERTDIR=', '-p', '127.0.0.1::3001', os.environ.get('DOCKTUN_TEST_ENGINE_IMAGE', 'docker:29-dind'))
+    docker('run', '-d', '--privileged', '--name', engine, '--dns-search', 'fixture.invalid', '-e', 'DOCKER_TLS_CERTDIR=', '-p', '127.0.0.1::3001', os.environ.get('DOCKTUN_TEST_ENGINE_IMAGE', 'docker:29-dind'))
     for _ in range(90):
         try:
             inner('info'); break
@@ -122,15 +122,20 @@ try:
     inner('rm', 'docktun-cloudflared')
     legacy_connector = inner('run', '-d', '--name', 'docktun-cloudflared',
                              '--network', 'legacy-origin', '--network-alias', 'connector-origin',
+                             '--dns', '127.0.0.11', '--dns-search', 'fixture.invalid',
+                             '--dns-option', 'ndots:0', '--add-host', 'custom-origin:192.0.2.14',
                              '--mount', 'type=volume,source=scoped-cloudflare,target=/etc/cloudflared,readonly',
                              'cloudflare/cloudflared:latest')
     inner('network', 'connect', '--alias', 'connector-extra', 'legacy-extra', 'docktun-cloudflared')
+    legacy_settings = json.loads(inner('inspect', 'docktun-cloudflared'))[0]['HostConfig']
     inner('run', '-d', '--name', 'legacy-web', '--network', 'legacy-origin',
           '--network-alias', 'mediastorm', 'alpine:3.23', 'sleep', '3600')
     request('/api/remote-access/tailscale/control', {'action': 'start'})
     request('/api/control/start', {})
     migrated = json.loads(inner('inspect', 'docktun-cloudflared'))[0]
     assert migrated['Id'] != legacy_connector
+    for setting in ['Dns', 'DnsSearch', 'DnsOptions', 'ExtraHosts']:
+        assert migrated['HostConfig'][setting] == legacy_settings[setting], setting
     assert set(migrated['NetworkSettings']['Networks']) == {'legacy-origin', 'legacy-extra'}, migrated
     assert 'connector-origin' in migrated['NetworkSettings']['Networks']['legacy-origin']['Aliases']
     assert 'connector-extra' in migrated['NetworkSettings']['Networks']['legacy-extra']['Aliases']

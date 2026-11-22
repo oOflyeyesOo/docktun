@@ -421,6 +421,32 @@ func (p *ProviderContainers) recreateCloudflare(ctx context.Context, old updateC
 			break
 		}
 	}
+	// Origin resolution can depend on explicit resolver settings or host entries.
+	// Preserve those options alongside the original network membership.
+	resolverArgs := []string{}
+	for _, setting := range []struct{ key, flag string }{
+		{"Dns", "--dns"}, {"DnsSearch", "--dns-search"},
+		{"DnsOptions", "--dns-option"}, {"ExtraHosts", "--add-host"},
+	} {
+		for _, value := range interfaceStrings(old.HostConfig[setting.key]) {
+			resolverArgs = append(resolverArgs, setting.flag, value)
+		}
+	}
+	// The generated definition supplies this default host entry. An explicit
+	// original hosts list takes precedence, including a custom mapping for it.
+	if len(interfaceStrings(old.HostConfig["ExtraHosts"])) > 0 {
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == "--add-host" && args[i+1] == "host.docker.internal:host-gateway" {
+				args = append(args[:i], args[i+2:]...)
+				break
+			}
+		}
+	}
+	if len(resolverArgs) > 0 {
+		withResolvers := []string{args[0]}
+		withResolvers = append(withResolvers, resolverArgs...)
+		args = append(withResolvers, args[1:]...)
+	}
 	name := p.name("cloudflare")
 	backup := fmt.Sprintf("%s-auth-backup-%x", name, time.Now().UnixNano())
 	if old.State.Running {
