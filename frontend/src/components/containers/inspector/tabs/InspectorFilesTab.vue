@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import {
   FolderOpen,
   Folder,
@@ -15,6 +15,7 @@ import {
   Search,
 } from 'lucide-vue-next'
 import { useApi } from '../../../../composables/useApi'
+import { createAsyncScope } from '../../../../lib/async-lifecycle.mjs'
 import { formatFileSize, filterFileList } from '../../../../lib/inspector-tabs.mjs'
 
 interface FileItem {
@@ -61,14 +62,17 @@ const copiedFileContent = ref(false)
 const showNewItemModal = ref(false)
 const newItemName = ref('')
 const newItemIsDir = ref(false)
-let filesRevision = 0
+const fileScope = createAsyncScope()
+let copyTimer: ReturnType<typeof setTimeout> | undefined
 
 const filteredFileList = computed(() => {
   return filterFileList(fileList.value, fileSearch.value)
 })
 
 async function loadContainerFiles(projectId: number, path = '') {
-  const revision = ++filesRevision
+  const current = fileScope.begin()
+  editingFileSaving.value = false
+  copiedFileContent.value = false
   filesLoading.value = true
   currentDir.value = path
   fileList.value = []
@@ -79,16 +83,16 @@ async function loadContainerFiles(projectId: number, path = '') {
     const res = await apiFetch<FileItem[]>(
       `/api/projects/${projectId}/files?path=${encodeURIComponent(path)}`
     )
-    if (revision === filesRevision) {
+    if (current()) {
       fileList.value = res || []
     }
   } catch (e: any) {
-    if (revision === filesRevision) {
+    if (current()) {
       fileList.value = []
       editingFileMsg.value = 'Failed to list files: ' + e.message
     }
   } finally {
-    if (revision === filesRevision) {
+    if (current()) {
       filesLoading.value = false
     }
   }
@@ -101,7 +105,9 @@ async function openContainerFile(f: FileItem) {
     loadContainerFiles(projectId, f.path)
     return
   }
-  const revision = filesRevision
+  const current = fileScope.begin()
+  editingFileSaving.value = false
+  copiedFileContent.value = false
   editingFile.value = null
   editingFileMsg.value = ''
   filesLoading.value = true
@@ -109,15 +115,15 @@ async function openContainerFile(f: FileItem) {
     const res = await apiFetch<{ content: string }>(
       `/api/projects/${projectId}/file?path=${encodeURIComponent(f.path)}`
     )
-    if (revision === filesRevision) {
+    if (current()) {
       editingFile.value = { projectId, path: f.path, content: res.content || '' }
     }
   } catch (e: any) {
-    if (revision === filesRevision) {
+    if (current()) {
       editingFileMsg.value = 'Failed to read file: ' + e.message
     }
   } finally {
-    if (revision === filesRevision) {
+    if (current()) {
       filesLoading.value = false
     }
   }
@@ -126,7 +132,7 @@ async function openContainerFile(f: FileItem) {
 async function saveCurrentContainerFile() {
   const file = editingFile.value
   if (!props.projectFilesWritable || !file || props.container.project_id !== file.projectId || editingFileSaving.value) return
-  const revision = filesRevision
+  const current = fileScope.capture()
   editingFileSaving.value = true
   editingFileMsg.value = ''
   try {
@@ -134,28 +140,41 @@ async function saveCurrentContainerFile() {
       method: 'PUT',
       body: JSON.stringify({ content: file.content }),
     })
-    if (revision === filesRevision) {
+    if (current()) {
       editingFileMsg.value = 'File saved successfully!'
     }
   } catch (e: any) {
-    if (revision === filesRevision) {
+    if (current()) {
       editingFileMsg.value = 'Save failed: ' + e.message
     }
   } finally {
-    if (revision === filesRevision) {
+    if (current()) {
       editingFileSaving.value = false
     }
   }
 }
 
-function copyFileContent() {
+function closeFileEditor() {
+  fileScope.invalidate()
+  editingFile.value = null
+  filesLoading.value = editingFileSaving.value = false
+  copiedFileContent.value = false
+}
+
+async function copyFileContent() {
   if (!editingFile.value) return
-  navigator.clipboard.writeText(editingFile.value.content).then(() => {
+  const current = fileScope.capture()
+  try {
+    await navigator.clipboard.writeText(editingFile.value.content)
+    if (!current()) return
     copiedFileContent.value = true
-    setTimeout(() => {
+    if (copyTimer) clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => {
       copiedFileContent.value = false
     }, 2000)
-  })
+  } catch (error: any) {
+    if (current()) editingFileMsg.value = 'Failed to copy file: ' + error.message
+  }
 }
 
 function downloadFile() {
@@ -175,6 +194,7 @@ async function createContainerFileItem() {
   const targetPath = currentDir.value ? `${currentDir.value}/${newItemName.value.trim()}` : newItemName.value.trim()
   const projectId = props.container.project_id
   const directory = currentDir.value
+  const current = fileScope.capture()
   try {
     await apiFetch(`/api/projects/${projectId}/file`, {
       method: 'POST',
@@ -184,11 +204,12 @@ async function createContainerFileItem() {
         content: '',
       }),
     })
+    if (!current()) return
     showNewItemModal.value = false
     newItemName.value = ''
     loadContainerFiles(projectId, directory)
   } catch (e: any) {
-    alert('Create failed: ' + e.message)
+    if (current()) alert('Create failed: ' + e.message)
   }
 }
 
@@ -197,32 +218,45 @@ async function deleteContainerFile(path: string) {
   if (!confirm(`Delete ${path}?`)) return
   const projectId = props.container.project_id
   const directory = currentDir.value
+  const current = fileScope.capture()
   try {
     await apiFetch(`/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`, {
       method: 'DELETE',
     })
-    loadContainerFiles(projectId, directory)
+    if (current()) loadContainerFiles(projectId, directory)
   } catch (e: any) {
-    alert('Delete failed: ' + e.message)
+    if (current()) alert('Delete failed: ' + e.message)
   }
 }
 
 watch(
-  () => props.container.project_id,
-  (newId) => {
+  () => [props.container.id, props.container.project_id],
+  () => {
+    const newId = props.container.project_id
+    fileScope.invalidate()
+    showNewItemModal.value = false
+    newItemName.value = ''
+    copiedFileContent.value = false
+    filesLoading.value = editingFileSaving.value = false
+    editingFileMsg.value = ''
     if (newId) {
       loadContainerFiles(newId, '')
     } else {
       fileList.value = []
       editingFile.value = null
     }
-  }
+  },
+  { flush: 'sync' }
 )
 
 onMounted(() => {
   if (props.container.project_id) {
     loadContainerFiles(props.container.project_id, '')
   }
+})
+onUnmounted(() => {
+  fileScope.dispose()
+  if (copyTimer) clearTimeout(copyTimer)
 })
 </script>
 
@@ -310,7 +344,7 @@ onMounted(() => {
               <span>Save</span>
             </button>
             <button
-              @click="editingFile = null"
+              @click="closeFileEditor"
               class="cyber-btn-secondary text-xs"
             >
               Close Editor

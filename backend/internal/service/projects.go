@@ -16,9 +16,16 @@ import (
 	"time"
 
 	"docktun/internal/db"
+	"github.com/google/uuid"
 )
 
 const projectBackupLimit int64 = 512 << 20
+const completedProjectOperationLimit = 100
+const projectOperationOutputLimit = 1 << 20
+const projectOperationLineLimit = 2048
+
+var ErrProjectBusy = errors.New("a project operation is already running")
+var ErrProjectOperationNotFound = errors.New("project operation output is unavailable or expired")
 
 type Project struct {
 	ID          int    `json:"id"`
@@ -45,12 +52,20 @@ type Projects struct {
 	mu                     sync.Mutex
 	outMu                  sync.RWMutex
 	outputs                map[int]*projectOutput
+	operations             map[string]*projectOutput
+	active                 map[int]bool
+	completed              []string
 	runDocker              func(context.Context, ...string) ([]byte, error)
 }
 
 type projectOutput struct {
-	Lines []string
-	Done  bool
+	ID        string
+	ProjectID int
+	Lines     []string
+	Done      bool
+	Bytes     int
+	Truncated bool
+	Failed    bool
 }
 
 func NewProjects(database *db.DB, selfPath string) *Projects {
@@ -69,9 +84,74 @@ func (s *Projects) GetOutput(id int) ([]string, bool) {
 	if !ok {
 		return nil, true
 	}
-	lines := make([]string, len(o.Lines))
-	copy(lines, o.Lines)
-	return lines, o.Done
+	return projectOutputLines(o), o.Done
+}
+
+// GetOperationOutput isolates observers from a later operation on the same project.
+func (s *Projects) GetOperationOutput(projectID int, operationID string) ([]string, bool, error) {
+	s.outMu.RLock()
+	defer s.outMu.RUnlock()
+	output, ok := s.operations[operationID]
+	if !ok || output.ProjectID != projectID {
+		return nil, false, ErrProjectOperationNotFound
+	}
+	return projectOutputLines(output), output.Done, nil
+}
+
+func (s *Projects) reserveProject(id int) error {
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
+	if s.active[id] {
+		return ErrProjectBusy
+	}
+	if s.active == nil {
+		s.active = make(map[int]bool)
+	}
+	s.active[id] = true
+	return nil
+}
+
+func (s *Projects) releaseProject(id int) {
+	s.outMu.Lock()
+	delete(s.active, id)
+	s.outMu.Unlock()
+}
+
+func (s *Projects) beginOutput(id int) (string, error) {
+	if err := s.reserveProject(id); err != nil {
+		return "", err
+	}
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
+	if s.outputs == nil {
+		s.outputs = make(map[int]*projectOutput)
+	}
+	if s.operations == nil {
+		s.operations = make(map[string]*projectOutput)
+	}
+	output := &projectOutput{ID: uuid.NewString(), ProjectID: id}
+	s.outputs[id] = output
+	s.operations[output.ID] = output
+	return output.ID, nil
+}
+
+func (s *Projects) finishOutput(id int, onDone func(string)) {
+	s.outMu.RLock()
+	output := s.outputs[id]
+	lines := projectOutputLines(output)
+	s.outMu.RUnlock()
+	if onDone != nil {
+		onDone(strings.Join(lines, "\n"))
+	}
+	s.outMu.Lock()
+	output.Done = true
+	delete(s.active, id)
+	s.completed = append(s.completed, output.ID)
+	if len(s.completed) > completedProjectOperationLimit {
+		delete(s.operations, s.completed[0])
+		s.completed = s.completed[1:]
+	}
+	s.outMu.Unlock()
 }
 
 func (s *Projects) clearOutput(id int) {
@@ -80,20 +160,40 @@ func (s *Projects) clearOutput(id int) {
 	s.outMu.Unlock()
 }
 
-func (s *Projects) appendOutput(id int, line string) {
-	s.outMu.Lock()
-	if o, ok := s.outputs[id]; ok {
-		o.Lines = append(o.Lines, line)
+func projectOutputLines(output *projectOutput) []string {
+	lines := make([]string, 0, len(output.Lines)+1)
+	if output.Truncated {
+		marker := "[WARN] Earlier project output was truncated."
+		if output.Failed {
+			marker = "[ERROR] Project reported an error and earlier output was truncated."
+		}
+		lines = append(lines, marker)
 	}
-	s.outMu.Unlock()
+	return append(lines, output.Lines...)
 }
 
-func (s *Projects) markDone(id int) {
+func (s *Projects) appendOutput(id int, line string) {
 	s.outMu.Lock()
-	if o, ok := s.outputs[id]; ok {
-		o.Done = true
+	defer s.outMu.Unlock()
+	output, ok := s.outputs[id]
+	if !ok {
+		return
 	}
-	s.outMu.Unlock()
+	if strings.Contains(line, "[ERROR]") {
+		output.Failed = true
+	}
+	if len(line) > projectOperationOutputLimit {
+		line = strings.Clone(line[len(line)-projectOperationOutputLimit:])
+		output.Truncated = true
+	}
+	output.Lines = append(output.Lines, line)
+	output.Bytes += len(line)
+	for output.Bytes > projectOperationOutputLimit || len(output.Lines) > projectOperationLineLimit {
+		output.Bytes -= len(output.Lines[0])
+		output.Lines[0] = ""
+		output.Lines = output.Lines[1:]
+		output.Truncated = true
+	}
 }
 
 func (s *Projects) List() ([]Project, error) {
@@ -232,6 +332,10 @@ func (s *Projects) isSelf(path string) bool {
 // Compose working_dir labels refer to the daemon host, not necessarily a path
 // accessible inside DockTun. Never depend on that path to remove resources.
 func (s *Projects) DeleteProject(id int, down bool, removeFiles bool) error {
+	if err := s.reserveProject(id); err != nil {
+		return err
+	}
+	defer s.releaseProject(id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, err := s.GetByID(id)
@@ -416,55 +520,54 @@ func (s *Projects) GetByID(id int) (Project, error) {
 	return p, err
 }
 
-func (s *Projects) ComposeAction(id int, path string, onDone func(string), args ...string) {
-	s.clearOutput(id)
+func (s *Projects) ComposeAction(id int, path string, onDone func(string), args ...string) (string, error) {
+	operationID, err := s.beginOutput(id)
+	if err != nil {
+		return "", err
+	}
 	go func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		s.runComposeToBuffer(id, path, args...)
-		s.markDone(id)
-		if onDone != nil {
-			lines, _ := s.GetOutput(id)
-			onDone(strings.Join(lines, "\n"))
+		defer s.finishOutput(id, onDone)
+		if _, err := s.GetByID(id); err != nil {
+			s.appendOutput(id, "[ERROR] project is no longer available: "+err.Error())
+			return
 		}
+		s.runComposeToBuffer(id, path, args...)
 	}()
+	return operationID, nil
 }
 
-func (s *Projects) DeployStream(id int, p Project, ref string, onDone func(string)) {
-	s.clearOutput(id)
+func (s *Projects) DeployStream(id int, p Project, ref string, onDone func(string)) (string, error) {
+	operationID, err := s.beginOutput(id)
+	if err != nil {
+		return "", err
+	}
 	go func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		defer s.finishOutput(id, onDone)
+		if _, err := s.GetByID(id); err != nil {
+			s.appendOutput(id, "[ERROR] project is no longer available: "+err.Error())
+			return
+		}
 
 		if p.RepoURL == "" && p.GitToken == "" {
 			s.appendOutput(id, "[STEP] Pulling latest images...")
-			s.runComposeToBuffer(id, p.Path, "pull")
+			if !s.runComposeToBuffer(id, p.Path, "pull") {
+				return
+			}
 			s.appendOutput(id, "[STEP] Starting containers...")
 			s.runComposeToBuffer(id, p.Path, "up", "-d")
-			s.markDone(id)
-			if onDone != nil {
-				lines, _ := s.GetOutput(id)
-				onDone(strings.Join(lines, "\n"))
-			}
 			return
 		}
 		directory, err := s.resolveProjectDirectory(p.Path, false)
 		if err != nil {
 			s.appendOutput(id, "[ERROR] "+err.Error())
-			s.markDone(id)
-			if onDone != nil {
-				lines, _ := s.GetOutput(id)
-				onDone(strings.Join(lines, "\n"))
-			}
 			return
 		}
 		if directory.ReadOnly {
 			s.appendOutput(id, "[ERROR] stack folder is mounted read-only in DockTun; Git deployment requires a writable mount")
-			s.markDone(id)
-			if onDone != nil {
-				lines, _ := s.GetOutput(id)
-				onDone(strings.Join(lines, "\n"))
-			}
 			return
 		}
 
@@ -478,63 +581,44 @@ func (s *Projects) DeployStream(id int, p Project, ref string, onDone func(strin
 		s.appendOutput(id, "[STEP] git fetch --all")
 		if out, err := s.runGit(p.Path, "fetch", "--all"); err != nil {
 			s.appendOutput(id, "[ERROR] git fetch failed: "+out)
-			s.markDone(id)
-			if onDone != nil {
-				lines, _ := s.GetOutput(id)
-				onDone(strings.Join(lines, "\n"))
-			}
 			return
 		}
 
 		s.appendOutput(id, "[STEP] git checkout "+ref)
 		if out, err := s.runGit(p.Path, "checkout", ref); err != nil {
 			s.appendOutput(id, "[ERROR] git checkout failed: "+out)
-			s.markDone(id)
-			if onDone != nil {
-				lines, _ := s.GetOutput(id)
-				onDone(strings.Join(lines, "\n"))
-			}
 			return
 		}
 
 		s.appendOutput(id, "[STEP] git pull origin "+ref)
 		if out, err := s.runGit(p.Path, "pull", "origin", ref); err != nil {
 			s.appendOutput(id, "[ERROR] git pull failed: "+out)
-			s.markDone(id)
-			if onDone != nil {
-				lines, _ := s.GetOutput(id)
-				onDone(strings.Join(lines, "\n"))
-			}
 			return
 		}
 
 		s.appendOutput(id, "[STEP] docker compose up -d --build")
 		s.runComposeToBuffer(id, p.Path, "up", "-d", "--build")
-		s.markDone(id)
-		if onDone != nil {
-			lines, _ := s.GetOutput(id)
-			onDone(strings.Join(lines, "\n"))
-		}
 	}()
+	return operationID, nil
 }
 
-func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
+func (s *Projects) runComposeToBuffer(id int, path string, args ...string) bool {
 	directory, err := s.resolveProjectDirectory(path, false)
 	if err != nil {
 		s.appendOutput(id, "[ERROR] "+err.Error())
-		return
+		return false
 	}
 	path = directory.Path
 	root, err := directory.open(false)
 	if err != nil {
 		s.appendOutput(id, "[ERROR] "+err.Error())
-		return
+		return false
 	}
 	defer root.Close()
 	files, err := storedComposeSources(s.db, id)
 	if err != nil {
 		s.appendOutput(id, "[ERROR] "+err.Error())
-		return
+		return false
 	}
 	knownSources := len(files) > 0
 	if !knownSources {
@@ -547,7 +631,7 @@ func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
 				continue
 			}
 			s.appendOutput(id, "[ERROR] cannot read Compose source "+name+": "+err.Error())
-			return
+			return false
 		}
 		sources = append(sources, filepath.Join(path, name))
 		if !knownSources {
@@ -589,15 +673,19 @@ func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
 	cmd, err := composeProjectCommandPolicy(projectName, path, sources, reviewedProject(s.db, id), args...)
 	if err != nil {
 		s.appendOutput(id, "[ERROR] "+err.Error())
-		return
+		return false
 	}
 
-	stdout, _ := cmd.StdoutPipe()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		s.appendOutput(id, "[ERROR] "+err.Error())
+		return false
+	}
 	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Start(); err != nil {
 		s.appendOutput(id, "[ERROR] "+err.Error())
-		return
+		return false
 	}
 
 	buf := make([]byte, 4096)
@@ -612,7 +700,9 @@ func (s *Projects) runComposeToBuffer(id int, path string, args ...string) {
 	}
 	if err := cmd.Wait(); err != nil {
 		s.appendOutput(id, "[ERROR] compose command exited with error: "+err.Error())
+		return false
 	}
+	return true
 }
 
 func (s *Projects) runGit(path string, args ...string) (string, error) {

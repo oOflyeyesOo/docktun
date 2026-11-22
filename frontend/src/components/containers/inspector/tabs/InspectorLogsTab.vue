@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ScrollText, RotateCcw, Search, Check, Copy, Download, Trash2 } from 'lucide-vue-next'
+import { createAsyncScope, createSerialPoller } from '../../../../lib/async-lifecycle.mjs'
 import { useApi } from '../../../../composables/useApi'
 
 const props = defineProps<{
@@ -19,7 +20,11 @@ const modalLogsAutoRefresh = ref(false)
 const modalLogsTimestamps = ref(false)
 const modalLogsFilter = ref('')
 const copiedLogs = ref(false)
-let modalLogsTimer: any = null
+const logScope = createAsyncScope()
+let copyTimer: ReturnType<typeof setTimeout> | undefined
+const logPoller = createSerialPoller(async (pollCurrent: () => boolean) => {
+  await loadLogs(pollCurrent)
+}, 3000)
 
 const filteredModalLogs = computed(() => {
   if (!modalLogsText.value) return ''
@@ -38,27 +43,36 @@ const matchingLinesCount = computed(() => {
   return { matched, total }
 })
 
-async function fetchModalLogs() {
+async function loadLogs(pollCurrent = () => true) {
   if (!props.containerId) return
+  const current = logScope.begin()
+  const containerId = props.containerId
   modalLogsLoading.value = true
   try {
     const res = await apiFetch<{ logs: string }>(
-      `/api/docker/containers/${props.containerId}/logs?tail=${modalLogsTail.value}&timestamps=${modalLogsTimestamps.value}`
+      `/api/docker/containers/${containerId}/logs?tail=${modalLogsTail.value}&timestamps=${modalLogsTimestamps.value}`
     )
-    modalLogsText.value = res.logs || 'No logs recorded.'
+    if (current() && pollCurrent()) modalLogsText.value = res.logs || 'No logs recorded.'
   } catch (error: any) {
-    modalLogsText.value = 'Failed to load logs: ' + error.message
+    if (current() && pollCurrent()) modalLogsText.value = 'Failed to load logs: ' + error.message
   } finally {
-    modalLogsLoading.value = false
+    if (current() && pollCurrent()) modalLogsLoading.value = false
   }
+}
+
+function fetchModalLogs() {
+  return loadLogs()
 }
 
 async function copyLogs() {
   if (!filteredModalLogs.value) return
+  const current = logScope.capture()
   try {
     await navigator.clipboard.writeText(filteredModalLogs.value)
+    if (!current()) return
     copiedLogs.value = true
-    setTimeout(() => {
+    if (copyTimer) clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => {
       copiedLogs.value = false
     }, 2000)
   } catch (e) {
@@ -80,29 +94,32 @@ function downloadLogs() {
 }
 
 function clearLogsView() {
+  logScope.invalidate()
+  modalLogsLoading.value = false
   modalLogsText.value = ''
 }
 
 watch(modalLogsAutoRefresh, (enabled) => {
-  if (modalLogsTimer) {
-    clearInterval(modalLogsTimer)
-    modalLogsTimer = null
-  }
-  if (enabled) {
-    modalLogsTimer = setInterval(() => {
-      fetchModalLogs()
-    }, 3000)
-  }
+  logPoller.stop()
+  logScope.invalidate()
+  modalLogsLoading.value = false
+  if (enabled) logPoller.start(3000)
 })
 
 watch(
   () => props.containerId,
-  (newId) => {
-    if (newId) {
-      modalLogsText.value = ''
+  () => {
+    logPoller.stop()
+    logScope.invalidate()
+    modalLogsText.value = ''
+    copiedLogs.value = false
+    modalLogsLoading.value = false
+    if (props.containerId) {
       fetchModalLogs()
+      if (modalLogsAutoRefresh.value) logPoller.start(3000)
     }
-  }
+  },
+  { flush: 'sync' }
 )
 
 onMounted(() => {
@@ -110,11 +127,11 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (modalLogsTimer) {
-    clearInterval(modalLogsTimer)
-    modalLogsTimer = null
-  }
+  logScope.dispose()
+  logPoller.stop()
+  if (copyTimer) clearTimeout(copyTimer)
 })
+
 </script>
 
 <template>

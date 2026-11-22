@@ -117,20 +117,38 @@ try:
         assert connector.encode() not in payload and json.loads(payload)['has_token']
     # Legacy connectors can live on a different origin network from DockTun.
     # Authentication migration must preserve those routes and aliases.
-    inner('network', 'create', 'legacy-origin')
-    inner('network', 'create', 'legacy-extra')
+    inner('network', 'create', '--subnet', '172.29.250.0/24', 'legacy-origin')
+    inner('network', 'create', '--subnet', '172.29.251.0/24', 'legacy-extra')
+    api_version = tuple(map(int, inner('version', '--format', '{{.Server.APIVersion}}').split('.')[:2]))
+    priorities = api_version >= (1, 48)
+    primary_network = 'name=legacy-origin,gw-priority=7' if priorities else 'legacy-origin'
+    secondary_options = ['--gw-priority', '3'] if priorities else []
+    good_provider_image = 'cloudflare/cloudflared:fixture-good'
+    inner('tag', 'cloudflare/cloudflared:latest', good_provider_image)
     inner('rm', 'docktun-cloudflared')
     legacy_connector = inner('run', '-d', '--name', 'docktun-cloudflared',
-                             '--network', 'legacy-origin', '--network-alias', 'connector-origin',
+                             '--network', primary_network, '--ip', '172.29.250.4', '--network-alias', 'connector-origin',
                              '--dns', '127.0.0.11', '--dns-search', 'fixture.invalid',
                              '--dns-option', 'ndots:0', '--add-host', 'custom-origin:192.0.2.14',
                              '--mount', 'type=volume,source=scoped-cloudflare,target=/etc/cloudflared,readonly',
                              'cloudflare/cloudflared:latest')
-    inner('network', 'connect', '--alias', 'connector-extra', 'legacy-extra', 'docktun-cloudflared')
+    inner('network', 'connect', '--ip', '172.29.251.4', *secondary_options, '--alias', 'connector-extra', 'legacy-extra', 'docktun-cloudflared')
     legacy_settings = json.loads(inner('inspect', 'docktun-cloudflared'))[0]['HostConfig']
     inner('run', '-d', '--name', 'legacy-web', '--network', 'legacy-origin',
           '--network-alias', 'mediastorm', 'alpine:3.23', 'sleep', '3600')
     request('/api/remote-access/tailscale/control', {'action': 'start'})
+    # A bad replacement must relinquish both requested addresses and restore
+    # the original connector before a subsequent migration can reuse them.
+    inner('build', '-t', 'cloudflare/cloudflared:latest', '-', input='FROM alpine:3.23\nENTRYPOINT ["/missing-connector-fixture"]\n')
+    request('/api/control/start', {}, expected=500)
+    restored = json.loads(inner('inspect', 'docktun-cloudflared'))[0]
+    assert restored['Id'] == legacy_connector and restored['State']['Running'], restored
+    assert restored['NetworkSettings']['Networks']['legacy-origin']['IPAMConfig']['IPv4Address'] == '172.29.250.4'
+    assert restored['NetworkSettings']['Networks']['legacy-extra']['IPAMConfig']['IPv4Address'] == '172.29.251.4'
+    if priorities:
+        assert restored['NetworkSettings']['Networks']['legacy-origin']['GwPriority'] == 7
+        assert restored['NetworkSettings']['Networks']['legacy-extra']['GwPriority'] == 3
+    inner('tag', good_provider_image, 'cloudflare/cloudflared:latest')
     request('/api/control/start', {})
     migrated = json.loads(inner('inspect', 'docktun-cloudflared'))[0]
     assert migrated['Id'] != legacy_connector
@@ -139,6 +157,11 @@ try:
     assert set(migrated['NetworkSettings']['Networks']) == {'legacy-origin', 'legacy-extra'}, migrated
     assert 'connector-origin' in migrated['NetworkSettings']['Networks']['legacy-origin']['Aliases']
     assert 'connector-extra' in migrated['NetworkSettings']['Networks']['legacy-extra']['Aliases']
+    for network_name, address in [('legacy-origin', '172.29.250.4'), ('legacy-extra', '172.29.251.4')]:
+        assert migrated['NetworkSettings']['Networks'][network_name]['IPAMConfig']['IPv4Address'] == address
+    if priorities:
+        assert migrated['NetworkSettings']['Networks']['legacy-origin']['GwPriority'] == 7
+        assert migrated['NetworkSettings']['Networks']['legacy-extra']['GwPriority'] == 3
     origin_ip = json.loads(inner('inspect', 'legacy-web'))[0]['NetworkSettings']['Networks']['legacy-origin']['IPAddress']
     lookup_error = None
     for _ in range(30):
@@ -186,9 +209,27 @@ try:
     assert state('docktun-cloudflared') == 'exited'
     assert state('docktun-tailscale') == 'running' and state('docktun-wireguard') == 'running'
     inner('rm', 'docktun-cloudflared')
+    namespace_target = inner('run', '-d', '--name', 'user-vpn', '--network', 'legacy-origin', 'alpine:3.23', 'sleep', '3600')
+    legacy_shared = inner('create', '--name', 'docktun-cloudflared', '--network', 'container:user-vpn',
+                         '--mount', 'type=volume,source=scoped-cloudflare,target=/etc/cloudflared,readonly',
+                         'cloudflare/cloudflared:latest')
+    inner('stop', 'user-vpn')
+    request('/api/control/start', {}, expected=500)
+    assert inner('inspect', '--format', '{{.Id}}', 'docktun-cloudflared') == legacy_shared
+    assert state('docktun-cloudflared') == 'created'
+    inner('start', 'user-vpn')
+    request('/api/control/start', {})
+    shared = json.loads(inner('inspect', 'docktun-cloudflared'))[0]
+    assert shared['HostConfig']['NetworkMode'] == 'container:' + namespace_target
+    assert shared['Id'] != legacy_shared and state('user-vpn') == 'running'
+    assert not shared['HostConfig']['Dns'] and not shared['HostConfig']['ExtraHosts']
+    inner('exec', 'docktun-cloudflared', 'nslookup', '-type=A', 'mediastorm.')
+    request('/api/control/stop', {})
+    assert state('user-vpn') == 'running'
+    inner('rm', 'docktun-cloudflared')
     request('/api/control/restart', {})
     assert state('docktun-cloudflared') == 'running'
     assert request('/api/status')['running'] is True
-    print('Providers passed: prepared stopped, all three independently running, credentials required, exact named/bind mounts, no token disclosure, restart persistence, legacy origin networks/aliases, missing Cloudflare recreated')
+    print('Providers passed: prepared stopped, all three independently running, credentials required, exact named/bind mounts, no token disclosure, restart persistence, legacy static addresses/gateway priorities/resolvers/aliases, failed migration restored, shared namespace target retained, missing Cloudflare recreated')
 finally:
     subprocess.run(['docker', 'rm', '-f', '-v', engine], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
