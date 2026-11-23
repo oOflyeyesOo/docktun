@@ -1,27 +1,13 @@
-﻿package handler
+package handler
 
 import (
 	"encoding/json"
 	"net/http"
-	"regexp"
 	"strconv"
-	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"docktun/internal/service"
+	"github.com/go-chi/chi/v5"
 )
-
-var envSecretRegex = regexp.MustCompile(`(?i)(--env\s+|-e\s+)(["']?[A-Za-z0-9_]+)=([^\s"']+|"[^"]*"|'[^']*')`)
-
-func maskCommandSecrets(cmd string) string {
-	return envSecretRegex.ReplaceAllStringFunc(cmd, func(match string) string {
-		eqIdx := strings.Index(match, "=")
-		if eqIdx != -1 {
-			return match[:eqIdx] + "=••••••••"
-		}
-		return match
-	})
-}
 
 type DockerRun struct {
 	svc   *service.DockerRunService
@@ -55,9 +41,10 @@ func (h *DockerRun) Run(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("user_id").(int)
 	ip := r.RemoteAddr
 
-	sanitizedCmd := maskCommandSecrets(body.Command)
+	sanitizedCmd := service.RedactDockerRunCommand(body.Command)
+	redactor := service.NewRunCommandRedactor(body.Command)
 	onDone := func(output string) {
-		h.audit.Log(userID, "docker_run", sanitizedCmd+"\n"+output, ip)
+		h.audit.Log(userID, "docker_run", sanitizedCmd+"\n"+redactor.Redact(output), ip)
 	}
 
 	job, err := h.svc.StartRun(body.Command, mode, body.ConnectCloudflared, body.CreateProject, body.ProjectName, onDone)

@@ -57,16 +57,12 @@ func (rl *RateLimiter) Limit(next http.Handler) http.Handler {
 				}
 			}
 			rl.lastCleanup = now
-			// If still at capacity after pruning expired keys, evict a batch of oldest keys to prevent global lockout DoS
+			// Preserve active throttles. Evicting them lets source-address churn
+			// reset authentication limits within the current window.
 			if len(rl.requests) >= 10000 {
-				evicted := 0
-				for k := range rl.requests {
-					delete(rl.requests, k)
-					evicted++
-					if evicted >= 1000 {
-						break
-					}
-				}
+				rl.mu.Unlock()
+				http.Error(w, `{"error":"rate limiter busy"}`, http.StatusTooManyRequests)
+				return
 			}
 		}
 

@@ -563,6 +563,16 @@ export function shouldIncludeEmptyProjects(statusFilterOrOptions = 'all', maybeS
   return false
 }
 
+// Inactive projects have no child container rows, so both renderers must show
+// their stack headers even when the saved preference is a flat container list.
+export function containerPresentation(filter, groupedPreference, groups = [], containers = []) {
+  const groupByStack = filter === 'inactive' || groupedPreference
+  return {
+    groupByStack,
+    empty: groupByStack ? groups.length === 0 : containers.length === 0,
+  }
+}
+
 /**
  * Filters container groups based on status filter and search query.
  * Ensures empty stacks (with 0 matching containers) are omitted whenever any active container filter

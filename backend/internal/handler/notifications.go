@@ -63,6 +63,10 @@ func (h *Notifications) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	responseCfg := cfg
+	if cfg.TelegramBotToken != "" {
+		// Older failed delivery statuses can contain a URL with the bot token.
+		responseCfg.LastStatus = strings.ReplaceAll(responseCfg.LastStatus, cfg.TelegramBotToken, "[redacted]")
+	}
 	if responseCfg.TelegramBotToken != "" {
 		if len(responseCfg.TelegramBotToken) > 4 {
 			responseCfg.TelegramBotToken = "••••••••" + responseCfg.TelegramBotToken[len(responseCfg.TelegramBotToken)-4:]
@@ -208,7 +212,7 @@ func (h *Notifications) Test(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequestWithContext(r.Context(), "POST", targetURL, bytes.NewReader(payload))
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"failed to build request: %s"}`, err.Error()), http.StatusBadRequest)
+		jsonError(w, "invalid notification destination", http.StatusBadRequest)
 		return
 	}
 	req.Header.Set("Content-Type", contentType)
@@ -223,7 +227,9 @@ func (h *Notifications) Test(w http.ResponseWriter, r *http.Request) {
 	if err != nil || resp.StatusCode >= 400 {
 		errMsg := "Webhook request failed"
 		if err != nil {
-			errMsg = err.Error()
+			// *url.Error includes the destination URL, including Telegram bot
+			// tokens and webhook credentials. Do not persist or return it.
+			errMsg = "notification destination could not be reached"
 		} else if resp != nil {
 			errMsg = fmt.Sprintf("HTTP %d from provider", resp.StatusCode)
 		}
@@ -232,7 +238,7 @@ func (h *Notifications) Test(w http.ResponseWriter, r *http.Request) {
 		cfg.LastStatus = fmt.Sprintf("Error: %s", errMsg)
 		h.recordDeliveryStatus(cfg.LastTestedAt, cfg.LastStatus)
 
-		http.Error(w, fmt.Sprintf(`{"error":"Webhook delivery failed: %s"}`, errMsg), http.StatusBadGateway)
+		jsonError(w, "Webhook delivery failed: "+errMsg, http.StatusBadGateway)
 		return
 	}
 	cfg.LastTestedAt = time.Now().Format(time.RFC3339)

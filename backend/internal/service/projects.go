@@ -575,10 +575,7 @@ func (s *Projects) DeployStream(id int, p Project, ref string, onDone func(strin
 		}
 
 		sanitize := func(msg string) string {
-			if p.GitToken != "" {
-				msg = strings.ReplaceAll(msg, p.GitToken, "********")
-			}
-			return msg
+			return redactProjectGitOutput(msg, p.GitToken)
 		}
 
 		s.appendOutput(id, "[STEP] git fetch --all")
@@ -736,6 +733,17 @@ func (s *Projects) buildAuthURL(p Project) string {
 	}
 	u.User = url.UserPassword(username, p.GitToken)
 	return u.String()
+}
+
+func redactProjectGitOutput(message, token string) string {
+	if token == "" {
+		return message
+	}
+	// Git errors can print the authenticated remote URL. Its userinfo password
+	// is escaped, so replacing only the raw token misses punctuation and spaces.
+	escaped := strings.TrimPrefix(url.UserPassword("", token).String(), ":")
+	message = strings.ReplaceAll(message, escaped, "********")
+	return strings.ReplaceAll(message, token, "********")
 }
 
 func maskToken(t string) string {
