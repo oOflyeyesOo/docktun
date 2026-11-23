@@ -6,7 +6,10 @@ import {
   ArrowDown,
   ChevronsUpDown,
   ChevronsDownUp,
-  Server
+  Server,
+  Play,
+  Code2,
+  Layers
 } from 'lucide-vue-next'
 import StackGroupRow, { type ContainerGroup } from './StackGroupRow.vue'
 import ContainerTableRow, { type ContainerRowItem } from './ContainerTableRow.vue'
@@ -287,7 +290,44 @@ const summaryText = computed(() => {
 
               <!-- Child Containers of the Stack (if expanded) -->
               <template v-if="!collapsedStacks[group.key]">
+                <!-- Empty Stack Fallback Row -->
+                <tr v-if="group.containers.length === 0" class="bg-slate-50/50 border-b border-slate-100">
+                  <td colspan="8" class="py-4 px-6 text-center">
+                    <div class="flex flex-col items-center justify-center gap-1.5 text-xs text-slate-500">
+                      <div class="flex items-center gap-1.5 text-slate-600 font-medium">
+                        <Layers class="h-3.5 w-3.5 text-slate-400" />
+                        <span>No active containers in this stack.</span>
+                      </div>
+                      <p class="text-[11px] text-slate-400">The stack is down. Click "Up" to start containers.</p>
+                      <div class="flex items-center gap-2 mt-1">
+                        <button
+                          v-if="group.projectId"
+                          type="button"
+                          @click="emit('stack-action', group.projectId, 'up')"
+                          :disabled="!!stackActionLoading?.[group.projectId]"
+                          class="inline-flex items-center gap-1 rounded bg-emerald-50 border border-emerald-300 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
+                          title="Start stack (docker compose up -d)"
+                        >
+                          <Play class="h-3 w-3 fill-current" />
+                          <span>Start Stack</span>
+                        </button>
+                        <button
+                          v-if="group.projectId"
+                          type="button"
+                          @click="emit('open-compose', group)"
+                          class="inline-flex items-center gap-1 rounded bg-white border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+                          title="Edit docker-compose.yml"
+                        >
+                          <Code2 class="h-3 w-3 text-indigo-500" />
+                          <span>Compose</span>
+                        </button>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+
                 <ContainerTableRow
+                  v-else
                   v-for="(container, idx) in group.containers"
                   :key="container.id"
                   :container="container"

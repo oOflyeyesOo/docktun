@@ -70,9 +70,11 @@ function handleMenuAction(action: () => void) {
             type="checkbox"
             :checked="isSelected"
             :indeterminate.prop="isIndeterminate"
+            :disabled="group.totalCount === 0"
             @change="emit('toggle-select-stack', group)"
-            class="h-3.5 w-3.5 rounded border-slate-300 bg-white text-cyan-600 focus:ring-cyan-500 cursor-pointer"
-            :title="`Select all containers in stack ${group.name}`"
+            class="h-3.5 w-3.5 rounded border-slate-300 bg-white text-cyan-600 focus:ring-cyan-500"
+            :class="group.totalCount === 0 ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'"
+            :title="group.totalCount === 0 ? 'No containers in stack' : `Select all containers in stack ${group.name}`"
           />
 
           <!-- Collapse toggle button -->
@@ -99,13 +101,20 @@ function handleMenuAction(action: () => void) {
           <!-- Health Count Badge -->
           <span
             class="rounded-full px-2 py-0.5 text-[10px] font-mono font-semibold"
-            :class="group.runningCount === group.totalCount && group.totalCount > 0
-              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-              : group.runningCount > 0
-                ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                : 'bg-slate-100 text-slate-600 border border-slate-200'"
+            :class="group.totalCount === 0
+              ? 'bg-slate-100 text-slate-600 border border-slate-200'
+              : group.runningCount === group.totalCount && group.totalCount > 0
+                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                : group.runningCount > 0
+                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                  : 'bg-rose-50 text-rose-700 border border-rose-200'"
           >
-            {{ group.runningCount }}/{{ group.totalCount }} running
+            <template v-if="group.totalCount === 0">
+              Down (0 containers)
+            </template>
+            <template v-else>
+              {{ group.runningCount }}/{{ group.totalCount }} running
+            </template>
           </span>
 
           <!-- Total CPU -->
@@ -166,11 +175,12 @@ function handleMenuAction(action: () => void) {
               <button
                 type="button"
                 @click="emit('stack-action', group.projectId, 'down')"
-                :disabled="!!stackActionLoading?.[group.projectId]"
-                class="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-slate-700 hover:text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-50 cursor-pointer"
-                title="Stop stack (docker compose down)"
+                :disabled="group.totalCount === 0 || !!stackActionLoading?.[group.projectId]"
+                class="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-colors"
+                :class="group.totalCount === 0 ? 'text-slate-400 opacity-40 cursor-not-allowed' : 'text-slate-700 hover:text-amber-700 hover:bg-amber-50 cursor-pointer disabled:opacity-50'"
+                :title="group.totalCount === 0 ? 'Stack is already down' : 'Stop stack (docker compose down)'"
               >
-                <Square class="h-3 w-3 fill-current text-amber-500" />
+                <Square class="h-3 w-3 fill-current" :class="group.totalCount === 0 ? 'text-slate-300' : 'text-amber-500'" />
                 <span>Down</span>
               </button>
 
@@ -178,13 +188,17 @@ function handleMenuAction(action: () => void) {
               <button
                 type="button"
                 @click="emit('stack-action', group.projectId, 'restart')"
-                :disabled="!!stackActionLoading?.[group.projectId]"
-                class="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-slate-700 hover:text-cyan-700 hover:bg-cyan-50 transition-colors disabled:opacity-50 cursor-pointer"
-                title="Restart stack (docker compose restart)"
+                :disabled="group.totalCount === 0 || !!stackActionLoading?.[group.projectId]"
+                class="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-colors"
+                :class="group.totalCount === 0 ? 'text-slate-400 opacity-40 cursor-not-allowed' : 'text-slate-700 hover:text-cyan-700 hover:bg-cyan-50 cursor-pointer disabled:opacity-50'"
+                :title="group.totalCount === 0 ? 'Stack is not running' : 'Restart stack (docker compose restart)'"
               >
                 <RotateCcw
-                  class="h-3 w-3 text-cyan-600"
-                  :class="{ 'animate-spin': stackActionLoading?.[group.projectId] }"
+                  class="h-3 w-3"
+                  :class="[
+                    group.totalCount === 0 ? 'text-slate-300' : 'text-cyan-600',
+                    stackActionLoading?.[group.projectId] ? 'animate-spin' : ''
+                  ]"
                 />
                 <span>Restart</span>
               </button>

@@ -530,19 +530,23 @@ export function expandAllStacks() {
 /**
  * Determines whether registered Compose projects with 0 running/stopped containers
  * should be included in the container groups.
- * Empty projects are only included when viewing all containers with no active search query.
+ * Empty projects are only included when viewing 'inactive' stacks or when explicitly requested.
+ * Active container views ('all', 'running', 'stopped', 'exposed', etc.) omit empty stacks so
+ * bringing down a stack does not leave a ghost header row in active container views.
  *
- * @param {string | { statusFilter?: string, filter?: string, searchQuery?: string, search?: string }} [statusFilterOrOptions='all']
+ * @param {string | { statusFilter?: string, filter?: string, searchQuery?: string, search?: string, includeEmpty?: boolean, includeInactive?: boolean }} [statusFilterOrOptions='all']
  * @param {string} [maybeSearchQuery='']
  * @returns {boolean}
  */
 export function shouldIncludeEmptyProjects(statusFilterOrOptions = 'all', maybeSearchQuery = '') {
   let statusFilter = 'all'
   let searchQuery = ''
+  let explicitInclude = false
 
   if (typeof statusFilterOrOptions === 'object' && statusFilterOrOptions !== null) {
     statusFilter = statusFilterOrOptions.statusFilter ?? statusFilterOrOptions.filter ?? 'all'
     searchQuery = statusFilterOrOptions.searchQuery ?? statusFilterOrOptions.search ?? ''
+    explicitInclude = Boolean(statusFilterOrOptions.includeEmpty || statusFilterOrOptions.includeInactive)
   } else {
     statusFilter = statusFilterOrOptions || 'all'
     searchQuery = maybeSearchQuery || ''
@@ -552,33 +556,84 @@ export function shouldIncludeEmptyProjects(statusFilterOrOptions = 'all', maybeS
     statusFilter = statusFilter.trim().toLowerCase()
   }
 
-  const isDefaultFilter = !statusFilter || statusFilter === 'all'
-  const hasSearch = typeof searchQuery === 'string' && searchQuery.trim().length > 0
-  return isDefaultFilter && !hasSearch
+  if (explicitInclude || statusFilter === 'inactive') {
+    return true
+  }
+
+  return false
 }
 
 /**
  * Filters container groups based on status filter and search query.
- * Ensures empty stacks (with 0 matching containers) are omitted whenever any filter
- * (stopped, updates, exposed, public, private, local, running) or search query is active.
+ * Ensures empty stacks (with 0 matching containers) are omitted whenever any active container filter
+ * (all, running, stopped, updates, exposed, public, private, local) or search query is active.
+ * Empty/down stacks are only included when filter is 'inactive' or explicit includeEmpty/includeInactive is set.
  *
  * @param {Array<any>} groups
- * @param {string | { statusFilter?: string, filter?: string, searchQuery?: string, search?: string }} [statusFilterOrOptions='all']
+ * @param {string | { statusFilter?: string, filter?: string, searchQuery?: string, search?: string, includeEmpty?: boolean, includeInactive?: boolean }} [statusFilterOrOptions='all']
  * @param {string} [maybeSearchQuery='']
  * @returns {Array<any>}
  */
 export function filterContainerGroups(groups, statusFilterOrOptions = 'all', maybeSearchQuery = '') {
   if (!Array.isArray(groups)) return []
-  if (shouldIncludeEmptyProjects(statusFilterOrOptions, maybeSearchQuery)) {
-    return [...groups]
+
+  let statusFilter = 'all'
+  let searchQuery = ''
+  let explicitInclude = false
+
+  if (typeof statusFilterOrOptions === 'object' && statusFilterOrOptions !== null) {
+    statusFilter = statusFilterOrOptions.statusFilter ?? statusFilterOrOptions.filter ?? 'all'
+    searchQuery = statusFilterOrOptions.searchQuery ?? statusFilterOrOptions.search ?? ''
+    explicitInclude = Boolean(statusFilterOrOptions.includeEmpty || statusFilterOrOptions.includeInactive)
+  } else {
+    statusFilter = statusFilterOrOptions || 'all'
+    searchQuery = maybeSearchQuery || ''
   }
+
+  if (typeof statusFilter === 'string') {
+    statusFilter = statusFilter.trim().toLowerCase()
+  }
+
+  const query = typeof searchQuery === 'string' ? searchQuery.trim().toLowerCase() : ''
+
+  if (statusFilter === 'inactive') {
+    return groups.filter((g) => {
+      if (!g || typeof g !== 'object') return false
+      const count = Array.isArray(g.containers) ? g.containers.length : (g.totalCount || 0)
+      if (count > 0) return false
+      if (query && typeof g.name === 'string') {
+        return g.name.toLowerCase().includes(query)
+      }
+      return true
+    })
+  }
+
+  if (explicitInclude) {
+    if (!query) return [...groups]
+    return groups.filter((g) => {
+      if (!g || typeof g !== 'object') return false
+      if (typeof g.name === 'string' && g.name.toLowerCase().includes(query)) return true
+      if (Array.isArray(g.containers)) {
+        return g.containers.some((c) => c && typeof c.name === 'string' && c.name.toLowerCase().includes(query))
+      }
+      return false
+    })
+  }
+
   return groups.filter((g) => {
     if (!g || typeof g !== 'object') return false
-    if (Array.isArray(g.containers)) {
-      return g.containers.length > 0
+    const hasContainers = Array.isArray(g.containers)
+      ? g.containers.length > 0
+      : (typeof g.totalCount === 'number' && !isNaN(g.totalCount) && g.totalCount > 0)
+    if (!hasContainers) return false
+
+    if (query) {
+      const matchGroupName = typeof g.name === 'string' && g.name.toLowerCase().includes(query)
+      const matchChild = Array.isArray(g.containers) && g.containers.some((c) => c && typeof c.name === 'string' && c.name.toLowerCase().includes(query))
+      return matchGroupName || matchChild
     }
-    const count = typeof g.totalCount === 'number' && !isNaN(g.totalCount) ? g.totalCount : 0
-    return count > 0
+
+    return true
   })
 }
 

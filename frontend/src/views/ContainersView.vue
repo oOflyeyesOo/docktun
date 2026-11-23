@@ -17,7 +17,6 @@ import {
   toggleStackSelection,
   calculateTableSelection,
   toggleTableSelection,
-  shouldIncludeEmptyProjects,
 } from '../lib/containers-table.mjs'
 import ContainerInspectorModal from '../components/containers/modals/ContainerInspectorModal.vue'
 import ViewDensityToggle from '../components/containers/table/ViewDensityToggle.vue'
@@ -145,7 +144,17 @@ const serviceInventoryError = ref('')
 let inventoryReady = false
 const loading = ref(false)
 const searchQuery = ref('')
-const filter = ref<'all' | 'running' | 'stopped' | 'local' | 'public' | 'private' | 'exposed' | 'updates'>('all')
+const filter = ref<'all' | 'running' | 'stopped' | 'local' | 'public' | 'private' | 'exposed' | 'updates' | 'inactive'>('all')
+
+const inactiveProjects = computed(() => {
+  return registeredProjects.value.filter((p) => {
+    return !containers.value.some((c) => {
+      const projId = containerStack(c).projectId
+      const projName = containerStack(c).name
+      return projId === p.id || (projName && projName.toLowerCase() === p.name.toLowerCase())
+    })
+  })
+})
 
 const checkingUpdates = ref(false)
 const checkingSingleUpdate = ref<Record<string, boolean>>({})
@@ -354,6 +363,7 @@ const deleteStackFolderReason = ref('')
 
 const filteredContainers = computed(() => {
   return containers.value.filter((c) => {
+    if (filter.value === 'inactive') return false
     if (filter.value === 'running' && !c.running) return false
     if (filter.value === 'stopped' && c.running) return false
     if (filter.value === 'local' && (!c.running || c.exposure_mode === 'public' || c.exposure_mode === 'private')) return false
@@ -385,13 +395,17 @@ const summary = computed(() => {
     totalCpu += parseCpuPercent(c.cpu, c.running)
   })
 
+  const activeStackCount = containerGroups.value.filter((g) => g.isStack && g.containers.length > 0).length
+
   return {
     total,
     running,
     stopped: total - running,
     publicCount,
     privateCount,
-    stackCount: containerGroups.value.filter((g) => g.isStack).length,
+    stackCount: filter.value === 'inactive'
+      ? containerGroups.value.filter((g) => g.isStack).length
+      : activeStackCount,
     cpuUsage: totalCpu.toFixed(1) + '%',
   }
 })
@@ -510,6 +524,38 @@ async function runBatchCheckUpdates() {
 
 // Compute Container Groups
 const containerGroups = computed<ContainerGroup[]>(() => {
+  // If viewing inactive stacks, populate from registeredProjects that currently have 0 active containers
+  if (filter.value === 'inactive') {
+    const q = searchQuery.value.trim().toLowerCase()
+    const inactive = registeredProjects.value.filter((p) => {
+      const hasContainers = containers.value.some((c) => {
+        const projId = containerStack(c).projectId
+        const projName = containerStack(c).name
+        return projId === p.id || (projName && projName.toLowerCase() === p.name.toLowerCase())
+      })
+      if (hasContainers) return false
+      if (q && !p.name.toLowerCase().includes(q)) return false
+      return true
+    })
+
+    return inactive
+      .map((p) => ({
+        key: `project:${p.id}`,
+        name: p.name,
+        isStack: true,
+        projectId: p.id,
+        projectPath: p.path,
+        containers: [],
+        runningCount: 0,
+        totalCount: 0,
+        totalCpu: '0.0%',
+        hasUpdates: false,
+        hasPublic: false,
+        hasZeroTrust: false,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
   const list = filteredContainers.value
   if (!groupByStack.value) {
     let cpuSum = 0
@@ -571,30 +617,6 @@ const containerGroups = computed<ContainerGroup[]>(() => {
     })
   })
 
-  // Include registered Compose projects with 0 running/stopped containers so they are visible and manageable
-  // Only include empty registered projects when viewing all containers with no search query active
-  if (shouldIncludeEmptyProjects(filter.value, searchQuery.value)) {
-    registeredProjects.value.forEach((p) => {
-      const existing = groups.find((g) => g.projectId === p.id || (g.isStack && g.name.toLowerCase() === p.name.toLowerCase()))
-      if (!existing) {
-        groups.push({
-          key: `project:${p.id}`,
-          name: p.name,
-          isStack: true,
-          projectId: p.id,
-          projectPath: p.path,
-          containers: [],
-          runningCount: 0,
-          totalCount: 0,
-          totalCpu: '0.0%',
-          hasUpdates: false,
-          hasPublic: false,
-          hasZeroTrust: false,
-        })
-      }
-    })
-  }
-
   // Sort stacks alphabetically, with standalone apps at the bottom.
   groups.sort((a, b) => {
     if (a.isStack && !b.isStack) return -1
@@ -602,12 +624,8 @@ const containerGroups = computed<ContainerGroup[]>(() => {
     return a.name.localeCompare(b.name)
   })
 
-  // Ensure empty stacks (0 containers matching active filter/search) NEVER render when a filter tab or search is active
-  if (!shouldIncludeEmptyProjects(filter.value, searchQuery.value)) {
-    return groups.filter((g) => g.containers && g.containers.length > 0)
-  }
-
-  return groups
+  // Ensure empty stacks NEVER render in active container views
+  return groups.filter((g) => g.containers && g.containers.length > 0)
 })
 
 async function fetchContainers() {
@@ -621,6 +639,9 @@ async function fetchContainers() {
     if (Array.isArray(projectsList)) { registeredProjects.value = applicationProjects(projectsList, data || [], managedServices.value) }
     containers.value = applicationContainers(data || [], managedServices.value)
     inventoryReady = true
+    if (filter.value === 'inactive' && inactiveProjects.value.length === 0) {
+      filter.value = 'all'
+    }
     containers.value.forEach(refreshExposureDraft)
 
     // If modal is open, sync basic stats into selectedContainer
@@ -1437,6 +1458,17 @@ onUnmounted(() => {
         >
           Stopped ({{ summary.stopped }})
         </button>
+        <button
+          v-if="inactiveProjects.length > 0"
+          @click="filter = 'inactive'"
+          class="rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors flex items-center gap-1.5"
+          :class="filter === 'inactive' ? 'bg-slate-100 text-slate-800 shadow-sm border border-slate-300' : 'text-slate-500 hover:text-slate-700'"
+        >
+          <span>Inactive</span>
+          <span class="rounded-full bg-slate-200/80 px-1.5 py-0.2 text-[10px] font-bold text-slate-700">
+            {{ inactiveProjects.length }}
+          </span>
+        </button>
       </div>
 
       <!-- Controls: Density, Grouping, Selection & Search -->
@@ -1632,13 +1664,20 @@ onUnmounted(() => {
               <!-- Running Count Badge -->
               <span
                 class="rounded-full px-2 py-0.5 text-[10px] font-mono font-semibold"
-                :class="group.runningCount === group.totalCount && group.totalCount > 0
-                  ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30'
-                  : group.runningCount > 0
-                    ? 'bg-amber-500/10 text-amber-600 border border-amber-500/30'
-                    : 'bg-slate-100 text-slate-600 border border-slate-300'"
+                :class="group.totalCount === 0
+                  ? 'bg-slate-100 text-slate-600 border border-slate-300'
+                  : group.runningCount === group.totalCount && group.totalCount > 0
+                    ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30'
+                    : group.runningCount > 0
+                      ? 'bg-amber-500/10 text-amber-600 border border-amber-500/30'
+                      : 'bg-slate-100 text-slate-600 border border-slate-300'"
               >
-                {{ group.runningCount }}/{{ group.totalCount }} running
+                <template v-if="group.totalCount === 0">
+                  Down (0 containers)
+                </template>
+                <template v-else>
+                  {{ group.runningCount }}/{{ group.totalCount }} running
+                </template>
               </span>
 
               <!-- Total CPU -->
@@ -1700,9 +1739,10 @@ onUnmounted(() => {
 
               <button
                 @click="runStackAction(group.projectId, 'restart')"
-                :disabled="stackActionLoading[group.projectId]"
-                class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2.5 text-cyan-700"
-                title="docker compose restart"
+                :disabled="group.totalCount === 0 || stackActionLoading[group.projectId]"
+                class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2.5"
+                :class="group.totalCount === 0 ? 'text-slate-400 opacity-40 cursor-not-allowed hover:border-slate-200' : 'text-cyan-700'"
+                :title="group.totalCount === 0 ? 'Stack is not running' : 'docker compose restart'"
               >
                 <RotateCcw class="h-3 w-3" :class="stackActionLoading[group.projectId] ? 'animate-spin' : ''" />
                 <span>Restart</span>
@@ -1720,9 +1760,10 @@ onUnmounted(() => {
 
               <button
                 @click="runStackAction(group.projectId, 'down')"
-                :disabled="stackActionLoading[group.projectId]"
-                class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2 text-rose-600 hover:border-rose-500/50 hover:bg-rose-50/30"
-                title="docker compose down"
+                :disabled="group.totalCount === 0 || stackActionLoading[group.projectId]"
+                class="cyber-btn-secondary flex items-center gap-1 text-[11px] py-1 px-2"
+                :class="group.totalCount === 0 ? 'text-slate-400 opacity-40 cursor-not-allowed hover:border-slate-200' : 'text-rose-600 hover:border-rose-500/50 hover:bg-rose-50/30'"
+                :title="group.totalCount === 0 ? 'Stack is already down' : 'docker compose down'"
               >
                 <Square class="h-3 w-3 fill-current" />
                 <span>Down</span>

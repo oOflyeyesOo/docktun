@@ -539,19 +539,28 @@ test('Accordion collapse state persistence and malformed JSON recovery in localS
 
 test('Stack filtering logic excludes empty stacks when status filters or search queries are active', () => {
   // 1. shouldIncludeEmptyProjects predicate
-  // Default: 'all' filter and empty search -> true
-  assert.equal(shouldIncludeEmptyProjects('all', ''), true)
-  assert.equal(shouldIncludeEmptyProjects(undefined, undefined), true)
-  assert.equal(shouldIncludeEmptyProjects('', ''), true)
-  assert.equal(shouldIncludeEmptyProjects('all', '   '), true)
-  assert.equal(shouldIncludeEmptyProjects('ALL', ''), true)
-  assert.equal(shouldIncludeEmptyProjects('  all  ', ''), true)
-  assert.equal(shouldIncludeEmptyProjects({ statusFilter: 'all', searchQuery: '' }), true)
-  assert.equal(shouldIncludeEmptyProjects({ statusFilter: 'ALL', searchQuery: '   ' }), true)
-  assert.equal(shouldIncludeEmptyProjects({ filter: 'all' }), true)
+  // Active container filters (all, running, stopped, etc.) strictly reject empty stacks
+  assert.equal(shouldIncludeEmptyProjects('all', ''), false)
+  assert.equal(shouldIncludeEmptyProjects(undefined, undefined), false)
+  assert.equal(shouldIncludeEmptyProjects('', ''), false)
+  assert.equal(shouldIncludeEmptyProjects('all', '   '), false)
+  assert.equal(shouldIncludeEmptyProjects('ALL', ''), false)
+  assert.equal(shouldIncludeEmptyProjects('  all  ', ''), false)
+  assert.equal(shouldIncludeEmptyProjects({ statusFilter: 'all', searchQuery: '' }), false)
+  assert.equal(shouldIncludeEmptyProjects({ statusFilter: 'ALL', searchQuery: '   ' }), false)
+  assert.equal(shouldIncludeEmptyProjects({ filter: 'all' }), false)
+
+  // Explicit 'inactive' mode or includeEmpty / includeInactive flags accept empty stacks
+  assert.equal(shouldIncludeEmptyProjects('inactive', ''), true)
+  assert.equal(shouldIncludeEmptyProjects('INACTIVE', ''), true)
+  assert.equal(shouldIncludeEmptyProjects('  inactive  ', ''), true)
+  assert.equal(shouldIncludeEmptyProjects({ statusFilter: 'inactive' }), true)
+  assert.equal(shouldIncludeEmptyProjects({ filter: 'inactive' }), true)
+  assert.equal(shouldIncludeEmptyProjects({ includeEmpty: true }), true)
+  assert.equal(shouldIncludeEmptyProjects({ includeInactive: true }), true)
 
   // Status filters: strictly false for ALL active filter modes
-  const allFilterModes = ['running', 'stopped', 'exposed', 'updates', 'local', 'public', 'private']
+  const allFilterModes = ['all', 'running', 'stopped', 'exposed', 'updates', 'local', 'public', 'private']
   for (const mode of allFilterModes) {
     assert.equal(shouldIncludeEmptyProjects(mode, ''), false, `mode ${mode} must reject empty projects`)
     assert.equal(shouldIncludeEmptyProjects(mode.toUpperCase(), ''), false, `mode ${mode.toUpperCase()} must reject empty projects`)
@@ -561,7 +570,7 @@ test('Stack filtering logic excludes empty stacks when status filters or search 
     assert.equal(shouldIncludeEmptyProjects({ statusFilter: mode, searchQuery: '' }), false)
   }
 
-  // Non-empty search query -> false (even with 'all' status filter)
+  // Non-empty search query on active container filters
   assert.equal(shouldIncludeEmptyProjects('all', 'redis'), false)
   assert.equal(shouldIncludeEmptyProjects('all', '  web '), false)
   assert.equal(shouldIncludeEmptyProjects('', 'nginx'), false)
@@ -616,15 +625,32 @@ test('Stack filtering logic excludes empty stacks when status filters or search 
 
   const allGroups = [activeStack, emptyStackA, emptyStackB, emptyStackWithStaleCount, standaloneGroup]
 
-  // When filter is 'all' and search is empty, empty registered stacks are included
+  // When filter is 'all', empty registered stacks are strictly omitted so Compose Down does not leave ghost headers
   const allResult = filterContainerGroups(allGroups, 'all', '')
-  assert.equal(allResult.length, 5)
+  assert.equal(allResult.length, 2)
   assert.deepEqual(
     allResult.map((g) => g.name),
-    ['web-stack', 'aio-stack', 'sencho', 'stale-count-stack', 'Standalone Containers']
+    ['web-stack', 'Standalone Containers']
   )
 
-  // Verify EVERY filter mode strictly eliminates all empty stacks
+  // When filter is 'inactive', ONLY empty stacks are returned
+  const inactiveResult = filterContainerGroups(allGroups, 'inactive', '')
+  assert.equal(inactiveResult.length, 3)
+  assert.deepEqual(
+    inactiveResult.map((g) => g.name),
+    ['aio-stack', 'sencho', 'stale-count-stack']
+  )
+
+  // When filter is 'inactive' and searchQuery is given, filters inactive stacks by name
+  const inactiveSearchResult = filterContainerGroups(allGroups, 'inactive', 'aio')
+  assert.equal(inactiveSearchResult.length, 1)
+  assert.equal(inactiveSearchResult[0].name, 'aio-stack')
+
+  // When explicitInclude flag is set, all groups are returned
+  const explicitResult = filterContainerGroups(allGroups, { includeEmpty: true })
+  assert.equal(explicitResult.length, 5)
+
+  // Verify EVERY active filter mode strictly eliminates all empty stacks
   for (const mode of allFilterModes) {
     const res = filterContainerGroups(allGroups, mode, '')
     assert.equal(res.length, 2, `filter mode '${mode}' must return only non-empty groups`)
@@ -640,9 +666,10 @@ test('Stack filtering logic excludes empty stacks when status filters or search 
     assert.equal(resObj.length, 2)
   }
 
-  // When searchQuery is non-empty, empty stacks must NEVER be returned
+  // When searchQuery is non-empty on 'all', empty stacks must NEVER be returned
   const searchResult = filterContainerGroups(allGroups, 'all', 'web')
-  assert.equal(searchResult.length, 2)
+  assert.equal(searchResult.length, 1)
+  assert.equal(searchResult[0].name, 'web-stack')
   assert.equal(searchResult.some((g) => g.containers.length === 0), false)
 
   // Edge cases: handles null, undefined, invalid elements inside groups
