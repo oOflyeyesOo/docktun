@@ -45,7 +45,7 @@ func (h *Notifications) configFile() string {
 }
 
 func (h *Notifications) Get(w http.ResponseWriter, r *http.Request) {
-	data, err := os.ReadFile(h.configFile())
+	cfg, err := h.readConfig()
 	if err != nil {
 		def := notifConfig{
 			Enabled:                false,
@@ -62,21 +62,16 @@ func (h *Notifications) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var cfg notifConfig
-	if err := json.Unmarshal(data, &cfg); err == nil {
-		if cfg.CpuThresholdPercent == 0 {
-			cfg.CpuThresholdPercent = 85
+	responseCfg := cfg
+	if responseCfg.TelegramBotToken != "" {
+		if len(responseCfg.TelegramBotToken) > 4 {
+			responseCfg.TelegramBotToken = "••••••••" + responseCfg.TelegramBotToken[len(responseCfg.TelegramBotToken)-4:]
+		} else {
+			responseCfg.TelegramBotToken = "••••••••"
 		}
-		if cfg.MemoryThresholdPercent == 0 {
-			cfg.MemoryThresholdPercent = 85
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(cfg)
-		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	json.NewEncoder(w).Encode(responseCfg)
 }
 
 func (h *Notifications) Update(w http.ResponseWriter, r *http.Request) {
@@ -96,6 +91,11 @@ func (h *Notifications) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if cfg.Type == "" {
 		cfg.Type = "discord"
+	}
+
+	existing, _ := h.readConfig()
+	if strings.Contains(cfg.TelegramBotToken, "•") {
+		cfg.TelegramBotToken = existing.TelegramBotToken
 	}
 
 	if err := h.saveConfig(cfg); err != nil {

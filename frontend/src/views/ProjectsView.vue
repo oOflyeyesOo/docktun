@@ -167,7 +167,7 @@ async function rollbackTo(rev: Revision) {
 }
 
 function copyYAML(text: string, key: string) {
-  navigator.clipboard.writeText(text)
+  navigator.clipboard.writeText(text).catch(() => {})
   copiedKey.value = key
   setTimeout(() => { copiedKey.value = '' }, 2000)
 }

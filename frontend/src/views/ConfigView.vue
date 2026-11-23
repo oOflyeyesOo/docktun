@@ -184,7 +184,7 @@ const cfApiSuccess = ref(false)
 // Clipboard Feedback
 const copiedKey = ref<string | null>(null)
 function copyText(key: string, text: string) {
-  navigator.clipboard.writeText(text)
+  navigator.clipboard.writeText(text).catch(() => {})
   copiedKey.value = key
   setTimeout(() => {
     if (copiedKey.value === key) copiedKey.value = null

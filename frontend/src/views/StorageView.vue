@@ -69,7 +69,7 @@ async function runDoctorScan() {
 }
 
 function copyRemedy(cmd: string, index: number) {
-  navigator.clipboard.writeText(cmd)
+  navigator.clipboard.writeText(cmd).catch(() => {})
   copiedRemedyIndex.value = index
   setTimeout(() => {
     copiedRemedyIndex.value = null
@@ -201,7 +201,7 @@ function showToast(text: string, type: 'success' | 'error' | 'info' = 'success')
 }
 
 function copyText(key: string, val: string) {
-  navigator.clipboard.writeText(val)
+  navigator.clipboard.writeText(val).catch(() => {})
   copiedKey.value = key
   setTimeout(() => (copiedKey.value = ''), 2000)
 }

@@ -186,7 +186,7 @@ function copyAllLogs() {
     selectedSource.value === 'cloudflared'
       ? filteredWsLogs.value.map((l) => `${l.time} ${l.message}`).join('\n')
       : filteredContainerLogs.value.join('\n')
-  navigator.clipboard.writeText(text)
+  navigator.clipboard.writeText(text).catch(() => {})
   copied.value = true
   setTimeout(() => (copied.value = false), 2000)
 }
@@ -279,7 +279,7 @@ function getActionBadgeStyle(action: string) {
 
 function copyAuditData() {
   const jsonStr = JSON.stringify(auditEntries.value, null, 2)
-  navigator.clipboard.writeText(jsonStr)
+  navigator.clipboard.writeText(jsonStr).catch(() => {})
   auditCopied.value = true
   setTimeout(() => (auditCopied.value = false), 2000)
 }

@@ -13,7 +13,9 @@ import {
   Cpu,
   ShieldCheck,
   Radio,
-  Info
+  Info,
+  Eye,
+  EyeOff
 } from 'lucide-vue-next'
 import { useApi } from '../composables/useApi'
 
@@ -54,6 +56,7 @@ const form = reactive<NotificationConfig>({
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
+const showBotToken = ref(false)
 const message = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 
 const channelOptions = [
@@ -265,12 +268,23 @@ load()
             <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-600">
               Telegram Bot Token
             </label>
-            <input
-              v-model="form.telegram_bot_token"
-              type="text"
-              placeholder="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
-              class="cyber-input text-xs font-mono"
-            />
+            <div class="relative">
+              <input
+                v-model="form.telegram_bot_token"
+                :type="showBotToken ? 'text' : 'password'"
+                placeholder="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
+                class="cyber-input text-xs font-mono pr-8"
+              />
+              <button
+                type="button"
+                @click="showBotToken = !showBotToken"
+                class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                :title="showBotToken ? 'Hide token' : 'Show token'"
+              >
+                <EyeOff v-if="showBotToken" class="h-3.5 w-3.5" />
+                <Eye v-else class="h-3.5 w-3.5" />
+              </button>
+            </div>
             <p class="text-[10px] text-slate-500">Obtained from @BotFather on Telegram.</p>
           </div>
 

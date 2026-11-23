@@ -526,8 +526,6 @@ func (s *Projects) ComposeAction(id int, path string, onDone func(string), args 
 		return "", err
 	}
 	go func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
 		defer s.finishOutput(id, onDone)
 		if _, err := s.GetByID(id); err != nil {
 			s.appendOutput(id, "[ERROR] project is no longer available: "+err.Error())
@@ -544,8 +542,6 @@ func (s *Projects) DeployStream(id int, p Project, ref string, onDone func(strin
 		return "", err
 	}
 	go func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
 		defer s.finishOutput(id, onDone)
 		if _, err := s.GetByID(id); err != nil {
 			s.appendOutput(id, "[ERROR] project is no longer available: "+err.Error())

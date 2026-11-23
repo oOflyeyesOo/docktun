@@ -370,7 +370,7 @@ function downloadPeerConfig(peer: WireguardPeer) {
 
 // Copy to Clipboard Helper
 function copyText(key: string, text: string) {
-  navigator.clipboard.writeText(text)
+  navigator.clipboard.writeText(text).catch(() => {})
   copied.value[key] = true
   setTimeout(() => {
     delete copied.value[key]

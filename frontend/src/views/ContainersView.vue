@@ -279,7 +279,7 @@ const disconnectingNetwork = ref<Record<string, boolean>>({})
 // Copied feedback helper
 const copiedKey = ref<string | null>(null)
 function copyToClipboard(key: string, text: string) {
-  navigator.clipboard.writeText(text)
+  navigator.clipboard.writeText(text).catch(() => {})
   copiedKey.value = key
   setTimeout(() => {
     if (copiedKey.value === key) copiedKey.value = null
