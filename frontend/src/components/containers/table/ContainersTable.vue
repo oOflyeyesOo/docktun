@@ -17,7 +17,6 @@ import {
   sortContainers,
   calculateStackSelection,
   calculateTableSelection,
-  filterContainerGroups,
   formatTableSummary
 } from '../../../lib/containers-table.mjs'
 
@@ -92,12 +91,7 @@ const sortedGroups = computed<ContainerGroup[]>(() => {
 })
 
 const displayGroups = computed<ContainerGroup[]>(() => {
-  let list = sortedGroups.value
-  if (props.isFilterActive) {
-    list = filterContainerGroups(list, 'active_filter', '')
-    list = list.filter((g) => g && g.containers && g.containers.length > 0)
-  }
-  return list
+  return sortedGroups.value
 })
 
 const sortedFlatContainers = computed<ContainerRowItem[]>(() => {

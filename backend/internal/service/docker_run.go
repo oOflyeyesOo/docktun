@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -110,10 +111,34 @@ func (s *DockerRunService) GetJob(id int) (*DockerRunJob, bool) {
 	return &copyJob, true
 }
 
+func (s *DockerRunService) pruneOldJobsLocked() {
+	if len(s.jobs) <= 50 {
+		return
+	}
+	var completedIDs []int
+	for id, j := range s.jobs {
+		if j.Done {
+			completedIDs = append(completedIDs, id)
+		}
+	}
+	sort.Ints(completedIDs)
+	toRemove := len(s.jobs) - 50
+	for _, id := range completedIDs {
+		if toRemove <= 0 {
+			break
+		}
+		delete(s.jobs, id)
+		toRemove--
+	}
+}
+
 func (s *DockerRunService) appendLine(id int, line string) {
 	s.mu.Lock()
 	if j, ok := s.jobs[id]; ok {
 		j.Lines = append(j.Lines, line)
+		if len(j.Lines) > 2000 {
+			j.Lines = j.Lines[len(j.Lines)-2000:]
+		}
 		j.Output = j.Lines
 	}
 	s.mu.Unlock()
@@ -195,6 +220,7 @@ func (s *DockerRunService) StartRun(rawCmd string, mode string, connectCloudflar
 		ProjectName: parsed.ContainerName,
 		CreatedAt:   time.Now().Format(time.RFC3339),
 	}
+	s.pruneOldJobsLocked()
 	s.jobs[jobID] = job
 	s.mu.Unlock()
 

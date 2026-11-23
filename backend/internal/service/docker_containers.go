@@ -1109,11 +1109,27 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 	return 0, nil
 }
 
+func (s *DockerContainers) isSelf(id string) bool {
+	cleanID := strings.TrimSpace(id)
+	if cleanID == "" {
+		return false
+	}
+	hostname, _ := os.Hostname()
+	docktunEnv := strings.TrimSpace(os.Getenv("DOCKTUN_CONTAINER"))
+	if docktunEnv != "" && (strings.EqualFold(cleanID, docktunEnv) || strings.EqualFold(strings.TrimPrefix(cleanID, "/"), strings.TrimPrefix(docktunEnv, "/"))) {
+		return true
+	}
+	if hostname != "" && (cleanID == hostname || strings.HasPrefix(cleanID, hostname) || strings.HasPrefix(hostname, cleanID)) {
+		return true
+	}
+	return false
+}
+
 func (s *DockerContainers) Start(id string) error {
 	_ = s.EnsureDatabaseLinks(id)
-	s.exposureMu.Lock()
-	defer s.exposureMu.Unlock()
 	err := RetryOnPortConflict(context.Background(), func() error {
+		s.exposureMu.Lock()
+		defer s.exposureMu.Unlock()
 		return dockerCommand("start", id)
 	}, 4, 500*time.Millisecond)
 	if err != nil {
@@ -1121,12 +1137,17 @@ func (s *DockerContainers) Start(id string) error {
 	}
 	return s.finishTailscaleStart(id)
 }
-func (s *DockerContainers) Stop(id string) error { return dockerCommand("stop", id) }
+func (s *DockerContainers) Stop(id string) error {
+	if s.isSelf(id) {
+		return errors.New("cannot stop DockTun's own container")
+	}
+	return dockerCommand("stop", id)
+}
 func (s *DockerContainers) Restart(id string) error {
 	_ = s.EnsureDatabaseLinks(id)
-	s.exposureMu.Lock()
-	defer s.exposureMu.Unlock()
 	err := RetryOnPortConflict(context.Background(), func() error {
+		s.exposureMu.Lock()
+		defer s.exposureMu.Unlock()
 		return dockerCommand("restart", id)
 	}, 4, 500*time.Millisecond)
 	if err != nil {
@@ -1171,6 +1192,9 @@ func (s *DockerContainers) BatchAction(ids []string, action string) []BatchActio
 }
 
 func (s *DockerContainers) Remove(id string, force bool) error {
+	if s.isSelf(id) {
+		return errors.New("cannot remove DockTun's own container")
+	}
 	args := []string{"rm"}
 	if force {
 		args = append(args, "-f")

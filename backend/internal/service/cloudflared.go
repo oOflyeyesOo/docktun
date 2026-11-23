@@ -151,35 +151,63 @@ func (s *Cloudflared) dockerCmd(action string) error {
 }
 
 func (s *Cloudflared) Logs() error {
-	cName := s.findContainer()
-	cmd := exec.Command("docker", "logs", "-f", "--tail", "100", cName)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stderr, _ := cmd.StderrPipe()
-
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-
-	go s.streamToHub(stdout)
-	go s.streamToHub(stderr)
-	go cmd.Wait()
-
+	go s.superviseLogs()
 	return nil
+}
+
+func (s *Cloudflared) superviseLogs() {
+	for {
+		cName := s.findContainer()
+		cmd := exec.Command("docker", "logs", "-f", "--tail", "50", cName)
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		stderr, _ := cmd.StderrPipe()
+
+		if err := cmd.Start(); err != nil {
+			time.Sleep(3 * time.Second)
+			continue
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.streamToHub(stdout)
+		}()
+		if stderr != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				s.streamToHub(stderr)
+			}()
+		}
+		_ = cmd.Wait()
+		wg.Wait()
+
+		// Pause briefly before reconnecting log stream if container restarted or stopped
+		time.Sleep(2 * time.Second)
+	}
 }
 
 func (s *Cloudflared) streamToHub(r interface{ Read([]byte) (int, error) }) {
 	buf := make([]byte, 4096)
 	for {
 		n, err := r.Read(buf)
-		if n > 0 {
-			entry, _ := json.Marshal(map[string]string{
-				"time":    time.Now().Format(time.RFC3339),
-				"message": strings.TrimSpace(string(buf[:n])),
-			})
-			s.hub.Broadcast <- entry
+		if n > 0 && s.hub != nil {
+			msg := strings.TrimSpace(string(buf[:n]))
+			if msg != "" {
+				entry, _ := json.Marshal(map[string]string{
+					"time":    time.Now().Format(time.RFC3339),
+					"message": msg,
+				})
+				select {
+				case s.hub.Broadcast <- entry:
+				default:
+				}
+			}
 		}
 		if err != nil {
 			return
