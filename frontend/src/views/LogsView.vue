@@ -56,16 +56,31 @@ const wsStatus = ref('DISCONNECTED')
 const loadingContainerLogs = ref(false)
 const copied = ref(false)
 
-const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/logs/ws?token=${authStore.token}`
 let ws: WebSocket | null = null
 let containerPollTimer: any = null
+let wsReconnectTimer: any = null
+
+function getWsUrl(): string {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${protocol}//${location.host}/api/logs/ws?token=${authStore.token}`
+}
 
 function connectWs() {
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer)
+    wsReconnectTimer = null
+  }
   if (ws) {
+    ws.onclose = null
     ws.close()
     ws = null
   }
-  ws = new WebSocket(wsUrl)
+  try {
+    ws = new WebSocket(getWsUrl())
+  } catch {
+    wsStatus.value = 'CLOSED'
+    return
+  }
   wsStatus.value = 'CONNECTING'
   ws.onopen = () => {
     wsStatus.value = 'OPEN'
@@ -73,7 +88,7 @@ function connectWs() {
   ws.onclose = () => {
     wsStatus.value = 'CLOSED'
     if (selectedSource.value === 'cloudflared' && activeTab.value === 'stream') {
-      setTimeout(connectWs, 3000)
+      wsReconnectTimer = setTimeout(connectWs, 3000)
     }
   }
   ws.onmessage = (e) => {
@@ -324,6 +339,10 @@ watch(activeTab, (tab) => {
 })
 
 onUnmounted(() => {
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer)
+    wsReconnectTimer = null
+  }
   if (ws) {
     ws.onclose = null
     ws.close()

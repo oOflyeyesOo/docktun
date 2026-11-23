@@ -7,7 +7,12 @@ export async function authenticatedResponse(path, opts, auth, refresh, unauthori
     const token = await refresh()
     if (token) { headers.set('Authorization', 'Bearer ' + token); response = await fetcher(path, { ...opts, headers }) }
   }
-  if (response.status === 401) { unauthorized(); throw new Error('Please sign in again.') }
+  if (response.status === 401) {
+    if (!path.startsWith('/auth/')) {
+      unauthorized()
+      throw new Error('Please sign in again.')
+    }
+  }
   if (!response.ok) {
     const text = await response.text()
     let message = text || 'Request failed'

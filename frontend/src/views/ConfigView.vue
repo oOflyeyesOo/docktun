@@ -171,7 +171,7 @@ const tcpForm = reactive({
 const generatedTcpCmd = ref('')
 
 // Cloudflare API Remote Info State
-const cfApiToken = ref(localStorage.getItem('docktun_cf_api_token') || '')
+const cfApiToken = ref('')
 const cfAccountId = ref(localStorage.getItem('docktun_cf_account_id') || '')
 const cfZoneId = ref(localStorage.getItem('docktun_cf_zone_id') || '')
 const cfApiHasToken = ref(false)
@@ -319,10 +319,6 @@ async function loadBackendCfSettings() {
     const s = await apiFetch<any>('/api/cloudflare/settings')
     if (s.account_id && !cfAccountId.value) cfAccountId.value = s.account_id
     if (s.zone_id && !cfZoneId.value) cfZoneId.value = s.zone_id
-    if (s.api_token) {
-      cfApiToken.value = s.api_token
-      localStorage.setItem('docktun_cf_api_token', s.api_token)
-    }
     if (s.has_token) {
       cfApiHasToken.value = true
       cfApiMaskedToken.value = s.masked_token || '••••••••'
@@ -334,9 +330,6 @@ async function saveCfApiCredentials() {
   cfApiLoading.value = true
   cfApiError.value = ''
   try {
-    if (cfApiToken.value) {
-      localStorage.setItem('docktun_cf_api_token', cfApiToken.value)
-    }
     if (cfAccountId.value) {
       localStorage.setItem('docktun_cf_account_id', cfAccountId.value)
     }

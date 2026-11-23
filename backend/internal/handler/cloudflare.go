@@ -30,7 +30,7 @@ type cfSettingsResponse struct {
 	ZoneID      string `json:"zone_id"`
 	HasToken    bool   `json:"has_token"`
 	MaskedToken string `json:"masked_token"`
-	APIToken    string `json:"api_token"`
+	APIToken    string `json:"api_token,omitempty"`
 }
 
 func (h *CloudflareHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
@@ -52,7 +52,6 @@ func (h *CloudflareHandler) GetSettings(w http.ResponseWriter, r *http.Request) 
 		ZoneID:      creds.ZoneID,
 		HasToken:    creds.HasToken,
 		MaskedToken: masked,
-		APIToken:    creds.APIToken,
 	})
 }
 
@@ -67,7 +66,12 @@ func (h *CloudflareHandler) SaveSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := h.cfAPI.SaveCredentials(req.APIToken, req.AccountID, req.ZoneID); err != nil {
+	token := strings.TrimSpace(req.APIToken)
+	if strings.Contains(token, "••") {
+		token = ""
+	}
+
+	if err := h.cfAPI.SaveCredentials(token, req.AccountID, req.ZoneID); err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
 	}

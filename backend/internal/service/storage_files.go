@@ -782,8 +782,9 @@ func (s *StorageFilesService) resolveHostBasePath(targetType, targetID string) (
 		if err := s.db.QueryRow("SELECT path FROM projects WHERE id = ?", pid).Scan(&directory); err != nil {
 			return "", fmt.Errorf("project storage target is unavailable: %w", err)
 		}
-		if directory == "" {
-			return "", fmt.Errorf("project has no storage folder")
+		cleanDir := filepath.Clean(directory)
+		if directory == "" || cleanDir == "/" || cleanDir == "." || cleanDir == `\` {
+			return "", fmt.Errorf("project storage folder is invalid or refers to system root")
 		}
 		return directory, nil
 	}

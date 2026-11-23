@@ -49,6 +49,10 @@ func (a *Auth) Verify(next http.Handler) http.Handler {
 		}
 
 		claims := token.Claims.(jwt.MapClaims)
+		if kind, hasKind := claims["kind"].(string); hasKind && kind != "access" {
+			http.Error(w, `{"error":"invalid token kind"}`, http.StatusUnauthorized)
+			return
+		}
 		subject, ok := claims["sub"].(float64)
 		username, named := claims["username"].(string)
 		if !ok || !named || username == "" || subject <= 0 || subject > 2147483647 || math.Trunc(subject) != subject {

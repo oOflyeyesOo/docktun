@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Terminal, X } from 'lucide-vue-next'
+import { ref } from 'vue'
+import { Terminal, X, Copy, Check } from 'lucide-vue-next'
 
 interface ModalData {
   title: string
@@ -8,7 +9,7 @@ interface ModalData {
   projectId: number
 }
 
-defineProps<{
+const props = defineProps<{
   modal: ModalData
   failed?: boolean
 }>()
@@ -16,6 +17,16 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void
 }>()
+
+const copied = ref(false)
+
+function copyLogs() {
+  const fullText = (props.modal.lines || []).join('\n')
+  navigator.clipboard.writeText(fullText).then(() => {
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 2000)
+  }).catch(() => {})
+}
 
 let backdropMouseDown = false
 
@@ -60,9 +71,22 @@ function onBackdropClick(e: MouseEvent) {
             </p>
           </div>
         </div>
-        <button @click="emit('close')" class="text-slate-600 hover:text-slate-800">
-          <X class="h-5 w-5" />
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            @click="copyLogs"
+            :disabled="!modal.lines || modal.lines.length === 0"
+            class="inline-flex items-center gap-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
+            title="Copy output logs to clipboard"
+          >
+            <Check v-if="copied" class="h-3.5 w-3.5 text-emerald-600" />
+            <Copy v-else class="h-3.5 w-3.5 text-slate-500" />
+            <span>{{ copied ? 'Copied' : 'Copy Logs' }}</span>
+          </button>
+          <button @click="emit('close')" class="text-slate-600 hover:text-slate-800 p-1">
+            <X class="h-5 w-5" />
+          </button>
+        </div>
       </div>
 
       <div class="max-h-96 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-xs leading-relaxed text-slate-700 shadow-inner">

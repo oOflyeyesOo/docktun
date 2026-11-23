@@ -307,14 +307,11 @@ function onStackDeployed(payload: { projectId: number; name: string; operationId
 }
 
 // Cloudflare Settings Cache for Zero Trust
-const cfSettings = ref<{ has_token: boolean; masked_token?: string; api_token?: string } | null>(null)
+const cfSettings = ref<{ has_token: boolean; masked_token?: string } | null>(null)
 async function fetchCfSettings() {
   try {
     const s = await apiFetch<any>('/api/cloudflare/settings')
     cfSettings.value = s
-    if (s.api_token) {
-      localStorage.setItem('docktun_cf_api_token', s.api_token)
-    }
   } catch {}
 }
 
@@ -468,9 +465,13 @@ function toggleSelectContainer(id: string, selected: boolean) {
   }
 }
 
-const selectedCount = computed(() => {
-  return filteredContainers.value.filter((c) => selectedContainerIds.value[c.id]).length
+const visibleSelectedIds = computed<string[]>(() => {
+  return filteredContainers.value
+    .filter((c) => selectedContainerIds.value[c.id])
+    .map((c) => c.id)
 })
+
+const selectedCount = computed(() => visibleSelectedIds.value.length)
 
 const allSelected = computed(() => {
   if (filteredContainers.value.length === 0) return false
@@ -486,18 +487,25 @@ function toggleSelectStack(group: ContainerGroup) {
 }
 
 async function runBatchAction(action: 'start' | 'stop' | 'restart') {
-  const ids = Object.keys(selectedContainerIds.value).filter((id) => selectedContainerIds.value[id])
+  const ids = visibleSelectedIds.value
   if (ids.length === 0) return
 
   if (!confirm(`Are you sure you want to ${action.toUpperCase()} ${ids.length} selected container(s)?`)) return
 
   batchLoading.value = true
   try {
-    await apiFetch('/api/docker/containers/batch', {
+    const res: any = await apiFetch('/api/docker/containers/batch', {
       method: 'POST',
       body: JSON.stringify({ ids, action }),
     })
     await fetchContainers()
+    if (Array.isArray(res)) {
+      const failures = res.filter((r: any) => !r.success)
+      if (failures.length > 0) {
+        const errorMsgs = failures.map((f: any) => `${f.id ? String(f.id).slice(0, 10) : 'container'}: ${f.error}`).join('\n')
+        alert(`Batch ${action} completed with ${failures.length} issue(s):\n${errorMsgs}`)
+      }
+    }
     selectedContainerIds.value = {}
   } catch (err: any) {
     alert(`Batch ${action} failed: ` + (err.message || err))
@@ -507,15 +515,13 @@ async function runBatchAction(action: 'start' | 'stop' | 'restart') {
 }
 
 async function runBatchCheckUpdates() {
-  const ids = Object.keys(selectedContainerIds.value).filter((id) => selectedContainerIds.value[id])
+  const ids = visibleSelectedIds.value
   if (ids.length === 0) return
   batchLoading.value = true
   try {
-    for (const id of ids) {
-      try {
-        await apiFetch(`/api/docker/containers/${id}/check-update`, { method: 'POST' })
-      } catch {}
-    }
+    await Promise.allSettled(
+      ids.map((id) => apiFetch(`/api/docker/containers/${id}/check-update`, { method: 'POST' }))
+    )
     await fetchContainers()
   } finally {
     batchLoading.value = false

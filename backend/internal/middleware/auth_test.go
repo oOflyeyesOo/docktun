@@ -16,6 +16,8 @@ func TestVerifyClaims(t *testing.T) {
 		want   int
 	}{
 		{"valid", jwt.MapClaims{"sub": 1, "username": "owner", "exp": time.Now().Add(time.Hour).Unix()}, jwt.SigningMethodHS256, 200},
+		{"access token accepted", jwt.MapClaims{"sub": 1, "username": "owner", "kind": "access", "exp": time.Now().Add(time.Hour).Unix()}, jwt.SigningMethodHS256, 200},
+		{"refresh token rejected", jwt.MapClaims{"sub": 1, "username": "owner", "kind": "refresh", "exp": time.Now().Add(time.Hour).Unix()}, jwt.SigningMethodHS256, 401},
 		{"missing identity", jwt.MapClaims{"exp": time.Now().Add(time.Hour).Unix()}, jwt.SigningMethodHS256, 401},
 		{"wrong subject", jwt.MapClaims{"sub": "1", "username": "owner", "exp": time.Now().Add(time.Hour).Unix()}, jwt.SigningMethodHS256, 401},
 		{"missing expiry", jwt.MapClaims{"sub": 1, "username": "owner"}, jwt.SigningMethodHS256, 401},

@@ -306,7 +306,8 @@ func (s *DisasterRecoveryService) RestoreBackup(r io.Reader) error {
 		}
 
 		destPath := filepath.Join(stageDir, filepath.FromSlash(cleanName))
-		if !strings.HasPrefix(destPath, stageDir) {
+		rel, err := filepath.Rel(stageDir, destPath)
+		if err != nil || strings.HasPrefix(rel, "..") || rel == ".." {
 			return fmt.Errorf("archive path escapes destination: %s", header.Name)
 		}
 

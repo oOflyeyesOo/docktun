@@ -239,8 +239,15 @@ function formatDate(iso: string) {
               <span class="text-[10px] text-slate-500 truncate font-mono">{{ p.path }}</span>
             </button>
 
-            <div v-if="filteredProjects.length === 0" class="p-4 text-center text-xs text-slate-500">
-              No matching projects found.
+            <div v-if="filteredProjects.length === 0" class="p-4 text-center text-xs text-slate-500 space-y-2">
+              <p>No matching projects found.</p>
+              <router-link
+                to="/containers"
+                class="inline-flex items-center gap-1.5 rounded-md bg-indigo-50 border border-indigo-200 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 transition-colors"
+              >
+                <span>Launch in Containers</span>
+                <span>&rarr;</span>
+              </router-link>
             </div>
           </div>
         </div>

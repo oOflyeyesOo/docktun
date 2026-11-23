@@ -25,3 +25,16 @@ test('binary downloads retain exact bytes and never put credentials in URLs', as
 test('failed upload reports server error without logging out a valid session', async () => {
   await assert.rejects(authenticatedResponse('/api/storage/files/upload', {}, { token: 'valid' }, async () => null, () => assert.fail(), async () => new Response('{"error":"disk is full"}', { status: 500 })), /disk is full/)
 })
+test('auth login 401 reports server message instead of generic sign in again prompt', async () => {
+  await assert.rejects(
+    authenticatedResponse(
+      '/auth/login',
+      { method: 'POST', body: JSON.stringify({ username: 'admin', password: 'bad' }) },
+      {},
+      async () => null,
+      () => assert.fail('should not call unauthorized on login attempt'),
+      async () => new Response('{"error":"invalid credentials"}', { status: 401 })
+    ),
+    /invalid credentials/
+  )
+})

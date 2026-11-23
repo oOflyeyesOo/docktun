@@ -578,21 +578,28 @@ func (s *Projects) DeployStream(id int, p Project, ref string, onDone func(strin
 			cmd.CombinedOutput()
 		}
 
+		sanitize := func(msg string) string {
+			if p.GitToken != "" {
+				msg = strings.ReplaceAll(msg, p.GitToken, "********")
+			}
+			return msg
+		}
+
 		s.appendOutput(id, "[STEP] git fetch --all")
 		if out, err := s.runGit(p.Path, "fetch", "--all"); err != nil {
-			s.appendOutput(id, "[ERROR] git fetch failed: "+out)
+			s.appendOutput(id, sanitize("[ERROR] git fetch failed: "+out))
 			return
 		}
 
 		s.appendOutput(id, "[STEP] git checkout "+ref)
 		if out, err := s.runGit(p.Path, "checkout", ref); err != nil {
-			s.appendOutput(id, "[ERROR] git checkout failed: "+out)
+			s.appendOutput(id, sanitize("[ERROR] git checkout failed: "+out))
 			return
 		}
 
 		s.appendOutput(id, "[STEP] git pull origin "+ref)
 		if out, err := s.runGit(p.Path, "pull", "origin", ref); err != nil {
-			s.appendOutput(id, "[ERROR] git pull failed: "+out)
+			s.appendOutput(id, sanitize("[ERROR] git pull failed: "+out))
 			return
 		}
 
