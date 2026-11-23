@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useClipboardFeedback } from '../composables/useClipboardFeedback'
 import CloudflareIngressEditor from '../components/CloudflareIngressEditor.vue'
 import { readIngressYaml, originHost } from '../lib/cloudflare-ingress.mjs'
 import ProviderSetupGuide from '../components/ProviderSetupGuide.vue'
@@ -183,12 +184,9 @@ const cfApiSuccess = ref(false)
 
 // Clipboard Feedback
 const copiedKey = ref<string | null>(null)
+const configClipboard = useClipboardFeedback<string>(key => { copiedKey.value = key })
 function copyText(key: string, text: string) {
-  navigator.clipboard.writeText(text).catch(() => {})
-  copiedKey.value = key
-  setTimeout(() => {
-    if (copiedKey.value === key) copiedKey.value = null
-  }, 2000)
+  return configClipboard.copy(key, text)
 }
 
 const knownContainers = ref<any[]>([])

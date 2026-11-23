@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useClipboardFeedback } from '../composables/useClipboardFeedback'
 import { applicationContainers, applicationProjects, matchesServiceID } from '../lib/managed-services.mjs'
 import { createProjectFileEditor } from '../lib/project-file-editor.mjs'
 import { createAsyncScope, createSerialPoller } from '../lib/async-lifecycle.mjs'
@@ -279,12 +280,9 @@ const disconnectingNetwork = ref<Record<string, boolean>>({})
 
 // Copied feedback helper
 const copiedKey = ref<string | null>(null)
+const containerClipboard = useClipboardFeedback<string>(key => { copiedKey.value = key })
 function copyToClipboard(key: string, text: string) {
-  navigator.clipboard.writeText(text).catch(() => {})
-  copiedKey.value = key
-  setTimeout(() => {
-    if (copiedKey.value === key) copiedKey.value = null
-  }, 2000)
+  return containerClipboard.copy(key, text)
 }
 
 // Managed Services Banner State

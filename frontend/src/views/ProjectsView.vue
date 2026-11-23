@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useClipboardFeedback } from '../composables/useClipboardFeedback'
 import { ref, reactive, toRefs, computed, onMounted } from 'vue'
 import {
   FolderOpen,
@@ -90,6 +91,7 @@ async function loadProjects() {
 }
 
 async function selectProject(p: Project) {
+  projectClipboard.reset()
   selectionRevision++
   selectedProject.value = p
   revisions.value = []
@@ -166,10 +168,9 @@ async function rollbackTo(rev: Revision) {
   }
 }
 
+const projectClipboard = useClipboardFeedback<string>(key => { copiedKey.value = key ?? '' }, message => { editorErrorMsg.value = message })
 function copyYAML(text: string, key: string) {
-  navigator.clipboard.writeText(text).catch(() => {})
-  copiedKey.value = key
-  setTimeout(() => { copiedKey.value = '' }, 2000)
+  return projectClipboard.copy(key, text)
 }
 
 function formatDate(iso: string) {

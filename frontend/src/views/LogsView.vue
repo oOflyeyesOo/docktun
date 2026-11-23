@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useClipboardFeedback } from '../composables/useClipboardFeedback'
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -134,6 +135,7 @@ async function fetchContainerLogs() {
 }
 
 watch(selectedSource, (newSource) => {
+  logsClipboard.reset()
   if (containerPollTimer) {
     clearInterval(containerPollTimer)
     containerPollTimer = null
@@ -181,14 +183,13 @@ function getLogClass(msg: string) {
   return 'text-slate-700'
 }
 
+const logsClipboard = useClipboardFeedback<boolean>(key => { copied.value = key === true })
 function copyAllLogs() {
   const text =
     selectedSource.value === 'cloudflared'
       ? filteredWsLogs.value.map((l) => `${l.time} ${l.message}`).join('\n')
       : filteredContainerLogs.value.join('\n')
-  navigator.clipboard.writeText(text).catch(() => {})
-  copied.value = true
-  setTimeout(() => (copied.value = false), 2000)
+  return logsClipboard.copy(true, text)
 }
 
 function downloadLogs() {
@@ -277,11 +278,9 @@ function getActionBadgeStyle(action: string) {
   return 'bg-slate-100 text-slate-700 border-slate-300'
 }
 
+const auditClipboard = useClipboardFeedback<boolean>(key => { auditCopied.value = key === true })
 function copyAuditData() {
-  const jsonStr = JSON.stringify(auditEntries.value, null, 2)
-  navigator.clipboard.writeText(jsonStr).catch(() => {})
-  auditCopied.value = true
-  setTimeout(() => (auditCopied.value = false), 2000)
+  return auditClipboard.copy(true, JSON.stringify(auditEntries.value, null, 2))
 }
 
 function exportAuditJson() {
@@ -329,6 +328,8 @@ watch(
 )
 
 watch(activeTab, (tab) => {
+  logsClipboard.reset()
+  auditClipboard.reset()
   if (tab === 'stream') {
     if (selectedSource.value === 'cloudflared' && (!ws || ws.readyState !== WebSocket.OPEN)) {
       connectWs()

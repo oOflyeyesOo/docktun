@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useClipboardFeedback } from '../composables/useClipboardFeedback'
 import ProviderSetupGuide from '../components/ProviderSetupGuide.vue'
 import { ref, onMounted, computed, watch } from 'vue'
 import { remoteAccessTab, cloudflareCardStatus } from '../lib/tunnel-provider.mjs'
@@ -369,12 +370,9 @@ function downloadPeerConfig(peer: WireguardPeer) {
 }
 
 // Copy to Clipboard Helper
+const accessClipboard = useClipboardFeedback<string>(key => { copied.value = key === null ? {} : { [key]: true } })
 function copyText(key: string, text: string) {
-  navigator.clipboard.writeText(text).catch(() => {})
-  copied.value[key] = true
-  setTimeout(() => {
-    delete copied.value[key]
-  }, 2000)
+  return accessClipboard.copy(key, text)
 }
 
 // All app exposure editing lives in the container inspector.
@@ -409,6 +407,7 @@ watch(
 )
 
 function switchTab(tab: 'cloudflare' | 'tailscale' | 'wireguard') {
+  accessClipboard.reset()
   activeTab.value = tab
   router.replace({ query: { ...route.query, tab } })
   if (tab === 'tailscale' && !tailscale.value) fetchTailscale()
