@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { useClipboardFeedback } from '../../../composables/useClipboardFeedback'
+import { ref, watch } from 'vue'
 import { Terminal, X, Copy, Check } from 'lucide-vue-next'
 
 interface ModalData {
@@ -20,12 +21,10 @@ const emit = defineEmits<{
 
 const copied = ref(false)
 
+const outputClipboard = useClipboardFeedback<boolean>(key => { copied.value = key === true })
+watch(() => props.modal, () => outputClipboard.reset())
 function copyLogs() {
-  const fullText = (props.modal.lines || []).join('\n')
-  navigator.clipboard.writeText(fullText).then(() => {
-    copied.value = true
-    setTimeout(() => { copied.value = false }, 2000)
-  }).catch(() => {})
+  return outputClipboard.copy(true, (props.modal.lines || []).join('\n'))
 }
 
 let backdropMouseDown = false

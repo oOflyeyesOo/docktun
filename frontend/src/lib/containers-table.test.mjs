@@ -19,6 +19,7 @@ import {
   expandAllStacks,
   shouldIncludeEmptyProjects,
   filterContainerGroups,
+  containerPresentation,
   formatStackCount,
   formatContainerCount,
   formatTableSummary,
@@ -26,6 +27,28 @@ import {
   getMemoryUsageColor,
   filterEnvContent,
 } from './containers-table.mjs'
+
+test('inactive stacks remain manageable with a saved flat preference and restore it on return', () => {
+  const active = { name: 'running', containers: [{ id: 'app' }], totalCount: 1 }
+  const down = { name: 'archived', containers: [], totalCount: 0 }
+  const groups = [active, down]
+  const flatPreference = false
+
+  const inactive = filterContainerGroups(groups, 'inactive')
+  const inactiveView = containerPresentation('inactive', flatPreference, inactive, [])
+  assert.equal(inactiveView.groupByStack, true)
+  assert.equal(inactiveView.empty, false, 'down projects provide stack actions despite no container rows')
+  assert.deepEqual(inactive, [down])
+
+  const noSearchMatches = filterContainerGroups(groups, 'inactive', 'missing')
+  assert.equal(containerPresentation('inactive', flatPreference, noSearchMatches, []).empty, true)
+
+  const activeGroups = filterContainerGroups(groups, 'all')
+  const returnedView = containerPresentation('all', flatPreference, activeGroups, active.containers)
+  assert.equal(returnedView.groupByStack, false, 'inactive view must not change the saved flat preference')
+  assert.equal(returnedView.empty, false)
+  assert.equal(containerPresentation('all', true, [], []).empty, true)
+})
 
 test('CPU parsing handles standard, fractional, multi-core, stopped and malformed inputs', () => {
   // Standard valid percentages

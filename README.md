@@ -327,7 +327,7 @@ Port conflicts, missing containers, invalid hostnames, and containers that canno
 ## Development
 
 ```bash
-# Backend (Go 1.25+)
+# Backend (Go 1.26+)
 cd backend
 go mod tidy
 go run ./cmd/server

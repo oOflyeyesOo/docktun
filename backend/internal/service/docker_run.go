@@ -16,6 +16,7 @@ import (
 )
 
 type DockerRunJob struct {
+	redactor    *RunCommandRedactor
 	ID          int      `json:"id"`
 	Command     string   `json:"command"`
 	Mode        string   `json:"mode"`
@@ -135,7 +136,7 @@ func (s *DockerRunService) pruneOldJobsLocked() {
 func (s *DockerRunService) appendLine(id int, line string) {
 	s.mu.Lock()
 	if j, ok := s.jobs[id]; ok {
-		j.Lines = append(j.Lines, line)
+		j.Lines = append(j.Lines, j.redactor.Redact(line))
 		if len(j.Lines) > 2000 {
 			j.Lines = j.Lines[len(j.Lines)-2000:]
 		}
@@ -144,19 +145,21 @@ func (s *DockerRunService) appendLine(id int, line string) {
 	s.mu.Unlock()
 }
 
-func (s *DockerRunService) markDone(id int, exitCode int, errMsg string) {
+func (s *DockerRunService) markDone(id int, exitCode int, errMsg string) string {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if j, ok := s.jobs[id]; ok {
 		j.Done = true
 		j.ExitCode = exitCode
-		j.Error = errMsg
+		j.Error = j.redactor.Redact(errMsg)
 		if exitCode == 0 {
 			j.Status = "completed"
 		} else {
 			j.Status = "failed"
 		}
+		return strings.Join(j.Lines, "\n")
 	}
-	s.mu.Unlock()
+	return ""
 }
 
 // Launching an app must never silently remove an existing container. Updates
@@ -210,7 +213,8 @@ func (s *DockerRunService) StartRun(rawCmd string, mode string, connectCloudflar
 	s.nextID++
 	job := &DockerRunJob{
 		ID:          jobID,
-		Command:     trimmed,
+		Command:     RedactDockerRunCommand(trimmed),
+		redactor:    NewRunCommandRedactor(trimmed),
 		Mode:        mode,
 		Lines:       []string{},
 		Output:      []string{},
@@ -222,6 +226,11 @@ func (s *DockerRunService) StartRun(rawCmd string, mode string, connectCloudflar
 	}
 	s.pruneOldJobsLocked()
 	s.jobs[jobID] = job
+	// Capture the admission response before the worker can complete and a
+	// concurrent launch can prune its history entry.
+	snapshot := *job
+	snapshot.Lines = []string{}
+	snapshot.Output = snapshot.Lines
 	s.mu.Unlock()
 
 	go func() {
@@ -232,7 +241,7 @@ func (s *DockerRunService) StartRun(rawCmd string, mode string, connectCloudflar
 		}
 	}()
 
-	return job, nil
+	return &snapshot, nil
 }
 
 func (s *DockerRunService) executeAsCompose(jobID int, parsed *ParsedDockerRun, rawCmd string, onDone func(string)) {
@@ -253,20 +262,7 @@ func (s *DockerRunService) executeAsCompose(jobID int, parsed *ParsedDockerRun, 
 		if perr == nil {
 			pcmd.Stderr = pcmd.Stdout
 			if err := pcmd.Start(); err == nil {
-				pbuf := make([]byte, 2048)
-				for {
-					pn, rerr := pstdout.Read(pbuf)
-					if pn > 0 {
-						for _, pl := range strings.Split(strings.TrimRight(string(pbuf[:pn]), "\r\n"), "\n") {
-							if tr := strings.TrimSpace(pl); tr != "" {
-								s.appendLine(jobID, tr)
-							}
-						}
-					}
-					if rerr != nil {
-						break
-					}
-				}
+				streamRunOutput(pstdout, func(line string) { s.appendLine(jobID, line) })
 				if perrWait := pcmd.Wait(); perrWait != nil {
 					s.appendLine(jobID, fmt.Sprintf("[WARN] docker pull: %v (will proceed with compose up)", perrWait))
 				} else {
@@ -358,22 +354,7 @@ func (s *DockerRunService) executeAsCompose(jobID int, parsed *ParsedDockerRun, 
 		return
 	}
 
-	buf := make([]byte, 4096)
-	for {
-		n, err := stdout.Read(buf)
-		if n > 0 {
-			lines := strings.Split(strings.TrimRight(string(buf[:n]), "\r\n"), "\n")
-			for _, l := range lines {
-				trimmed := strings.TrimSpace(l)
-				if trimmed != "" {
-					s.appendLine(jobID, trimmed)
-				}
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
+	streamRunOutput(stdout, func(line string) { s.appendLine(jobID, line) })
 
 	exitCode := 0
 	if err := cmd.Wait(); err != nil {
@@ -382,12 +363,10 @@ func (s *DockerRunService) executeAsCompose(jobID int, parsed *ParsedDockerRun, 
 	} else {
 		s.appendLine(jobID, "[SUCCESS] Container started and running under DockTun management!")
 	}
-	s.markDone(jobID, exitCode, "")
+	output := s.markDone(jobID, exitCode, "")
 
 	if onDone != nil {
-		if j, ok := s.GetJob(jobID); ok {
-			onDone(strings.Join(j.Lines, "\n"))
-		}
+		onDone(output)
 	}
 }
 
@@ -506,7 +485,7 @@ func (s *DockerRunService) executeDirect(jobID int, parsed *ParsedDockerRun, raw
 		}
 	}
 
-	s.appendLine(jobID, fmt.Sprintf("[STEP] Executing: docker %s", strings.Join(cmdArgs, " ")))
+	s.appendLine(jobID, fmt.Sprintf("[STEP] Executing: docker %s", RedactDockerRunArgs(cmdArgs)))
 
 	cmd := exec.Command("docker", cmdArgs...)
 	stdout, err := cmd.StdoutPipe()
@@ -523,22 +502,7 @@ func (s *DockerRunService) executeDirect(jobID int, parsed *ParsedDockerRun, raw
 		return
 	}
 
-	buf := make([]byte, 4096)
-	for {
-		n, err := stdout.Read(buf)
-		if n > 0 {
-			lines := strings.Split(strings.TrimRight(string(buf[:n]), "\r\n"), "\n")
-			for _, l := range lines {
-				trimmed := strings.TrimSpace(l)
-				if trimmed != "" {
-					s.appendLine(jobID, trimmed)
-				}
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
+	streamRunOutput(stdout, func(line string) { s.appendLine(jobID, line) })
 
 	exitCode := 0
 	if err := cmd.Wait(); err != nil {
@@ -547,12 +511,10 @@ func (s *DockerRunService) executeDirect(jobID int, parsed *ParsedDockerRun, raw
 	} else {
 		s.appendLine(jobID, "[SUCCESS] Container started successfully!")
 	}
-	s.markDone(jobID, exitCode, "")
+	output := s.markDone(jobID, exitCode, "")
 
 	if onDone != nil {
-		if j, ok := s.GetJob(jobID); ok {
-			onDone(strings.Join(j.Lines, "\n"))
-		}
+		onDone(output)
 	}
 }
 

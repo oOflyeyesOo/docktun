@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useClipboardFeedback } from '../../../composables/useClipboardFeedback'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useApi } from '../../../composables/useApi'
@@ -141,14 +142,11 @@ const emit = defineEmits<{
 const copiedKey = ref('')
 const showGitSettings = ref(false)
 
+const inspectorClipboard = useClipboardFeedback<string>(key => { copiedKey.value = key ?? '' })
+watch([() => props.container?.id, () => props.activeTab], () => inspectorClipboard.reset())
 function copyToClipboard(key: string, text?: string) {
   if (!text) return
-  navigator.clipboard.writeText(text).then(() => {
-    copiedKey.value = key
-    setTimeout(() => {
-      copiedKey.value = ''
-    }, 2000)
-  })
+  return inspectorClipboard.copy(key, text)
 }
 
 function parseCpuPercent(cpuStr?: string): number {

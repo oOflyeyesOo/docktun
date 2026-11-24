@@ -1,10 +1,12 @@
 package service
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"sync"
@@ -32,6 +34,7 @@ type Cloudflared struct {
 	cachedVer    string
 	cachedMem    string
 	lastMemCheck time.Time
+	logsOnce     sync.Once
 }
 
 func NewCloudflared(cfg *config.Config, hub *ws.Hub) *Cloudflared {
@@ -151,67 +154,94 @@ func (s *Cloudflared) dockerCmd(action string) error {
 }
 
 func (s *Cloudflared) Logs() error {
-	go s.superviseLogs()
+	s.logsOnce.Do(func() { go s.superviseLogs(context.Background(), 2*time.Second) })
 	return nil
 }
 
-func (s *Cloudflared) superviseLogs() {
-	for {
-		cName := s.findContainer()
-		cmd := exec.Command("docker", "logs", "-f", "--tail", "50", cName)
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			time.Sleep(3 * time.Second)
-			continue
-		}
-		stderr, _ := cmd.StderrPipe()
-
-		if err := cmd.Start(); err != nil {
-			time.Sleep(3 * time.Second)
-			continue
-		}
-
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			s.streamToHub(stdout)
-		}()
-		if stderr != nil {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				s.streamToHub(stderr)
-			}()
-		}
-		_ = cmd.Wait()
-		wg.Wait()
-
-		// Pause briefly before reconnecting log stream if container restarted or stopped
-		time.Sleep(2 * time.Second)
-	}
-}
-
-func (s *Cloudflared) streamToHub(r interface{ Read([]byte) (int, error) }) {
-	buf := make([]byte, 4096)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 && s.hub != nil {
-			msg := strings.TrimSpace(string(buf[:n]))
-			if msg != "" {
-				entry, _ := json.Marshal(map[string]string{
-					"time":    time.Now().Format(time.RFC3339),
-					"message": msg,
-				})
-				select {
-				case s.hub.Broadcast <- entry:
-				default:
+func (s *Cloudflared) superviseLogs(ctx context.Context, retry time.Duration) {
+	var containerID string
+	var cursor time.Time
+	for ctx.Err() == nil {
+		inspectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		container, err := s.providers.inspect(inspectCtx, s.findContainer())
+		cancel()
+		// Disabled/missing providers are normal. Do not replay stopped logs or
+		// broadcast Docker's missing-container error on every polling interval.
+		if err == nil && container.State.Running && container.ID != "" {
+			if container.ID != containerID {
+				containerID = container.ID
+				cursor = time.Time{}
+			}
+			args := []string{"logs", "-f", "--timestamps"}
+			if cursor.IsZero() {
+				args = append(args, "--tail", "50")
+			} else {
+				args = append(args, "--since", cursor.Format(time.RFC3339Nano))
+			}
+			args = append(args, containerID)
+			cmd := exec.CommandContext(ctx, "docker", args...)
+			stdout, pipeErr := cmd.StdoutPipe()
+			if pipeErr == nil {
+				cmd.Stderr = cmd.Stdout
+				if err := cmd.Start(); err == nil {
+					// Drain the pipe before Wait closes it. The cursor also prevents replay
+					// when logs exits during a stop/start or a transient CLI interruption.
+					cursor = s.streamTimestampedLogs(stdout, cursor)
+					_ = cmd.Wait()
 				}
 			}
 		}
-		if err != nil {
+		timer := time.NewTimer(retry)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
 			return
+		case <-timer.C:
 		}
+	}
+}
+
+// Docker timestamps are the resume boundary, independent of the dashboard's
+// clock. Read bounded fragments so an oversized application log line is safe.
+func (s *Cloudflared) streamTimestampedLogs(r io.Reader, after time.Time) time.Time {
+	reader := bufio.NewReaderSize(r, 4096)
+	latest := after
+	continuing, accepted := false, false
+	for {
+		fragment, err := reader.ReadSlice('\n')
+		if len(fragment) > 0 {
+			message := string(fragment)
+			if !continuing {
+				stamp, rest, found := strings.Cut(message, " ")
+				timestamp, parseErr := time.Parse(time.RFC3339Nano, stamp)
+				accepted = found && parseErr == nil && timestamp.After(after)
+				if accepted {
+					message = rest
+					if timestamp.After(latest) {
+						latest = timestamp
+					}
+				}
+			}
+			if accepted {
+				s.broadcastLog(message)
+			}
+			continuing = err == bufio.ErrBufferFull
+		}
+		if err != nil && err != bufio.ErrBufferFull {
+			return latest
+		}
+	}
+}
+
+func (s *Cloudflared) broadcastLog(message string) {
+	message = strings.TrimSpace(message)
+	if s.hub == nil || message == "" {
+		return
+	}
+	entry, _ := json.Marshal(map[string]string{"time": time.Now().Format(time.RFC3339), "message": message})
+	select {
+	case s.hub.Broadcast <- entry:
+	default:
 	}
 }
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useClipboardFeedback } from '../../../../composables/useClipboardFeedback'
 import { ref, reactive, toRefs, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Sliders, RotateCcw, Save, Copy, Check, Search } from 'lucide-vue-next'
 import { useApi } from '../../../../composables/useApi'
@@ -29,30 +30,21 @@ const editor = reactive(createProjectFileEditor('.env'))
 const { content: envContent, loading: envLoading, saving: envSaving, message: envMsg, loaded: envLoaded } = toRefs(editor)
 const searchQuery = ref('')
 const copied = ref(false)
-let copyTimer: ReturnType<typeof setTimeout> | undefined
 
 const filteredLines = computed(() => {
   return filterEnvContent(envContent.value, searchQuery.value)
 })
 
+const envClipboard = useClipboardFeedback<boolean>(key => { copied.value = key === true })
 function copyEnv() {
   if (!envContent.value) return
-  const current = applyScope.capture()
-  navigator.clipboard.writeText(envContent.value).then(() => {
-    if (!current()) return
-    if (copyTimer) clearTimeout(copyTimer)
-    copied.value = true
-    copyTimer = setTimeout(() => {
-      if (current()) copied.value = false
-    }, 2000)
-  }).catch(() => {})
+  return envClipboard.copy(true, envContent.value)
 }
 
 async function loadEnv() {
   if (editor.saving && editor.projectId === props.container.project_id) return
   applyScope.invalidate()
-  if (copyTimer) clearTimeout(copyTimer)
-  copied.value = false
+  envClipboard.reset()
   if (!props.container.project_id) {
     editor.invalidate()
     return
@@ -96,6 +88,7 @@ async function saveEnv(apply = false) {
 watch(
   () => props.container.project_id,
   (newId) => {
+    envClipboard.reset()
     applyScope.invalidate()
     if (newId) {
       loadEnv()
@@ -112,7 +105,6 @@ onMounted(() => {
 })
 onUnmounted(() => {
   applyScope.dispose()
-  if (copyTimer) clearTimeout(copyTimer)
   editor.invalidate()
 })
 </script>

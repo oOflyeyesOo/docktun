@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useClipboardFeedback } from '../composables/useClipboardFeedback'
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -56,6 +57,7 @@ const doctorError = ref('')
 const copiedRemedyIndex = ref<number | null>(null)
 
 async function runDoctorScan() {
+  remedyClipboard.reset()
   doctorLoading.value = true
   doctorError.value = ''
   try {
@@ -68,12 +70,9 @@ async function runDoctorScan() {
   }
 }
 
+const remedyClipboard = useClipboardFeedback<number>(key => { copiedRemedyIndex.value = key }, message => { doctorError.value = message })
 function copyRemedy(cmd: string, index: number) {
-  navigator.clipboard.writeText(cmd).catch(() => {})
-  copiedRemedyIndex.value = index
-  setTimeout(() => {
-    copiedRemedyIndex.value = null
-  }, 2000)
+  return remedyClipboard.copy(index, cmd)
 }
 
 // ---------------------------------------------------------------------------
@@ -200,10 +199,9 @@ function showToast(text: string, type: 'success' | 'error' | 'info' = 'success')
   }, 4000)
 }
 
+const storageClipboard = useClipboardFeedback<string>(key => { copiedKey.value = key ?? '' }, message => { showToast(message, 'error') })
 function copyText(key: string, val: string) {
-  navigator.clipboard.writeText(val).catch(() => {})
-  copiedKey.value = key
-  setTimeout(() => (copiedKey.value = ''), 2000)
+  return storageClipboard.copy(key, val)
 }
 
 // ---------------------------------------------------------------------------

@@ -16,15 +16,7 @@ import (
 func TestProjectOperationsRejectOverlapWithoutReplacingOutput(t *testing.T) {
 	service := projectPathService(t)
 	service.SetRequireMountInspectionForTest(func() bool { return false })
-	service.mu.Lock()
-	locked := true
-	defer func() {
-		if locked {
-			service.mu.Unlock()
-		}
-	}()
-
-	operationID, err := service.ComposeAction(7, "", nil, "up", "-d")
+	operationID, err := service.beginOutput(7)
 	if err != nil || operationID == "" {
 		t.Fatalf("first operation: %q %v", operationID, err)
 	}
@@ -47,25 +39,72 @@ func TestProjectOperationsRejectOverlapWithoutReplacingOutput(t *testing.T) {
 	if err := service.DeleteProject(7, true, true); !errors.Is(err, ErrProjectBusy) {
 		t.Fatalf("deletion overlapped: %v", err)
 	}
-	if _, err := service.ComposeAction(8, "", nil, "up"); err != nil {
+	if _, err := service.beginOutput(8); err != nil {
 		t.Fatalf("unrelated project was rejected: %v", err)
 	}
 	lines, done, err := service.GetOperationOutput(7, operationID)
 	if err != nil || done || !reflect.DeepEqual(lines, []string{"original operation"}) {
 		t.Fatalf("rejected actions replaced output: %v %v %v", lines, done, err)
 	}
-	service.mu.Unlock()
-	locked = false
-	waitProjectOperation(t, service, 7, operationID)
+	service.finishOutput(7, nil)
+	service.finishOutput(8, nil)
+}
+
+func TestIndependentProjectActionsProceedWhileComposeIsBlocked(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Linux shell fixture")
+	}
+	bin, firstDir, secondDir := t.TempDir(), t.TempDir(), t.TempDir()
+	entered, release := filepath.Join(bin, "entered"), filepath.Join(bin, "release")
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
+	script := "#!/bin/sh\nblocked=false\nfor arg in \"$@\"; do\n [ \"$arg\" = " + quote(firstDir) + " ] && blocked=true\n case \"$arg\" in\n config) echo '{\"services\":{\"app\":{\"image\":\"fixture\"}}}'; exit 0 ;;\n up) if $blocked; then touch " + quote(entered) + "; while [ ! -f " + quote(release) + " ]; do sleep 0.01; done; fi; echo started; exit 0 ;;\n esac\ndone\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Cleanup(func() { _ = os.WriteFile(release, nil, 0600) })
+	for _, directory := range []string{firstDir, secondDir} {
+		if err := os.WriteFile(filepath.Join(directory, "compose.yml"), []byte("services:\n  app:\n    image: fixture\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := projectPathService(t)
+	service.SetRequireMountInspectionForTest(func() bool { return false })
+	first, err := service.Create("blocked-project", firstDir, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Create("independent-project", secondDir, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstOperation, err := service.ComposeAction(first.ID, first.Path, nil, "up", "-d")
+	if err != nil {
+		t.Fatal(err)
+	}
 	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		_, done := service.GetOutput(8)
-		if done {
-			return
+	for {
+		if _, err := os.Stat(entered); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			lines, _, _ := service.GetOperationOutput(first.ID, firstOperation)
+			t.Fatalf("first action did not block in Compose: %v", lines)
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatal("unrelated queued project never completed")
+	secondOperation, err := service.ComposeAction(second.ID, second.Path, nil, "up", "-d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitProjectOperation(t, service, second.ID, secondOperation)
+	if _, done, _ := service.GetOperationOutput(first.ID, firstOperation); done {
+		t.Fatal("first action should still be blocked")
+	}
+	if err := os.WriteFile(release, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	waitProjectOperation(t, service, first.ID, firstOperation)
 }
 
 func TestProjectOperationSnapshotsStayBoundToTheirOperation(t *testing.T) {

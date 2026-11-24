@@ -3,6 +3,9 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import './assets/main.css'
+import { clearLegacyCloudflareToken } from './lib/browser-secrets.mjs'
+
+clearLegacyCloudflareToken()
 
 // Catch Vite dynamic chunk preload errors (e.g. after a new Docker build is deployed)
 window.addEventListener('vite:preloadError', (event: any) => {

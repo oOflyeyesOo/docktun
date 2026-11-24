@@ -201,6 +201,7 @@ type DockerContainers struct {
 	exposureMu     sync.Mutex
 	exposureDocker func(context.Context, ...string) ([]byte, error)
 	networkDocker  func(context.Context, ...string) ([]byte, error)
+	controlDocker  func(context.Context, ...string) ([]byte, error)
 }
 
 // Only completed, explicitly labelled helpers may be removed. A long pull is not a zombie.
@@ -1109,20 +1110,41 @@ func (s *DockerContainers) EnsureProjectForContainer(id string) (int, error) {
 	return 0, nil
 }
 
-func (s *DockerContainers) isSelf(id string) bool {
-	cleanID := strings.TrimSpace(id)
-	if cleanID == "" {
-		return false
+// Resolve both identities before destructive controls. Docker accepts names and
+// abbreviated IDs, which must not bypass protection or affect a reused name.
+func (s *DockerContainers) destructiveContainerTarget(id string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	run := s.controlDocker
+	if run == nil {
+		run = providerDocker
 	}
-	hostname, _ := os.Hostname()
-	docktunEnv := strings.TrimSpace(os.Getenv("DOCKTUN_CONTAINER"))
-	if docktunEnv != "" && (strings.EqualFold(cleanID, docktunEnv) || strings.EqualFold(strings.TrimPrefix(cleanID, "/"), strings.TrimPrefix(docktunEnv, "/"))) {
-		return true
+	inspector := &ProviderContainers{run: run}
+	own, err := inspector.self(ctx)
+	if err != nil {
+		return "", fmt.Errorf("cannot verify DockTun identity before destructive control: %w", err)
 	}
-	if hostname != "" && (cleanID == hostname || strings.HasPrefix(cleanID, hostname) || strings.HasPrefix(hostname, cleanID)) {
-		return true
+	target, err := inspector.inspect(ctx, strings.TrimSpace(id))
+	if err != nil {
+		return "", err
 	}
-	return false
+	if own.ID == "" || target.ID == "" {
+		return "", fmt.Errorf("container identity is unavailable")
+	}
+	if own.ID == target.ID {
+		return "", errors.New("cannot stop or remove DockTun's own container")
+	}
+	return target.ID, nil
+}
+
+func (s *DockerContainers) runContainerControl(args ...string) error {
+	if s.controlDocker == nil {
+		return dockerCommand(args...)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	_, err := s.controlDocker(ctx, args...)
+	return err
 }
 
 func (s *DockerContainers) Start(id string) error {
@@ -1138,10 +1160,11 @@ func (s *DockerContainers) Start(id string) error {
 	return s.finishTailscaleStart(id)
 }
 func (s *DockerContainers) Stop(id string) error {
-	if s.isSelf(id) {
-		return errors.New("cannot stop DockTun's own container")
+	target, err := s.destructiveContainerTarget(id)
+	if err != nil {
+		return err
 	}
-	return dockerCommand("stop", id)
+	return s.runContainerControl("stop", target)
 }
 func (s *DockerContainers) Restart(id string) error {
 	_ = s.EnsureDatabaseLinks(id)
@@ -1192,15 +1215,16 @@ func (s *DockerContainers) BatchAction(ids []string, action string) []BatchActio
 }
 
 func (s *DockerContainers) Remove(id string, force bool) error {
-	if s.isSelf(id) {
-		return errors.New("cannot remove DockTun's own container")
+	target, err := s.destructiveContainerTarget(id)
+	if err != nil {
+		return err
 	}
 	args := []string{"rm"}
 	if force {
 		args = append(args, "-f")
 	}
-	args = append(args, id)
-	return dockerCommand(args...)
+	args = append(args, target)
+	return s.runContainerControl(args...)
 }
 
 func (s *DockerContainers) Logs(id string, tail int, timestamps bool) (string, error) {

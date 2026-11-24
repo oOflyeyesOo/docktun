@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { useClipboardFeedback } from '../../../composables/useClipboardFeedback'
+import { computed, ref, watch } from 'vue'
 import {
   Play,
   Square,
@@ -71,14 +72,11 @@ const copied = ref(false)
 const showMenu = ref(false)
 const imageInfo = computed(() => formatImageIdentifier(props.container.image))
 
+const rowClipboard = useClipboardFeedback<boolean>(key => { copied.value = key === true })
+watch(() => props.container.id, () => rowClipboard.reset())
 function copyId() {
   if (!props.container.id) return
-  navigator.clipboard.writeText(props.container.id).then(() => {
-    copied.value = true
-    setTimeout(() => {
-      copied.value = false
-    }, 2000)
-  })
+  return rowClipboard.copy(true, props.container.id)
 }
 
 function handleMenuAction(action: () => void) {

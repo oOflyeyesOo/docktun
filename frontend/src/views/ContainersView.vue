@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useClipboardFeedback } from '../composables/useClipboardFeedback'
 import { applicationContainers, applicationProjects, matchesServiceID } from '../lib/managed-services.mjs'
 import { createProjectFileEditor } from '../lib/project-file-editor.mjs'
 import { createAsyncScope, createSerialPoller } from '../lib/async-lifecycle.mjs'
@@ -17,6 +18,7 @@ import {
   toggleStackSelection,
   calculateTableSelection,
   toggleTableSelection,
+  containerPresentation,
 } from '../lib/containers-table.mjs'
 import ContainerInspectorModal from '../components/containers/modals/ContainerInspectorModal.vue'
 import ViewDensityToggle from '../components/containers/table/ViewDensityToggle.vue'
@@ -278,12 +280,9 @@ const disconnectingNetwork = ref<Record<string, boolean>>({})
 
 // Copied feedback helper
 const copiedKey = ref<string | null>(null)
+const containerClipboard = useClipboardFeedback<string>(key => { copiedKey.value = key })
 function copyToClipboard(key: string, text: string) {
-  navigator.clipboard.writeText(text).catch(() => {})
-  copiedKey.value = key
-  setTimeout(() => {
-    if (copiedKey.value === key) copiedKey.value = null
-  }, 2000)
+  return containerClipboard.copy(key, text)
 }
 
 // Managed Services Banner State
@@ -429,6 +428,7 @@ const groupByStack = ref(localStorage.getItem('docktun_group_by_stack') !== 'fal
 const collapsedStacks = ref<Record<string, boolean>>(loadCollapsedStacks(localStorage))
 
 function toggleGroupByStack() {
+  if (filter.value === 'inactive') return
   groupByStack.value = !groupByStack.value
   try {
     localStorage.setItem('docktun_group_by_stack', String(groupByStack.value))
@@ -633,6 +633,10 @@ const containerGroups = computed<ContainerGroup[]>(() => {
   // Ensure empty stacks NEVER render in active container views
   return groups.filter((g) => g.containers && g.containers.length > 0)
 })
+
+const presentation = computed(() => containerPresentation(
+  filter.value, groupByStack.value, containerGroups.value, filteredContainers.value,
+))
 
 async function fetchContainers() {
   try {
@@ -1485,12 +1489,13 @@ onUnmounted(() => {
         <!-- Group by Stack Toggle -->
         <button
           @click="toggleGroupByStack"
+          :disabled="filter === 'inactive'"
           class="cyber-btn-secondary flex items-center gap-1.5 text-xs py-1.5 px-3"
-          :class="groupByStack ? 'border-indigo-500/60 bg-indigo-50/40 text-indigo-700' : 'text-slate-600 hover:text-slate-800'"
-          title="Toggle grouping containers by Compose Stacks"
+          :class="presentation.groupByStack ? 'border-indigo-500/60 bg-indigo-50/40 text-indigo-700' : 'text-slate-600 hover:text-slate-800'"
+          :title="filter === 'inactive' ? 'Inactive projects are shown as stacks' : 'Toggle grouping containers by Compose Stacks'"
         >
-          <Layers class="h-3.5 w-3.5" :class="groupByStack ? 'text-indigo-600' : 'text-slate-500'" />
-          <span>{{ groupByStack ? 'Grouped by Stack' : 'Flat List' }}</span>
+          <Layers class="h-3.5 w-3.5" :class="presentation.groupByStack ? 'text-indigo-600' : 'text-slate-500'" />
+          <span>{{ presentation.groupByStack ? 'Grouped by Stack' : 'Flat List' }}</span>
         </button>
 
         <!-- Search box -->
@@ -1586,7 +1591,7 @@ onUnmounted(() => {
       v-if="viewMode === 'table'"
       :groups="containerGroups"
       :flat-containers="filteredContainers"
-      :group-by-stack="groupByStack"
+      :group-by-stack="presentation.groupByStack"
       :selected-container-ids="selectedContainerIds"
       :collapsed-stacks="collapsedStacks"
       :is-filter-active="filter !== 'all' || Boolean(searchQuery.trim())"
@@ -1614,7 +1619,7 @@ onUnmounted(() => {
     <!-- Cards Grid View (viewMode === 'grid') -->
     <template v-else>
       <!-- Empty state -->
-      <div v-if="filteredContainers.length === 0 && !loading" class="cyber-card py-12 text-center text-slate-600">
+      <div v-if="presentation.empty && !loading" class="cyber-card py-12 text-center text-slate-600">
         <Server class="mx-auto h-8 w-8 text-slate-600 mb-2" />
         <p class="text-sm font-medium text-slate-700">No containers match the current filter.</p>
         <p class="mt-1 text-xs text-slate-500">Try adjusting your search terms or status filters.</p>
@@ -1629,7 +1634,7 @@ onUnmounted(() => {
       >
         <!-- Stack Header (Rendered when groupByStack is true) -->
         <div
-          v-if="groupByStack"
+          v-if="presentation.groupByStack"
           class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-slate-200 bg-white/80 px-4 py-3 shadow-md transition-colors hover:border-slate-300/80"
         >
           <!-- Left: Checkbox, Toggle Chevron, Stack Title & Metrics -->
@@ -1810,7 +1815,7 @@ onUnmounted(() => {
         <div
           v-show="!collapsedStacks[group.key]"
           class="space-y-3"
-          :class="groupByStack ? 'pl-2 sm:pl-4 border-l-2 border-slate-200/60' : ''"
+          :class="presentation.groupByStack ? 'pl-2 sm:pl-4 border-l-2 border-slate-200/60' : ''"
         >
           <!-- Empty Stack State (0 running or stopped containers) -->
           <div
