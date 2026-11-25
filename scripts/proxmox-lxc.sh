@@ -1159,9 +1159,15 @@ setup_intel_host() {
 }
 
 setup_amd_host() {
-  log_info "Configuring AMD GPU/APU host firmware..."
-  run_cmd apt-get update
-  run_cmd env DEBIAN_FRONTEND=noninteractive apt-get install -y firmware-amd-graphics
+  log_info "Configuring AMD GPU/APU host support..."
+  if dpkg-query -W -f='${Status}' pve-firmware 2>/dev/null | grep -q "install ok installed"; then
+    log_info "pve-firmware is installed (already includes AMD GPU firmware; skipping firmware-amd-graphics)."
+  elif command -v pveversion >/dev/null 2>&1; then
+    log_info "Proxmox VE host detected; skipping firmware-amd-graphics to avoid conflicting with pve-firmware."
+  else
+    run_cmd apt-get update
+    run_cmd env DEBIAN_FRONTEND=noninteractive apt-get install -y firmware-amd-graphics
+  fi
 }
 
 setup_wolf_input_host() {

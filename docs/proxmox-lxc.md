@@ -148,7 +148,7 @@ bash proxmox-lxc.sh \
 - Passes `/dev/dri/*` via Proxmox `dev[n]` with dynamic container `video`/`render` GIDs (or preserves `/dev/dri/by-path/pci-<slot>-render` & `-card` when `--pci-slot` is specified), installs VA-API drivers (`intel-media-va-driver-non-free` + `vainfo`), and verifies `vainfo --display drm`.
 
 ### AMD Radeon / APU
-- Installs `firmware-amd-graphics` on host; passes `/dev/dri/*` and `/dev/kfd` (when present) into the LXC with `render`/`video` group permissions and `mesa-va-drivers`.
+- Skips `firmware-amd-graphics` when `pve-firmware` / Proxmox VE is detected (since `pve-firmware` already bundles AMD GPU firmware and conflicts with `firmware-amd-graphics`, which would attempt to remove `proxmox-ve`); passes `/dev/dri/*` and `/dev/kfd` (when present) into the LXC with `render`/`video` group permissions and `mesa-va-drivers`.
 
 ### Wolf / Purah (Optional)
 - Pass `--with-wolf-input` to configure `uinput`/`uhid`, `/etc/udev/rules.d/85-wolf-virtual-inputs.rules`, and `/dev/uinput`, `/dev/uhid`, `/dev/input`, `/run/udev` passthrough.
