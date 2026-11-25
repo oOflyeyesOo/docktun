@@ -237,6 +237,18 @@ docker compose up -d --build
 
 ---
 
+### Option 7: Proxmox VE 8 & 9 (Hardened LXC + Shared GPU)
+
+Run on your Proxmox VE host as `root` to provision an unprivileged, hardened LXC container with Docker CE, **shared GPU passthrough** (NVIDIA/Intel/AMD), **pre-installed DockTun**, and **AIOStreams readiness**:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/scripts/proxmox-lxc.sh)"
+```
+
+See [docs/proxmox-lxc.md](docs/proxmox-lxc.md) for CLI flags, `--dry-run` preview, GPU notes, and hardening details (script: [scripts/proxmox-lxc.sh](scripts/proxmox-lxc.sh)).
+
+---
+
 ## Remote Access & Exposure Providers
 
 DockTun does not enforce a single global networking mode. Every container starts internal and isolated; choose remote access per app in **Containers → Access**:

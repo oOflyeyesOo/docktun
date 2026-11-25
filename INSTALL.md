@@ -197,6 +197,18 @@ This is a common question when configuring Cloudflare API tokens:
 ### Unraid & TrueNAS SCALE
 Create a custom Docker Compose application using the template above, ensuring `/var/run/docker.sock` is mounted so DockTun can discover and manage host containers.
 
+### Proxmox VE (LXC)
+Provision a hardened, unprivileged Proxmox VE 8/9 LXC container with Docker CE, **shared GPU passthrough** (NVIDIA, Intel `i915`/`xe`, AMD), **pre-installed DockTun**, and **AIOStreams readiness** directly from your Proxmox host (`root`):
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/scripts/proxmox-lxc.sh)"
+```
+
+- **Hardening**: OpenSSH key-first drop-in (`00-hardening.conf`), UFW + `DOCKER-USER` LAN scoping, Fail2ban (`systemd` + `nftables`), and unattended-upgrades with NVIDIA package hold/blacklist support.
+- **Shared GPU passthrough**: Concurrent host-driven GPU sharing across multiple LXCs without `vfio-pci` (NVIDIA CDI + pre-start hook, Intel VA-API, and AMD `/dev/dri` + `/dev/kfd`).
+- **Pre-installed DockTun & AIOStreams readiness**: Deploys DockTun with `compose.yml` alignment and prepares `/opt/docktun/projects/aiostreams` (`.env.template`, HTTP `206` streaming Nginx example, and `check-readiness.sh`).
+- **Full guide & CLI flags**: See [docs/proxmox-lxc.md](docs/proxmox-lxc.md) (script: [scripts/proxmox-lxc.sh](scripts/proxmox-lxc.sh)).
+
 ---
 
 ## Persistent Volumes
