@@ -8,7 +8,7 @@ DockTun is deployed as a Docker container with access to the Docker daemon socke
 
 - **Linux host** (Ubuntu, Debian, Fedora, CentOS, Rocky, AlmaLinux, Arch, Synology DSM, or any Docker-compatible Linux OS)
 - **Docker Engine** (20.10+) & **Docker Compose** (v2.0+) *(automatically installed by the script if missing)*
-- Port **8080** open on your local firewall (or your chosen custom port)
+- Port **8080** open on your local firewall (or your chosen custom port), plus **80/tcp** & **5353/udp** when using `docktun-zeroconf` automatic `.local` mDNS (enabled by default in Proxmox LXC and `compose.prebuilt.yml`; pass `--no-zeroconf` in LXC to opt out)
 
 ---
 
@@ -198,14 +198,15 @@ This is a common question when configuring Cloudflare API tokens:
 Create a custom Docker Compose application using the template above, ensuring `/var/run/docker.sock` is mounted so DockTun can discover and manage host containers.
 
 ### Proxmox VE (LXC)
-Provision a hardened, unprivileged Proxmox VE 8/9 LXC container with Docker CE, **shared GPU passthrough** (NVIDIA, Intel `i915`/`xe`, AMD), **pre-installed DockTun**, and **AIOStreams readiness** directly from your Proxmox host (`root`):
+Provision a hardened, unprivileged Proxmox VE 8/9 LXC container with Docker CE, **shared GPU passthrough** (NVIDIA, Intel `i915`/`xe`, AMD), **pre-installed DockTun**, and **AIOStreams readiness** directly from your Proxmox host (`root`) via a 1-keystroke express wizard or `--yes`:
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/scripts/proxmox-lxc.sh)"
 ```
 
-- **Hardening**: OpenSSH key-first drop-in (`00-hardening.conf`), UFW + `DOCKER-USER` LAN scoping, Fail2ban (`systemd` + `nftables`), and unattended-upgrades with NVIDIA package hold/blacklist support.
-- **Shared GPU passthrough**: Concurrent host-driven GPU sharing across multiple LXCs without `vfio-pci` (NVIDIA CDI + pre-start hook, Intel VA-API, and AMD `/dev/dri` + `/dev/kfd`).
+- **Hardening**: OpenSSH key-first drop-in (`00-hardening.conf`), UFW + standalone `DOCKER-USER` LAN scoping (`after.rules` & IPv6-gated `after6.rules`), Fail2ban (`systemd` + `nftables`), `br_netfilter` + `"userland-proxy": false` (`127.0.0.1` loopback), and unattended-upgrades with NVIDIA package hold/blacklist (`libnvcuvid*` included).
+- **Automatic mDNS & Wolf Support**: Enables `docktun-zeroconf` (`http://docktun.local`, ports `80/tcp` + `5353/udp`) by default (`--no-zeroconf` / `--without-zeroconf` opt-out), and supports `--with-wolf-input` for unprivileged Wolf/Purah virtual gamepad passthrough.
+- **Shared GPU & Lifecycle Operations**: Concurrent host-driven GPU sharing across multiple LXCs without `vfio-pci` (NVIDIA CDI + per-CTID pre-start hook, Intel VA-API, AMD `/dev/dri` + `/dev/kfd`), plus `--doctor <ctid>`, `--provision-only <ctid>`, `--list`, `--destroy <ctid>`, `--cleanup-on-failure`, `--vlan <tag>`, `--mtu <bytes>`, `--timezone <tz>`, `--mount <host:ct>`, and `--template-hygiene` (`docktun-firstboot.service`).
 - **Pre-installed DockTun & AIOStreams readiness**: Deploys DockTun with `compose.yml` alignment and prepares `/opt/docktun/projects/aiostreams` (`.env.template`, HTTP `206` streaming Nginx example, and `check-readiness.sh`).
 - **Full guide & CLI flags**: See [docs/proxmox-lxc.md](docs/proxmox-lxc.md) (script: [scripts/proxmox-lxc.sh](scripts/proxmox-lxc.sh)).
 

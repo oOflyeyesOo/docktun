@@ -239,13 +239,17 @@ docker compose up -d --build
 
 ### Option 7: Proxmox VE 8 & 9 (Hardened LXC + Shared GPU)
 
-Run on your Proxmox VE host as `root` to provision an unprivileged, hardened LXC container with Docker CE, **shared GPU passthrough** (NVIDIA/Intel/AMD), **pre-installed DockTun**, and **AIOStreams readiness**:
+Run on your Proxmox VE host as `root` to provision an unprivileged, hardened LXC container with Docker CE, **shared GPU passthrough** (NVIDIA/Intel/AMD), **pre-installed DockTun**, and **AIOStreams readiness** (1-keystroke express wizard or `--yes` automation):
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/scripts/proxmox-lxc.sh)"
 ```
 
-See [docs/proxmox-lxc.md](docs/proxmox-lxc.md) for CLI flags, `--dry-run` preview, GPU notes, and hardening details (script: [scripts/proxmox-lxc.sh](scripts/proxmox-lxc.sh)).
+- **Automatic mDNS (`docktun-zeroconf`)**: Enabled by default (`http://docktun.local`, host port `80/tcp` + `5353/udp`); pass `--no-zeroconf` / `--without-zeroconf` to keep port `80` free.
+- **Networking & Operational Flags**: Supports `--doctor <ctid>`, `--provision-only <ctid>`, `--list`, `--destroy <ctid>`, `--cleanup-on-failure`, `--vlan <tag>`, `--mtu <bytes>`, `--timezone <tz>`, repeatable `--mount <host:ct>`, and `--template-hygiene` (first-boot SSH key regen + `docktun-firstboot.service`).
+- **Wolf / Purah Cloud Gaming**: Pass `--with-wolf-input` for `uinput`/`uhid` (`dev[n]` on PVE 8.2+), `MODE="0666"` virtual input udev rules, and read-only `/run/udev` passthrough.
+
+See [docs/proxmox-lxc.md](docs/proxmox-lxc.md) for CLI flags, `--dry-run` preview, GPU/Wolf notes, and hardening details (script: [scripts/proxmox-lxc.sh](scripts/proxmox-lxc.sh)).
 
 ---
 
