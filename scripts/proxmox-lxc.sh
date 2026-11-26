@@ -37,7 +37,6 @@ ADMIN_USER="mediaadmin"
 GPU_MODE="auto"
 PCI_SLOT=""
 DOCKTUN_PORT="8080"
-DOCKTUN_PORT_EXPLICIT=0
 DOCKTUN_DIR="/opt/docktun"
 DOCKTUN_IMAGE="${DOCKTUN_IMAGE:-ghcr.io/ooflyeyesoo/docktun:latest}"
 DOCKTUN_ADMIN_USER=""
@@ -50,11 +49,16 @@ WITH_WOLF_INPUT=0
 WITH_ZEROCONF=1
 ALLOW_UNCONFINED_APPARMOR=0
 TEMPLATE_HYGIENE=0
+STARTUP_SPEC=""
+AIO_COMPOSE_FILE=""
+AIO_COMPOSE_B64=""
 AIO_DOMAIN="aio.example.com"
 AIO_TIMEZONE="${AIO_TIMEZONE:-}"
 NVIDIA_SMOKE_IMAGE="${NVIDIA_SMOKE_IMAGE:-nvidia/cuda:12.6.0-base-ubuntu24.04}"
 DOCKTUN_HEALTH_TIMEOUT="${DOCKTUN_HEALTH_TIMEOUT:-60}"
 HOST_NVIDIA_VERSION="${HOST_NVIDIA_VERSION:-}"
+HOST_NVIDIA_PROC_VERSION_FILE="${HOST_NVIDIA_PROC_VERSION_FILE:-/proc/driver/nvidia/version}"
+HOST_APT_DIR="${HOST_APT_DIR:-/etc/apt}"
 APT_BACKUP_DIR="${APT_BACKUP_DIR:-/var/backups/proxmox-lxc-apt}"
 
 # Runtime state
@@ -65,6 +69,8 @@ CREATED_CTID=""
 PROVISION_SUCCEEDED=0
 POST_BOOT_DEV_ADDED=0
 GPUS_RESOLVED=0
+PREFLIGHT_DONE=0
+declare -a CREATION_FLAGS_USED=()
 LXC_OSTYPE="debian"
 TPL_PATTERN="debian-12-standard_"
 LXC_TEMPLATE=""
@@ -254,21 +260,20 @@ get_char_major() {
   printf '%d\n' "0x${hex_major}"
 }
 
-is_port_in_use() {
-  local port="${1:?is_port_in_use requires a port number}"
-  if [[ ! "$port" =~ ^[0-9]+$ ]]; then
-    return 2
-  fi
-  local out=""
-  if command -v ss >/dev/null 2>&1; then
-    out="$(ss -H -tuln 2>/dev/null || true)"
-    grep -E ":${port}([[:space:]]|$)" >/dev/null <<< "$out"
-  elif command -v netstat >/dev/null 2>&1; then
-    out="$(netstat -tuln 2>/dev/null || true)"
-    grep -E ":${port}([[:space:]]|$)" >/dev/null <<< "$out"
-  else
-    return 1
-  fi
+glob_matches() {
+  local -n _gm_out="$1"
+  shift
+  _gm_out=()
+  local pat="" m=""
+  for pat in "$@"; do
+    while IFS= read -r m; do
+      [[ -n "$m" ]] && _gm_out+=("$m")
+    done < <(compgen -G "$pat" || true)
+  done
+}
+
+strip_pct_snapshots() {
+  awk '/^\[/ && $0 != "[PENDING]" {exit} {print}' <<< "${1:-}"
 }
 
 usage() {
@@ -314,13 +319,15 @@ Options:
       --docktun-dir <dir>         DockTun directory inside LXC (default: /opt/docktun)
       --docktun-admin-user <user> Optional pre-seeded DockTun admin username
       --docktun-admin-password <pw>
-                                  Optional pre-seeded DockTun admin password
+                                  Optional pre-seeded DockTun admin password (12-72 bytes)
       --lan-subnets <cidrs>       Comma-separated trusted LAN CIDRs (IPv4/IPv6) for UFW/DOCKER-USER
                                   (default: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16)
       --media-dir <host_path>     Optional host media path mounted at /mnt/media
       --chown-media-dir           Chown existing --media-dir to 101000:101000 (ADMIN_USER UID 1000)
       --mount <host_path>:<ct_path>
                                   Repeatable extra bind mount (e.g. /mnt/dl:/mnt/downloads)
+      --startup <spec>            Optional Proxmox startup order (e.g. order=2,up=30,down=60)
+      --aio-compose <host_file>   Optional host compose YAML pre-staged into AIOStreams dir if absent
       --with-fuse                 Enable fuse=1 feature on the LXC
       --with-wolf-input           Configure uinput/uhid & input passthrough for Wolf/Purah
       --with-zeroconf             Enable docktun-zeroconf mDNS (*.local, port 80; default: on)
@@ -339,86 +346,65 @@ EOF
 }
 
 parse_args() {
+  local opt="" val="" has_eq=0
   while [[ "$#" -gt 0 ]]; do
-    case "$1" in
-      -y|--yes|--non-interactive) NON_INTERACTIVE=1; shift ;;
-      --dry-run) DRY_RUN=1; shift ;;
-      --skip-host-prep) SKIP_HOST_PREP=1; shift ;;
-      --host-prep-only) HOST_PREP_ONLY=1; shift ;;
-      --cleanup-on-failure) CLEANUP_ON_FAILURE=1; shift ;;
-      --chown-media-dir) CHOWN_MEDIA_DIR=1; shift ;;
-      --provision-only) [[ "$#" -ge 2 ]] || die "--provision-only requires a CTID"; PROVISION_ONLY=1; CTID="$2"; shift 2 ;;
-      --provision-only=*) PROVISION_ONLY=1; CTID="${1#*=}"; shift ;;
-      --doctor) [[ "$#" -ge 2 ]] || die "--doctor requires a CTID"; DOCTOR_MODE=1; CTID="$2"; shift 2 ;;
-      --doctor=*) DOCTOR_MODE=1; CTID="${1#*=}"; shift ;;
-      --list) LIST_MODE=1; shift ;;
-      --destroy) [[ "$#" -ge 2 ]] || die "--destroy requires a CTID"; DESTROY_MODE=1; CTID="$2"; shift 2 ;;
-      --destroy=*) DESTROY_MODE=1; CTID="${1#*=}"; shift ;;
-      --ctid) [[ "$#" -ge 2 ]] || die "--ctid requires a value"; CTID="$2"; shift 2 ;;
-      --ctid=*) CTID="${1#*=}"; shift ;;
-      --hostname) [[ "$#" -ge 2 ]] || die "--hostname requires a value"; HOSTNAME="$2"; shift 2 ;;
-      --hostname=*) HOSTNAME="${1#*=}"; shift ;;
-      --os) [[ "$#" -ge 2 ]] || die "--os requires a value"; OS_CHOICE="${2,,}"; shift 2 ;;
-      --os=*) OS_CHOICE="${1#*=}"; OS_CHOICE="${OS_CHOICE,,}"; shift ;;
-      --storage) [[ "$#" -ge 2 ]] || die "--storage requires a value"; STORAGE="$2"; shift 2 ;;
-      --storage=*) STORAGE="${1#*=}"; shift ;;
-      --template-storage) [[ "$#" -ge 2 ]] || die "--template-storage requires a value"; TEMPLATE_STORAGE="$2"; shift 2 ;;
-      --template-storage=*) TEMPLATE_STORAGE="${1#*=}"; shift ;;
-      --cores) [[ "$#" -ge 2 ]] || die "--cores requires a value"; CORES="$2"; shift 2 ;;
-      --cores=*) CORES="${1#*=}"; shift ;;
-      --memory) [[ "$#" -ge 2 ]] || die "--memory requires a value"; MEMORY="$2"; shift 2 ;;
-      --memory=*) MEMORY="${1#*=}"; shift ;;
-      --swap) [[ "$#" -ge 2 ]] || die "--swap requires a value"; SWAP="$2"; shift 2 ;;
-      --swap=*) SWAP="${1#*=}"; shift ;;
-      --disk) [[ "$#" -ge 2 ]] || die "--disk requires a value"; DISK="$2"; shift 2 ;;
-      --disk=*) DISK="${1#*=}"; shift ;;
-      --bridge) [[ "$#" -ge 2 ]] || die "--bridge requires a value"; BRIDGE="$2"; shift 2 ;;
-      --bridge=*) BRIDGE="${1#*=}"; shift ;;
-      --vlan) [[ "$#" -ge 2 ]] || die "--vlan requires a value"; VLAN_TAG="$2"; shift 2 ;;
-      --vlan=*) VLAN_TAG="${1#*=}"; shift ;;
-      --mtu) [[ "$#" -ge 2 ]] || die "--mtu requires a value"; MTU_BYTES="$2"; shift 2 ;;
-      --mtu=*) MTU_BYTES="${1#*=}"; shift ;;
-      --ip) [[ "$#" -ge 2 ]] || die "--ip requires a value"; IP_ADDR="$2"; shift 2 ;;
-      --ip=*) IP_ADDR="${1#*=}"; shift ;;
-      --gw) [[ "$#" -ge 2 ]] || die "--gw requires a value"; GW_ADDR="$2"; shift 2 ;;
-      --gw=*) GW_ADDR="${1#*=}"; shift ;;
-      --dns) [[ "$#" -ge 2 ]] || die "--dns requires a value"; DNS_ADDR="$2"; shift 2 ;;
-      --dns=*) DNS_ADDR="${1#*=}"; shift ;;
-      --timezone) [[ "$#" -ge 2 ]] || die "--timezone requires a value"; AIO_TIMEZONE="$2"; shift 2 ;;
-      --timezone=*) AIO_TIMEZONE="${1#*=}"; shift ;;
-      --ssh-pubkey-file) [[ "$#" -ge 2 ]] || die "--ssh-pubkey-file requires a value"; SSH_PUBKEY_FILE="$2"; shift 2 ;;
-      --ssh-pubkey-file=*) SSH_PUBKEY_FILE="${1#*=}"; shift ;;
-      --ssh-pubkey) [[ "$#" -ge 2 ]] || die "--ssh-pubkey requires a value"; SSH_PUBKEY="$2"; shift 2 ;;
-      --ssh-pubkey=*) SSH_PUBKEY="${1#*=}"; shift ;;
-      --admin-user) [[ "$#" -ge 2 ]] || die "--admin-user requires a value"; ADMIN_USER="$2"; shift 2 ;;
-      --admin-user=*) ADMIN_USER="${1#*=}"; shift ;;
-      --gpu) [[ "$#" -ge 2 ]] || die "--gpu requires a value"; GPU_MODE="${2,,}"; shift 2 ;;
-      --gpu=*) GPU_MODE="${1#*=}"; GPU_MODE="${GPU_MODE,,}"; shift ;;
-      --pci-slot) [[ "$#" -ge 2 ]] || die "--pci-slot requires a value"; PCI_SLOT="$2"; shift 2 ;;
-      --pci-slot=*) PCI_SLOT="${1#*=}"; shift ;;
-      --docktun-port) [[ "$#" -ge 2 ]] || die "--docktun-port requires a value"; DOCKTUN_PORT="$2"; DOCKTUN_PORT_EXPLICIT=1; shift 2 ;;
-      --docktun-port=*) DOCKTUN_PORT="${1#*=}"; DOCKTUN_PORT_EXPLICIT=1; shift ;;
-      --docktun-dir) [[ "$#" -ge 2 ]] || die "--docktun-dir requires a value"; DOCKTUN_DIR="$2"; shift 2 ;;
-      --docktun-dir=*) DOCKTUN_DIR="${1#*=}"; shift ;;
-      --docktun-admin-user) [[ "$#" -ge 2 ]] || die "--docktun-admin-user requires a value"; DOCKTUN_ADMIN_USER="$2"; shift 2 ;;
-      --docktun-admin-user=*) DOCKTUN_ADMIN_USER="${1#*=}"; shift ;;
-      --docktun-admin-password) [[ "$#" -ge 2 ]] || die "--docktun-admin-password requires a value"; DOCKTUN_ADMIN_PASSWORD="$2"; shift 2 ;;
-      --docktun-admin-password=*) DOCKTUN_ADMIN_PASSWORD="${1#*=}"; shift ;;
-      --lan-subnets) [[ "$#" -ge 2 ]] || die "--lan-subnets requires a value"; LAN_SUBNETS="$2"; shift 2 ;;
-      --lan-subnets=*) LAN_SUBNETS="${1#*=}"; shift ;;
-      --media-dir) [[ "$#" -ge 2 ]] || die "--media-dir requires a value"; MEDIA_DIR="$2"; shift 2 ;;
-      --media-dir=*) MEDIA_DIR="${1#*=}"; shift ;;
-      --mount) [[ "$#" -ge 2 ]] || die "--mount requires <host_path>:<ct_path>"; EXTRA_MOUNTS+=("$2"); shift 2 ;;
-      --mount=*) EXTRA_MOUNTS+=("${1#*=}"); shift ;;
-      --with-fuse) WITH_FUSE=1; shift ;;
-      --with-wolf-input) WITH_WOLF_INPUT=1; shift ;;
-      --with-zeroconf) WITH_ZEROCONF=1; shift ;;
-      --no-zeroconf|--without-zeroconf) WITH_ZEROCONF=0; shift ;;
-      --allow-unconfined-apparmor) ALLOW_UNCONFINED_APPARMOR=1; shift ;;
-      --template-hygiene) TEMPLATE_HYGIENE=1; shift ;;
-      --domain) [[ "$#" -ge 2 ]] || die "--domain requires a value"; AIO_DOMAIN="$2"; shift 2 ;;
-      --domain=*) AIO_DOMAIN="${1#*=}"; shift ;;
-      -h|--help) usage; exit 0 ;;
+    opt="$1"
+    val=""
+    has_eq=0
+    if [[ "$opt" == --*=* ]]; then
+      val="${opt#*=}"
+      opt="${opt%%=*}"
+      has_eq=1
+    fi
+    case "$opt" in
+      -y|--yes|--non-interactive) (( has_eq )) && die "${opt} does not accept a value"; NON_INTERACTIVE=1; shift ;;
+      --dry-run) (( has_eq )) && die "${opt} does not accept a value"; DRY_RUN=1; shift ;;
+      --skip-host-prep) (( has_eq )) && die "${opt} does not accept a value"; SKIP_HOST_PREP=1; shift ;;
+      --host-prep-only) (( has_eq )) && die "${opt} does not accept a value"; HOST_PREP_ONLY=1; shift ;;
+      --cleanup-on-failure) (( has_eq )) && die "${opt} does not accept a value"; CLEANUP_ON_FAILURE=1; shift ;;
+      --chown-media-dir) (( has_eq )) && die "${opt} does not accept a value"; CHOWN_MEDIA_DIR=1; CREATION_FLAGS_USED+=("--chown-media-dir"); shift ;;
+      --list) (( has_eq )) && die "${opt} does not accept a value"; LIST_MODE=1; shift ;;
+      --with-fuse) (( has_eq )) && die "${opt} does not accept a value"; WITH_FUSE=1; CREATION_FLAGS_USED+=("--with-fuse"); shift ;;
+      --with-wolf-input) (( has_eq )) && die "${opt} does not accept a value"; WITH_WOLF_INPUT=1; shift ;;
+      --with-zeroconf) (( has_eq )) && die "${opt} does not accept a value"; WITH_ZEROCONF=1; shift ;;
+      --no-zeroconf|--without-zeroconf) (( has_eq )) && die "${opt} does not accept a value"; WITH_ZEROCONF=0; shift ;;
+      --allow-unconfined-apparmor) (( has_eq )) && die "${opt} does not accept a value"; ALLOW_UNCONFINED_APPARMOR=1; CREATION_FLAGS_USED+=("--allow-unconfined-apparmor"); shift ;;
+      --template-hygiene) (( has_eq )) && die "${opt} does not accept a value"; TEMPLATE_HYGIENE=1; shift ;;
+      -h|--help) (( has_eq )) && die "${opt} does not accept a value"; usage; exit 0 ;;
+      --provision-only) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--provision-only requires a CTID"; val="$2"; shift; }; PROVISION_ONLY=1; CTID="$val"; shift ;;
+      --doctor) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--doctor requires a CTID"; val="$2"; shift; }; DOCTOR_MODE=1; CTID="$val"; shift ;;
+      --destroy) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--destroy requires a CTID"; val="$2"; shift; }; DESTROY_MODE=1; CTID="$val"; shift ;;
+      --ctid) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--ctid requires a value"; val="$2"; shift; }; CTID="$val"; shift ;;
+      --hostname) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--hostname requires a value"; val="$2"; shift; }; HOSTNAME="$val"; CREATION_FLAGS_USED+=("--hostname"); shift ;;
+      --os) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--os requires a value"; val="$2"; shift; }; OS_CHOICE="${val,,}"; CREATION_FLAGS_USED+=("--os"); shift ;;
+      --storage) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--storage requires a value"; val="$2"; shift; }; STORAGE="$val"; CREATION_FLAGS_USED+=("--storage"); shift ;;
+      --template-storage) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--template-storage requires a value"; val="$2"; shift; }; TEMPLATE_STORAGE="$val"; CREATION_FLAGS_USED+=("--template-storage"); shift ;;
+      --cores) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--cores requires a value"; val="$2"; shift; }; CORES="$val"; CREATION_FLAGS_USED+=("--cores"); shift ;;
+      --memory) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--memory requires a value"; val="$2"; shift; }; MEMORY="$val"; CREATION_FLAGS_USED+=("--memory"); shift ;;
+      --swap) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--swap requires a value"; val="$2"; shift; }; SWAP="$val"; CREATION_FLAGS_USED+=("--swap"); shift ;;
+      --disk) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--disk requires a value"; val="$2"; shift; }; DISK="$val"; CREATION_FLAGS_USED+=("--disk"); shift ;;
+      --bridge) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--bridge requires a value"; val="$2"; shift; }; BRIDGE="$val"; CREATION_FLAGS_USED+=("--bridge"); shift ;;
+      --vlan) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--vlan requires a value"; val="$2"; shift; }; VLAN_TAG="$val"; CREATION_FLAGS_USED+=("--vlan"); shift ;;
+      --mtu) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--mtu requires a value"; val="$2"; shift; }; MTU_BYTES="$val"; CREATION_FLAGS_USED+=("--mtu"); shift ;;
+      --ip) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--ip requires a value"; val="$2"; shift; }; IP_ADDR="$val"; CREATION_FLAGS_USED+=("--ip"); shift ;;
+      --gw) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--gw requires a value"; val="$2"; shift; }; GW_ADDR="$val"; CREATION_FLAGS_USED+=("--gw"); shift ;;
+      --dns) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--dns requires a value"; val="$2"; shift; }; DNS_ADDR="$val"; CREATION_FLAGS_USED+=("--dns"); shift ;;
+      --timezone) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--timezone requires a value"; val="$2"; shift; }; AIO_TIMEZONE="$val"; shift ;;
+      --ssh-pubkey-file) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--ssh-pubkey-file requires a value"; val="$2"; shift; }; SSH_PUBKEY_FILE="$val"; shift ;;
+      --ssh-pubkey) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--ssh-pubkey requires a value"; val="$2"; shift; }; SSH_PUBKEY="$val"; shift ;;
+      --admin-user) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--admin-user requires a value"; val="$2"; shift; }; ADMIN_USER="$val"; shift ;;
+      --gpu) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--gpu requires a value"; val="$2"; shift; }; GPU_MODE="${val,,}"; shift ;;
+      --pci-slot) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--pci-slot requires a value"; val="$2"; shift; }; PCI_SLOT="$val"; shift ;;
+      --docktun-port) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--docktun-port requires a value"; val="$2"; shift; }; DOCKTUN_PORT="$val"; shift ;;
+      --docktun-dir) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--docktun-dir requires a value"; val="$2"; shift; }; DOCKTUN_DIR="$val"; shift ;;
+      --docktun-admin-user) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--docktun-admin-user requires a value"; val="$2"; shift; }; DOCKTUN_ADMIN_USER="$val"; shift ;;
+      --docktun-admin-password) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--docktun-admin-password requires a value"; val="$2"; shift; }; DOCKTUN_ADMIN_PASSWORD="$val"; shift ;;
+      --lan-subnets) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--lan-subnets requires a value"; val="$2"; shift; }; LAN_SUBNETS="$val"; shift ;;
+      --media-dir) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--media-dir requires a value"; val="$2"; shift; }; MEDIA_DIR="$val"; CREATION_FLAGS_USED+=("--media-dir"); shift ;;
+      --mount) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--mount requires <host_path>:<ct_path>"; val="$2"; shift; }; EXTRA_MOUNTS+=("$val"); CREATION_FLAGS_USED+=("--mount"); shift ;;
+      --startup) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--startup requires a value"; val="$2"; shift; }; STARTUP_SPEC="$val"; CREATION_FLAGS_USED+=("--startup"); shift ;;
+      --aio-compose) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--aio-compose requires a value"; val="$2"; shift; }; AIO_COMPOSE_FILE="$val"; shift ;;
+      --domain) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--domain requires a value"; val="$2"; shift; }; AIO_DOMAIN="$val"; shift ;;
       *) die "Unknown option: $1 (use --help for usage)" ;;
     esac
   done
@@ -467,20 +453,20 @@ detect_default_bridge() {
       fi
     fi
   fi
-  local _ng_was_on=0
-  shopt -q nullglob && _ng_was_on=1
-  shopt -s nullglob
+  local -a br_dirs=()
+  glob_matches br_dirs "/sys/class/net/*/bridge" "/sys/class/net/vmbr*"
   local net_dir="" found_br=""
-  for net_dir in /sys/class/net/vmbr* /sys/class/net/*/bridge; do
+  for net_dir in ${br_dirs[@]+"${br_dirs[@]}"}; do
     [[ -d "$net_dir" ]] || continue
     if [[ "$net_dir" == */bridge ]]; then
       found_br="$(basename "$(dirname "$net_dir")")"
-    else
+    elif [[ -d "${net_dir}/bridge" ]]; then
       found_br="$(basename "$net_dir")"
+    else
+      continue
     fi
     break
   done
-  (( _ng_was_on )) || shopt -u nullglob
   if [[ -z "$found_br" ]] && command -v ovs-vsctl >/dev/null 2>&1; then
     found_br="$(ovs-vsctl list-br 2>/dev/null | head -n1 || true)"
   fi
@@ -517,16 +503,14 @@ detect_default_ssh_pubkey_file() {
       return 0
     fi
   done
-  local _ng_was_on=0
-  shopt -q nullglob && _ng_was_on=1
-  shopt -s nullglob
-  for candidate in /root/.ssh/*.pub; do
+  local -a pub_files=()
+  glob_matches pub_files "/root/.ssh/*.pub"
+  for candidate in ${pub_files[@]+"${pub_files[@]}"}; do
     if file_has_ssh_pubkey "$candidate"; then
       found_file="$candidate"
       break
     fi
   done
-  (( _ng_was_on )) || shopt -u nullglob
   printf '%s\n' "$found_file"
 }
 
@@ -546,6 +530,21 @@ detect_default_timezone() {
     fi
   fi
   printf '%s\n' "${tz:-UTC}"
+}
+
+get_pci_kernel_driver() {
+  local slot="${1:-}"
+  [[ -n "$slot" ]] || return 1
+  local drv=""
+  if [[ -L "/sys/bus/pci/devices/${slot}/driver" ]]; then
+    drv="$(basename "$(readlink -f "/sys/bus/pci/devices/${slot}/driver")" 2>/dev/null || true)"
+  fi
+  if [[ -z "$drv" ]] && command -v lspci >/dev/null 2>&1; then
+    drv="$(lspci -k -s "$slot" 2>/dev/null | awk -F': ' '/Kernel driver in use:/ {print $2; exit}' || true)"
+  fi
+  drv="${drv//[[:space:]]/}"
+  [[ -n "$drv" ]] || return 1
+  printf '%s\n' "$drv"
 }
 
 detect_gpus_via_lspci() {
@@ -594,12 +593,7 @@ detect_gpus_via_lspci() {
   if (( DETECTED_INTEL )); then
     local intel_slot="" kdrv=""
     intel_slot="$(awk '/Intel|\[8086:/ {print $1; exit}' <<< "$gpu_lines" || true)"
-    if [[ -n "$intel_slot" && -L "/sys/bus/pci/devices/${intel_slot}/driver" ]]; then
-      kdrv="$(basename "$(readlink -f "/sys/bus/pci/devices/${intel_slot}/driver")" 2>/dev/null || true)"
-    fi
-    if [[ -z "$kdrv" && -n "$intel_slot" ]]; then
-      kdrv="$(lspci -k -s "$intel_slot" 2>/dev/null | awk -F': ' '/Kernel driver in use:/ {print $2; exit}' || true)"
-    fi
+    kdrv="$(get_pci_kernel_driver "$intel_slot" || true)"
     if [[ -z "$kdrv" ]]; then
       kdrv="$(lspci -k 2>/dev/null | awk '
         /(VGA|3D|Display).*Intel/ { in_intel=1; next }
@@ -637,12 +631,12 @@ detect_host_prep_status() {
   if [[ ! -f /etc/modules-load.d/media-lxc-net.conf || ! -f /etc/sysctl.d/99-media-lxc.conf ]]; then
     HOST_PREP_NEEDED=1
   fi
-  if (( DO_NVIDIA )) && [[ ! -f /etc/systemd/system/nvidia-lxc-prestart.service || ! -f /etc/udev/rules.d/70-nvidia-lxc.rules || ! -r /proc/driver/nvidia/version ]]; then
+  if (( DO_NVIDIA )) && [[ ! -f /etc/systemd/system/nvidia-lxc-prestart.service || ! -f /etc/udev/rules.d/70-nvidia-lxc.rules || ! -r "${HOST_NVIDIA_PROC_VERSION_FILE:-/proc/driver/nvidia/version}" ]]; then
     HOST_PREP_NEEDED=1
   fi
   if (( DO_INTEL )); then
     if command -v dpkg-query >/dev/null 2>&1; then
-      if ! dpkg-query -W -f='${Status}' intel-gpu-tools 2>/dev/null | grep -q "install ok installed"; then
+      if ! dpkg-query -W -f='${Status}\n' intel-gpu-tools 2>/dev/null | grep -qE '^(install|hold) ok installed$'; then
         HOST_PREP_NEEDED=1
       fi
     elif ! command -v intel_gpu_top >/dev/null 2>&1; then
@@ -820,16 +814,20 @@ print_summary_banner() {
     "$pve_str" "${OS_ID:-unknown}" "${OS_CODENAME:-unknown}" "$host_prep_str"
   if [[ "$HOST_PREP_ONLY" != "1" ]]; then
     printf '  LXC Container : CTID=%s, Hostname=%s, OS=%s, TZ=%s\n' "$CTID" "$HOSTNAME" "$OS_CHOICE" "${AIO_TIMEZONE:-UTC}"
-    printf '  Compute/Disk  : %s cores, %s MiB RAM, %s MiB swap, %s GiB (%s / tpl:%s)\n' \
-      "$CORES" "$MEMORY" "$SWAP" "$DISK" "$STORAGE" "$TEMPLATE_STORAGE"
+    local shm_note=""
+    if [[ "$MEMORY" =~ ^[0-9]+$ ]] && (( 10#$MEMORY < 1024 )); then
+      shm_note=" (WARN: /dev/shm < 512 MiB)"
+    fi
+    printf '  Compute/Disk  : %s cores, %s MiB RAM%s, %s MiB swap, %s GiB (%s / tpl:%s)%s\n' \
+      "$CORES" "$MEMORY" "$shm_note" "$SWAP" "$DISK" "$STORAGE" "$TEMPLATE_STORAGE" "${STARTUP_SPEC:+ startup=${STARTUP_SPEC}}"
     printf '  Network       : bridge=%s%s%s, ip=%s%s, dns=%s\n' \
       "$BRIDGE" "${VLAN_TAG:+ vlan=${VLAN_TAG}}" "${MTU_BYTES:+ mtu=${MTU_BYTES}}" "$IP_ADDR" "${GW_ADDR:+ gw=${GW_ADDR}}" "$DNS_ADDR"
     printf '  Security      : admin=%s, ssh=%s, AppArmor=%s\n' \
       "$ADMIN_USER" "$ssh_desc" "$( (( ALLOW_UNCONFINED_APPARMOR )) && echo 'unconfined (opt-in)' || echo 'confined (default)' )"
     printf '  GPU & Extras  : mode=%s (%s)%s, wolf=%s, fuse=%s\n' \
       "$GPU_MODE" "$gpu_desc" "${PCI_SLOT:+ slot=${PCI_SLOT}}" "$wolf_desc" "$WITH_FUSE"
-    printf '  DockTun / AIO : port=%s, mDNS=%s, dir=%s, domain=%s\n' \
-      "$DOCKTUN_PORT" "$mdns_desc" "$DOCKTUN_DIR" "$AIO_DOMAIN"
+    printf '  DockTun / AIO : port=%s, mDNS=%s, dir=%s, domain=%s%s\n' \
+      "$DOCKTUN_PORT" "$mdns_desc" "$DOCKTUN_DIR" "$AIO_DOMAIN" "${AIO_COMPOSE_FILE:+ compose=${AIO_COMPOSE_FILE}}"
   fi
   printf '%s===========================================%s\n\n' "${_CLR_BOLD}${_CLR_CYAN}" "${_CLR_RESET}"
 }
@@ -868,6 +866,9 @@ run_interactive_wizard() {
           prompt_val IP_ADDR "IPv4 CIDR or 'dhcp'" "$IP_ADDR"
           if [[ "${IP_ADDR,,}" != "dhcp" ]]; then
             prompt_val GW_ADDR "IPv4 gateway" "$GW_ADDR"
+          else
+            IP_ADDR="dhcp"
+            GW_ADDR=""
           fi
           prompt_val GPU_MODE "Shared GPU mode (auto|nvidia|intel|amd|all|none)" "$GPU_MODE"
           GPU_MODE="${GPU_MODE,,}"
@@ -1007,20 +1008,14 @@ check_ctid_exists_cluster() {
   if [[ -f "/etc/pve/qemu-server/${id}.conf" ]]; then
     return 0
   fi
-  local _ng_was_on=0
-  shopt -q nullglob && _ng_was_on=1
-  shopt -s nullglob
-  local f="" found=1
-  for f in /etc/pve/nodes/*/lxc/"${id}.conf" /etc/pve/nodes/*/qemu-server/"${id}.conf"; do
+  local -a cluster_confs=()
+  local f=""
+  glob_matches cluster_confs "/etc/pve/nodes/*/lxc/${id}.conf" "/etc/pve/nodes/*/qemu-server/${id}.conf"
+  for f in ${cluster_confs[@]+"${cluster_confs[@]}"}; do
     if [[ -f "$f" ]]; then
-      found=0
-      break
+      return 0
     fi
   done
-  (( _ng_was_on )) || shopt -u nullglob
-  if (( found == 0 )); then
-    return 0
-  fi
   if command -v pct >/dev/null 2>&1 && pct status "$id" >/dev/null 2>&1; then
     return 0
   fi
@@ -1030,7 +1025,14 @@ check_ctid_exists_cluster() {
   return 1
 }
 
-validate_inputs() {
+normalize_mount_target() {
+  local norm=""
+  norm="$(printf '%s' "${1:-}" | sed -E 's#/+#/#g; s#/$##')"
+  [[ -z "$norm" ]] && norm="/"
+  printf '%s\n' "$norm"
+}
+
+validate_mode_flags() {
   if (( HOST_PREP_ONLY && SKIP_HOST_PREP )); then
     die "--host-prep-only and --skip-host-prep cannot be used together."
   fi
@@ -1043,6 +1045,104 @@ validate_inputs() {
   if (( mode_count > 1 )); then
     die "--host-prep-only, --provision-only, --doctor, --list, and --destroy cannot be combined."
   fi
+}
+
+validate_timezone_value() {
+  if [[ -n "$AIO_TIMEZONE" ]]; then
+    if [[ "$AIO_TIMEZONE" =~ (^|/)\.\.?(/|$) ]]; then
+      die "Invalid --timezone '${AIO_TIMEZONE}' (path traversal segments are not allowed)"
+    fi
+    [[ "$AIO_TIMEZONE" =~ ^[A-Za-z0-9_+.-]+(/[A-Za-z0-9_+.-]+)*$ ]] || die "Invalid --timezone '${AIO_TIMEZONE}'"
+    if [[ "${DRY_RUN}" != "1" && -d /usr/share/zoneinfo && ! -f "/usr/share/zoneinfo/${AIO_TIMEZONE}" ]]; then
+      die "Unknown timezone '${AIO_TIMEZONE}' (not found under /usr/share/zoneinfo)"
+    fi
+  fi
+}
+
+validate_docktun_admin_password() {
+  if [[ -n "$DOCKTUN_ADMIN_PASSWORD" ]]; then
+    if [[ "$DOCKTUN_ADMIN_PASSWORD" == *$'\n'* || "$DOCKTUN_ADMIN_PASSWORD" == *$'\r'* ]]; then
+      die "--docktun-admin-password cannot contain newline characters."
+    fi
+    local pw_bytes=0
+    pw_bytes="$(LC_ALL=C printf '%s' "$DOCKTUN_ADMIN_PASSWORD" | wc -c | tr -d '[:space:]')"
+    if (( pw_bytes < 12 || pw_bytes > 72 )); then
+      die "--docktun-admin-password must be 12-72 bytes (got ${pw_bytes} bytes; DockTun rejects out-of-range bootstrap passwords)."
+    fi
+  fi
+  if (( TEMPLATE_HYGIENE )) && [[ -n "$DOCKTUN_ADMIN_PASSWORD" ]]; then
+    die "--template-hygiene cannot be combined with --docktun-admin-password (avoids baking plaintext passwords into template compose.yml)."
+  fi
+}
+
+validate_extra_mounts() {
+  if (( ${#EXTRA_MOUNTS[@]} == 0 )); then
+    return 0
+  fi
+  local mnt="" host_p="" ct_p="" norm_ct="" docktun_norm=""
+  local -A seen_ct_paths=()
+  [[ -n "$MEDIA_DIR" ]] && seen_ct_paths["/mnt/media"]=1
+  docktun_norm="$(normalize_mount_target "$DOCKTUN_DIR")"
+  for mnt in "${EXTRA_MOUNTS[@]}"; do
+    [[ "$mnt" == *:* && "$mnt" != *$'\n'* && "$mnt" != *$'\r'* ]] || \
+      die "Invalid --mount '${mnt}' (expected <host_path>:<ct_path>)"
+    host_p="${mnt%%:*}"
+    ct_p="${mnt#*:}"
+    [[ "$host_p" == /* && "$ct_p" == /* && "$host_p" != *:* && "$ct_p" != *:* && "$host_p" != *,* && "$ct_p" != *,* ]] || \
+      die "Invalid --mount '${mnt}' (both paths must be absolute without commas or extra colons)"
+    norm_ct="$(normalize_mount_target "$ct_p")"
+    case "$norm_ct" in
+      /|/bin|/bin/*|/boot|/boot/*|/dev|/dev/*|/etc|/etc/*|/lib|/lib/*|/lib32|/lib32/*|/lib64|/lib64/*|/libx32|/libx32/*|/proc|/proc/*|/run|/run/*|/sbin|/sbin/*|/sys|/sys/*|/usr|/usr/*|/var)
+        die "Invalid --mount '${mnt}': refusing protected container target '${norm_ct}'"
+        ;;
+    esac
+    if [[ "$norm_ct" == "$docktun_norm" || "$norm_ct" == "${docktun_norm}/"* ]]; then
+      die "Invalid --mount '${mnt}': container target collides with --docktun-dir (${docktun_norm})"
+    fi
+    if [[ -n "${seen_ct_paths[$norm_ct]+x}" ]]; then
+      die "Duplicate container mount target '${norm_ct}' in --mount / --media-dir"
+    fi
+    seen_ct_paths["$norm_ct"]=1
+  done
+}
+
+validate_early_cli_inputs() {
+  validate_mode_flags
+  if (( LIST_MODE )); then
+    return 0
+  fi
+  case "$GPU_MODE" in
+    auto|nvidia|intel|amd|all|none) ;;
+    *) die "Invalid --gpu '${GPU_MODE}'. Expected: auto|nvidia|intel|amd|all|none" ;;
+  esac
+  if [[ -n "$PCI_SLOT" ]]; then
+    PCI_SLOT="$(normalize_pci_slot "$PCI_SLOT")"
+  fi
+  if [[ -n "$CTID" ]]; then
+    [[ "$CTID" =~ ^[1-9][0-9]*$ ]] && (( 10#$CTID >= 100 )) || die "Invalid CTID '${CTID}'; must be an integer >= 100 without leading zeros."
+  fi
+  if (( HOST_PREP_ONLY || DESTROY_MODE || DOCTOR_MODE )); then
+    return 0
+  fi
+  validate_timezone_value
+  validate_docktun_admin_password
+  if [[ -n "$STARTUP_SPEC" ]]; then
+    [[ "$STARTUP_SPEC" =~ ^order=[0-9]+(,up=[0-9]+)?(,down=[0-9]+)?$ ]] || \
+      die "Invalid --startup '${STARTUP_SPEC}' (expected order=N[,up=S][,down=S], e.g. order=2,up=30,down=60)"
+  fi
+  if [[ -n "$AIO_COMPOSE_FILE" ]]; then
+    [[ -r "$AIO_COMPOSE_FILE" && -s "$AIO_COMPOSE_FILE" ]] || \
+      die "AIOStreams compose file not readable or empty: ${AIO_COMPOSE_FILE}"
+    case "${AIO_COMPOSE_FILE,,}" in
+      *.yml|*.yaml) ;;
+      *) die "Invalid --aio-compose '${AIO_COMPOSE_FILE}' (expected a .yml or .yaml file)" ;;
+    esac
+  fi
+  validate_extra_mounts
+}
+
+validate_inputs() {
+  validate_mode_flags
 
   if (( LIST_MODE )); then
     return 0
@@ -1083,20 +1183,22 @@ validate_inputs() {
     return 0
   fi
 
-  if [[ -n "$AIO_TIMEZONE" ]]; then
-    [[ "$AIO_TIMEZONE" =~ ^[A-Za-z0-9_+.-]+(/[A-Za-z0-9_+.-]+)*$ ]] || die "Invalid --timezone '${AIO_TIMEZONE}'"
-    if [[ "${DRY_RUN}" != "1" && -d /usr/share/zoneinfo && ! -f "/usr/share/zoneinfo/${AIO_TIMEZONE}" ]]; then
-      die "Unknown timezone '${AIO_TIMEZONE}' (not found under /usr/share/zoneinfo)"
-    fi
+  if (( PROVISION_ONLY )) && (( ${#CREATION_FLAGS_USED[@]} > 0 )); then
+    log_warn "--provision-only ignores container-creation flags (${CREATION_FLAGS_USED[*]})."
   fi
+
+  validate_timezone_value
   if (( 10#$DOCKTUN_PORT == 80 && WITH_ZEROCONF == 1 )); then
     die "--docktun-port 80 conflicts with docktun-zeroconf (port 80). Use a different --docktun-port or pass --no-zeroconf."
   fi
-  if [[ -n "$DOCKTUN_ADMIN_PASSWORD" ]] && [[ "$DOCKTUN_ADMIN_PASSWORD" == *$'\n'* || "$DOCKTUN_ADMIN_PASSWORD" == *$'\r'* ]]; then
-    die "--docktun-admin-password cannot contain newline characters."
-  fi
-  if (( TEMPLATE_HYGIENE )) && [[ -n "$DOCKTUN_ADMIN_PASSWORD" ]]; then
-    die "--template-hygiene cannot be combined with --docktun-admin-password (avoids baking plaintext passwords into template compose.yml)."
+  validate_docktun_admin_password
+  if [[ -n "$AIO_COMPOSE_FILE" ]]; then
+    [[ -r "$AIO_COMPOSE_FILE" && -s "$AIO_COMPOSE_FILE" ]] || \
+      die "AIOStreams compose file not readable or empty: ${AIO_COMPOSE_FILE}"
+    case "${AIO_COMPOSE_FILE,,}" in
+      *.yml|*.yaml) ;;
+      *) die "Invalid --aio-compose '${AIO_COMPOSE_FILE}' (expected a .yml or .yaml file)" ;;
+    esac
   fi
   [[ "$AIO_DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]] || \
     die "Invalid --domain '${AIO_DOMAIN}' (expected valid hostname)"
@@ -1159,6 +1261,9 @@ validate_inputs() {
   if (( ! PROVISION_ONLY )); then
     [[ "$CORES" =~ ^[1-9][0-9]*$ ]] && (( 10#$CORES >= 1 )) || die "Invalid --cores '${CORES}'"
     [[ "$MEMORY" =~ ^[1-9][0-9]*$ ]] && (( 10#$MEMORY >= 512 )) || die "Invalid --memory '${MEMORY}' (min 512)"
+    if (( 10#$MEMORY < 1024 )); then
+      log_warn "Memory ${MEMORY} MiB yields /dev/shm < 512 MiB (Proxmox LXC defaults /dev/shm to 50% of RAM); consider >= 1024 MiB for Docker/FFmpeg/Postgres workloads."
+    fi
     [[ "$SWAP" =~ ^(0|[1-9][0-9]*)$ ]] || die "Invalid --swap '${SWAP}'"
     [[ "$DISK" =~ ^[1-9][0-9]*$ ]] && (( 10#$DISK >= 4 )) || die "Invalid --disk '${DISK}' (min 4 GiB)"
     [[ -n "$HOSTNAME" && "$HOSTNAME" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]] || \
@@ -1175,12 +1280,16 @@ validate_inputs() {
       [[ "$MTU_BYTES" =~ ^[1-9][0-9]*$ ]] && (( 10#$MTU_BYTES >= 576 && 10#$MTU_BYTES <= 65535 )) || \
         die "Invalid --mtu '${MTU_BYTES}' (expected integer 576-65535)"
     fi
+    if [[ -n "$STARTUP_SPEC" ]]; then
+      [[ "$STARTUP_SPEC" =~ ^order=[0-9]+(,up=[0-9]+)?(,down=[0-9]+)?$ ]] || \
+        die "Invalid --startup '${STARTUP_SPEC}' (expected order=N[,up=S][,down=S], e.g. order=2,up=30,down=60)"
+    fi
     if [[ -n "$MEDIA_DIR" ]]; then
       [[ "$MEDIA_DIR" == /* && "$MEDIA_DIR" != *$'\n'* && "$MEDIA_DIR" != *$'\r'* && "$MEDIA_DIR" != *[,:]* ]] || \
         die "Invalid --media-dir '${MEDIA_DIR}' (must be an absolute path without commas, colons, or newlines)"
       if (( CHOWN_MEDIA_DIR )); then
-        local norm_media="${MEDIA_DIR%/}"
-        [[ -z "$norm_media" ]] && norm_media="/"
+        local norm_media=""
+        norm_media="$(normalize_mount_target "$MEDIA_DIR")"
         case "$norm_media" in
           /|/bin|/bin/*|/boot|/boot/*|/dev|/dev/*|/etc|/etc/*|/lib|/lib/*|/lib32|/lib32/*|/lib64|/lib64/*|/libx32|/libx32/*|/mnt|/proc|/proc/*|/root|/root/*|/run|/run/*|/sbin|/sbin/*|/sys|/sys/*|/usr|/usr/*|/var)
             die "Refusing --chown-media-dir on protected system path '${MEDIA_DIR}'."
@@ -1189,23 +1298,7 @@ validate_inputs() {
       fi
     fi
 
-    if (( ${#EXTRA_MOUNTS[@]} > 0 )); then
-      local mnt="" host_p="" ct_p="" seen_ct_paths=""
-      [[ -n "$MEDIA_DIR" ]] && seen_ct_paths=" /mnt/media "
-      for mnt in "${EXTRA_MOUNTS[@]}"; do
-        [[ "$mnt" == *:* && "$mnt" != *$'\n'* && "$mnt" != *$'\r'* ]] || \
-          die "Invalid --mount '${mnt}' (expected <host_path>:<ct_path>)"
-        host_p="${mnt%%:*}"
-        ct_p="${mnt#*:}"
-        [[ "$host_p" == /* && "$ct_p" == /* && "$host_p" != *:* && "$ct_p" != *:* && "$host_p" != *,* && "$ct_p" != *,* ]] || \
-          die "Invalid --mount '${mnt}' (both paths must be absolute without commas or extra colons)"
-        [[ "$ct_p" != "/" ]] || die "Invalid --mount '${mnt}': container target path cannot be '/'"
-        if [[ " ${seen_ct_paths} " == *" ${ct_p} "* ]]; then
-          die "Duplicate container mount target '${ct_p}' in --mount / --media-dir"
-        fi
-        seen_ct_paths+=" ${ct_p} "
-      done
-    fi
+    validate_extra_mounts
 
     case "$OS_CHOICE" in
       debian12|debian13|ubuntu2404) ;;
@@ -1284,7 +1377,7 @@ enable_nonfree_in_list_file() {
   updated="$(awk '
     BEGIN { changed = 0 }
     /^[[:space:]]*(deb|deb-src)[[:space:]]+/ {
-      if ($0 ~ /([a-z0-9-]+\.)*debian\.org/ && $0 !~ /proxmox\.com/) {
+      if (($0 ~ /([a-z0-9-]+\.)*debian\.org/ || $0 ~ /https?:\/\/[^[:space:]]+\/debian(-security)?([[:space:]]|\/|$)/) && $0 !~ /proxmox\.com/) {
         line = $0
         comment = ""
         hash_idx = index(line, "#")
@@ -1372,7 +1465,7 @@ enable_nonfree_in_sources_file() {
           cur_key = ""
         }
       }
-      has_debian = (uris_val ~ /([a-z0-9-]+\.)*debian\.org/ && uris_val !~ /proxmox\.com/)
+      has_debian = ((uris_val ~ /([a-z0-9-]+\.)*debian\.org/ || uris_val ~ /https?:\/\/[^[:space:]]+\/debian(-security)?([[:space:]]|\/|$)/) && uris_val !~ /proxmox\.com/)
       enabled_ok = (enabled_val !~ /(^|[[:space:]])[Nn][Oo]([[:space:]]|$)/)
       if (has_debian && enabled_ok && comp_last_idx > 0) {
         has_nf = (comp_val ~ /(^|[[:space:]])non-free([[:space:]]|$)/)
@@ -1440,16 +1533,13 @@ configure_host_apt_nonfree() {
   if [[ -f /etc/apt/sources.list ]]; then
     enable_nonfree_in_list_file /etc/apt/sources.list
   fi
-  local _ng_was_on=0
-  shopt -q nullglob && _ng_was_on=1
-  shopt -s nullglob
-  local -a list_files=(/etc/apt/sources.list.d/*.list)
-  local -a source_files=(/etc/apt/sources.list.d/*.sources)
-  (( _ng_was_on )) || shopt -u nullglob
-  for f in "${list_files[@]}"; do
+  local -a list_files=() source_files=()
+  glob_matches list_files "/etc/apt/sources.list.d/*.list"
+  glob_matches source_files "/etc/apt/sources.list.d/*.sources"
+  for f in ${list_files[@]+"${list_files[@]}"}; do
     enable_nonfree_in_list_file "$f"
   done
-  for f in "${source_files[@]}"; do
+  for f in ${source_files[@]+"${source_files[@]}"}; do
     enable_nonfree_in_sources_file "$f"
   done
 }
@@ -1514,14 +1604,46 @@ setup_nvidia_host() {
       ;;
   esac
 
-  run_cmd apt-get update
-
-  local -a hdr_pkgs=("proxmox-default-headers")
-  if [[ ! -d "/lib/modules/${kver}/build" ]]; then
-    hdr_pkgs+=("proxmox-headers-${kver}")
+  local nv_driver_present=0
+  if [[ -r "${HOST_NVIDIA_PROC_VERSION_FILE:-/proc/driver/nvidia/version}" ]]; then
+    nv_driver_present=1
+  elif command -v dpkg-query >/dev/null 2>&1; then
+    local nv_pkg=""
+    for nv_pkg in nvidia-kernel-dkms nvidia-kernel-open-dkms nvidia-open-kernel-dkms nvidia-open; do
+      if dpkg-query -W -f='${Status}\n' "$nv_pkg" 2>/dev/null | grep -qE '^(install|hold) ok installed$'; then
+        nv_driver_present=1
+        break
+      fi
+    done
   fi
-  log_info "Ensuring Proxmox kernel headers (${hdr_pkgs[*]})..."
-  run_cmd env DEBIAN_FRONTEND=noninteractive apt-get install -y "${hdr_pkgs[@]}" curl gnupg ca-certificates
+
+  local need_headers=0 apt_updated=0
+  [[ ! -d "/lib/modules/${kver}/build" ]] && need_headers=1
+
+  if (( need_headers || ! nv_driver_present )); then
+    run_cmd apt-get update
+    apt_updated=1
+  fi
+
+  if (( need_headers )); then
+    local -a hdr_pkgs=()
+    local hcand=""
+    for hcand in "proxmox-headers-${kver}" "proxmox-default-headers" "pve-headers-${kver}" "linux-headers-${kver}"; do
+      if [[ "${DRY_RUN}" == "1" ]] || apt-cache show "$hcand" >/dev/null 2>&1; then
+        hdr_pkgs+=("$hcand")
+        break
+      fi
+    done
+    if (( ${#hdr_pkgs[@]} > 0 )); then
+      log_info "Ensuring kernel headers (${hdr_pkgs[*]})..."
+      run_cmd env DEBIAN_FRONTEND=noninteractive apt-get install -y "${hdr_pkgs[@]}" curl gnupg ca-certificates
+    else
+      log_warn "No kernel headers package matched for '${kver}'; installing base tools only."
+      run_cmd env DEBIAN_FRONTEND=noninteractive apt-get install -y curl gnupg ca-certificates
+    fi
+  else
+    log_info "Kernel headers already present at /lib/modules/${kver}/build."
+  fi
 
   log_info "Blacklisting nouveau in /etc/modprobe.d/blacklist-nouveau.conf"
   local nouveau_conf=""
@@ -1532,39 +1654,43 @@ EOF
 )"
   write_file_managed "/etc/modprobe.d/blacklist-nouveau.conf" 0644 "${nouveau_conf}"$'\n'
 
-  local _ng_was_on=0
-  shopt -q nullglob && _ng_was_on=1
-  shopt -s nullglob
-  local -a old_cuda_files=(/etc/apt/sources.list.d/cuda-debian*.list /etc/apt/sources.list.d/cuda-debian*.sources)
-  (( _ng_was_on )) || shopt -u nullglob
-  local f=""
-  for f in "${old_cuda_files[@]}"; do
-    if [[ "$f" != "/etc/apt/sources.list.d/cuda-${cuda_repo}-x86_64.list" ]]; then
-      run_cmd rm -f "$f"
+  if (( nv_driver_present )); then
+    log_info "Existing NVIDIA host driver detected (active module or DKMS/open package); skipping CUDA driver install while configuring udev/modprobe/prestart."
+  else
+    if (( ! need_headers )); then
+      run_cmd env DEBIAN_FRONTEND=noninteractive apt-get install -y curl gnupg ca-certificates
     fi
-  done
+    local -a old_cuda_files=()
+    glob_matches old_cuda_files "/etc/apt/sources.list.d/cuda-debian*.list" "/etc/apt/sources.list.d/cuda-debian*.sources"
+    local f=""
+    for f in ${old_cuda_files[@]+"${old_cuda_files[@]}"}; do
+      if [[ "$f" != "/etc/apt/sources.list.d/cuda-${cuda_repo}-x86_64.list" ]]; then
+        run_cmd rm -f "$f"
+      fi
+    done
 
-  local keyring_url="https://developer.download.nvidia.com/compute/cuda/repos/${cuda_repo}/x86_64/cuda-keyring_1.1-1_all.deb"
-  ensure_tmp_dir
-  local keyring_tmp="${TMP_WORK_DIR}/cuda-keyring_1.1-1_all.deb"
-  if [[ ! -s /usr/share/keyrings/cuda-archive-keyring.gpg ]]; then
-    run_cmd curl -fsSL "$keyring_url" -o "$keyring_tmp"
-    run_cmd dpkg -i "$keyring_tmp"
-  fi
+    local keyring_url="https://developer.download.nvidia.com/compute/cuda/repos/${cuda_repo}/x86_64/cuda-keyring_1.1-1_all.deb"
+    ensure_tmp_dir
+    local keyring_tmp="${TMP_WORK_DIR}/cuda-keyring_1.1-1_all.deb"
+    if [[ ! -s /usr/share/keyrings/cuda-archive-keyring.gpg ]]; then
+      run_cmd curl -fsSL "$keyring_url" -o "$keyring_tmp"
+      run_cmd dpkg -i "$keyring_tmp"
+    fi
 
-  local cuda_list="deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/${cuda_repo}/x86_64/ /"
-  write_file_managed "/etc/apt/sources.list.d/cuda-${cuda_repo}-x86_64.list" 0644 "${cuda_list}"$'\n'
+    local cuda_list="deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/${cuda_repo}/x86_64/ /"
+    write_file_managed "/etc/apt/sources.list.d/cuda-${cuda_repo}-x86_64.list" 0644 "${cuda_list}"$'\n'
 
-  run_cmd apt-get update
-  run_cmd env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    nvidia-driver-cuda nvidia-kernel-dkms nvidia-persistenced
+    run_cmd apt-get update
+    run_cmd env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      nvidia-driver-cuda nvidia-kernel-dkms nvidia-persistenced
 
-  if [[ "${DRY_RUN}" != "1" ]] && command -v dkms >/dev/null 2>&1; then
-    local dkms_out=""
-    dkms_out="$(dkms status 2>/dev/null || true)"
-    [[ -n "$dkms_out" ]] && log_info "DKMS status: ${dkms_out//$'\n'/; }"
-    if grep -qiE 'nvidia.*(broken|error)' <<< "$dkms_out"; then
-      die "NVIDIA DKMS module build failed for kernel ${kver}; inspect 'dkms status' and /var/lib/dkms/nvidia/*/build/make.log."
+    if [[ "${DRY_RUN}" != "1" ]] && command -v dkms >/dev/null 2>&1; then
+      local dkms_out=""
+      dkms_out="$(dkms status 2>/dev/null || true)"
+      [[ -n "$dkms_out" ]] && log_info "DKMS status: ${dkms_out//$'\n'/; }"
+      if grep -qiE 'nvidia.*(broken|error)' <<< "$dkms_out"; then
+        die "NVIDIA DKMS module build failed for kernel ${kver}; inspect 'dkms status' and /var/lib/dkms/nvidia/*/build/make.log."
+      fi
     fi
   fi
 
@@ -1590,15 +1716,15 @@ EOF
 )"
   write_file_managed "/etc/udev/rules.d/70-nvidia-lxc.rules" 0644 "${nv_udev_rules}"$'\n'
   if command -v udevadm >/dev/null 2>&1; then
-    run_cmd udevadm control --reload-rules
+    run_cmd udevadm control --reload-rules || log_warn "udevadm control --reload-rules failed (udev daemon may not be running)."
     run_cmd udevadm trigger --subsystem-match=nvidia-caps || true
   fi
 
-  if command -v update-initramfs >/dev/null 2>&1; then
+  if (( ! nv_driver_present )) && command -v update-initramfs >/dev/null 2>&1; then
     run_cmd update-initramfs -u -k all
   fi
 
-  if [[ "${DRY_RUN}" != "1" && ! -r /proc/driver/nvidia/version ]]; then
+  if [[ "${DRY_RUN}" != "1" && ! -r "${HOST_NVIDIA_PROC_VERSION_FILE:-/proc/driver/nvidia/version}" ]]; then
     if [[ ! -d /sys/module/nouveau ]]; then
       log_info "nouveau is not loaded; attempting to modprobe NVIDIA kernel modules..."
       local nvm=""
@@ -1619,7 +1745,7 @@ Before=pve-guests.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/sh -c 'found=0; for f in /proc/driver/nvidia/gpus/*/information; do [ -r "$f" ] || continue; m=$(awk "/Device Minor:/ {print \$3; exit}" "$f" 2>/dev/null); [ -n "$m" ] && /usr/bin/nvidia-modprobe -u -c"$m" -m >/dev/null 2>&1 && found=1 || true; done; [ "$found" -eq 0 ] && /usr/bin/nvidia-modprobe -u -c0 -m >/dev/null 2>&1 || true; /usr/bin/nvidia-smi >/dev/null 2>&1 || true'
+ExecStart=/bin/sh -c 'found=0; for f in /proc/driver/nvidia/gpus/*/information; do [ -r "$f" ] || continue; m=$(awk "/Device Minor:/ {print \$3; exit}" "$f" 2>/dev/null); [ -n "$m" ] && /usr/bin/nvidia-modprobe -u -c"$m" -m >/dev/null 2>&1 && found=1 || true; done; [ "$found" -eq 0 ] && /usr/bin/nvidia-modprobe -u -c0 -m >/dev/null 2>&1 || true; /usr/bin/nvidia-smi >/dev/null 2>&1 || true; udevadm settle --timeout=5 >/dev/null 2>&1 || true'
 
 [Install]
 WantedBy=multi-user.target
@@ -1629,12 +1755,15 @@ EOF
 
   if command -v systemctl >/dev/null 2>&1; then
     run_cmd systemctl daemon-reload
-    run_cmd systemctl enable nvidia-persistenced.service nvidia-lxc-prestart.service
-    run_cmd systemctl start nvidia-persistenced.service || log_warn "nvidia-persistenced start deferred until reboot."
+    if [[ "${DRY_RUN}" == "1" ]] || systemctl list-unit-files nvidia-persistenced.service 2>/dev/null | grep -q 'nvidia-persistenced\.service'; then
+      run_cmd systemctl enable nvidia-persistenced.service || true
+      run_cmd systemctl start nvidia-persistenced.service || log_warn "nvidia-persistenced start deferred until reboot."
+    fi
+    run_cmd systemctl enable nvidia-lxc-prestart.service
     run_cmd systemctl start nvidia-lxc-prestart.service || true
   fi
 
-  if [[ "${DRY_RUN}" != "1" && ! -r /proc/driver/nvidia/version ]]; then
+  if [[ "${DRY_RUN}" != "1" && ! -r "${HOST_NVIDIA_PROC_VERSION_FILE:-/proc/driver/nvidia/version}" ]]; then
     log_warn "NVIDIA kernel module is not yet active (nouveau may still be loaded). Reboot the Proxmox host before creating/starting NVIDIA LXCs."
   fi
   return 0
@@ -1653,7 +1782,7 @@ setup_intel_host() {
 
 setup_amd_host() {
   log_info "Configuring AMD GPU/APU host support..."
-  if dpkg-query -W -f='${Status}' pve-firmware 2>/dev/null | grep -q "install ok installed"; then
+  if dpkg-query -W -f='${Status}\n' pve-firmware 2>/dev/null | grep -qE '^(install|hold) ok installed$'; then
     log_info "pve-firmware is installed (already includes AMD GPU firmware; skipping firmware-amd-graphics)."
   elif command -v pveversion >/dev/null 2>&1; then
     log_info "Proxmox VE host detected; skipping firmware-amd-graphics to avoid conflicting with pve-firmware."
@@ -1687,23 +1816,86 @@ EOF
   write_file_managed "/etc/udev/rules.d/85-wolf-virtual-inputs.rules" 0644 "${udev_rules}"$'\n'
 
   if command -v udevadm >/dev/null 2>&1; then
-    run_cmd udevadm control --reload-rules
+    run_cmd udevadm control --reload-rules || log_warn "udevadm control --reload-rules failed (udev daemon may not be running)."
     run_cmd udevadm trigger --subsystem-match=misc || true
     run_cmd udevadm trigger --subsystem-match=input || true
   fi
   return 0
 }
 
+preflight_host_checks() {
+  if (( PREFLIGHT_DONE )); then
+    return 0
+  fi
+  PREFLIGHT_DONE=1
+
+  local apt_dir="${HOST_APT_DIR:-/etc/apt}"
+  local -a apt_files=() extra_lists=() extra_sources=()
+  [[ -f "${apt_dir}/sources.list" ]] && apt_files+=("${apt_dir}/sources.list")
+  glob_matches extra_lists "${apt_dir}/sources.list.d/*.list"
+  glob_matches extra_sources "${apt_dir}/sources.list.d/*.sources"
+  apt_files+=(${extra_lists[@]+"${extra_lists[@]}"} ${extra_sources[@]+"${extra_sources[@]}"})
+
+  local af="" has_active_enterprise=0
+  for af in ${apt_files[@]+"${apt_files[@]}"}; do
+    [[ -r "$af" ]] || continue
+    if [[ "$af" == *.sources ]]; then
+      if awk '
+        BEGIN { ent=0; dis=0; found=0 }
+        /^[[:space:]]*$/ { if (ent && !dis) found=1; ent=0; dis=0; next }
+        /^[[:space:]]*#/ { next }
+        /^[Uu][Rr][Ii][Ss]:/ && /enterprise\.proxmox\.com/ { ent=1 }
+        /^[Ee]nabled:[[:space:]]*[Nn][Oo]/ { dis=1 }
+        END { if (ent && !dis) found=1; exit !found }
+      ' "$af" 2>/dev/null; then
+        has_active_enterprise=1
+        break
+      fi
+    else
+      if grep -qE '^[[:space:]]*(deb|deb-src)[[:space:]].*enterprise\.proxmox\.com' "$af" 2>/dev/null; then
+        has_active_enterprise=1
+        break
+      fi
+    fi
+  done
+
+  if (( has_active_enterprise )); then
+    local sub_active=0
+    if command -v pvesubscription >/dev/null 2>&1; then
+      if pvesubscription get 2>/dev/null | grep -qiE 'status:[[:space:]]*active'; then
+        sub_active=1
+      fi
+    fi
+    if (( ! sub_active )); then
+      log_warn "Active 'enterprise.proxmox.com' APT repository detected without an active PVE subscription; APT updates may fail with 401 Unauthorized unless switched to pve-no-subscription."
+    fi
+  fi
+
+  local net_fail=0
+  if command -v getent >/dev/null 2>&1 && ! getent ahosts deb.debian.org >/dev/null 2>&1; then
+    net_fail=1
+  fi
+  if (( ! net_fail )) && command -v curl >/dev/null 2>&1; then
+    if ! curl -fsSIL --max-time 5 https://deb.debian.org >/dev/null 2>&1; then
+      net_fail=1
+    fi
+  fi
+  if (( net_fail )); then
+    if [[ "${DRY_RUN}" == "1" ]]; then
+      log_warn "[DRY-RUN] Host pre-flight DNS/HTTPS check to deb.debian.org failed; verify host DNS/proxy/firewall before live APT/pveam operations."
+    else
+      die "Host pre-flight network check failed (DNS/HTTPS to deb.debian.org unreachable). Verify /etc/resolv.conf, gateway, proxy, or firewall before running APT/pveam."
+    fi
+  fi
+}
+
 run_host_preparation() {
+  preflight_host_checks
   log_info "Preparing Proxmox VE host (shared driver mode, never vfio-pci)..."
   if command -v lspci >/dev/null 2>&1; then
     if [[ -n "$PCI_SLOT" ]]; then
       local slot_drv=""
-      if [[ -L "/sys/bus/pci/devices/${PCI_SLOT}/driver" ]]; then
-        slot_drv="$(basename "$(readlink -f "/sys/bus/pci/devices/${PCI_SLOT}/driver")" 2>/dev/null || true)"
-      else
-        slot_drv="$(lspci -k -s "$PCI_SLOT" 2>/dev/null | awk -F': ' '/Kernel driver in use:/ {print $2; exit}' || true)"
-      fi
+      slot_drv="$(get_pci_kernel_driver "$PCI_SLOT" || true)"
       if [[ "$slot_drv" == "vfio-pci" ]]; then
         die "Target GPU ${PCI_SLOT} is bound to vfio-pci! Shared LXC passthrough requires the host kernel driver (never vfio-pci)."
       fi
@@ -1739,14 +1931,21 @@ run_host_preparation() {
 
 check_host_storage_and_bridge() {
   if command -v pvesm >/dev/null 2>&1; then
-    local root_status="" tpl_status=""
-    root_status="$(pvesm status -content rootdir 2>/dev/null | awk -v s="$STORAGE" 'NR>1 && $1 == s {print $3; exit}' || true)"
+    local root_line="" root_status="" root_avail_kb="" tpl_status=""
+    root_line="$(pvesm status -content rootdir 2>/dev/null | awk -v s="$STORAGE" 'NR>1 && $1 == s {print $3, $6; exit}' || true)"
+    read -r root_status root_avail_kb <<< "$root_line"
     tpl_status="$(pvesm status -content vztmpl 2>/dev/null | awk -v s="$TEMPLATE_STORAGE" 'NR>1 && $1 == s {print $3; exit}' || true)"
     if [[ "$root_status" != "active" ]]; then
       if [[ "${DRY_RUN}" == "1" ]]; then
         log_warn "[DRY-RUN] Storage '${STORAGE}' is not active/rootdir-capable (status='${root_status:-missing}')."
       else
         die "Storage '${STORAGE}' is missing, inactive, or does not support 'rootdir' content (status='${root_status:-missing}')."
+      fi
+    elif [[ "$root_avail_kb" =~ ^[0-9]+$ && "$DISK" =~ ^[0-9]+$ ]]; then
+      local req_kb=$(( 10#$DISK * 1024 * 1024 ))
+      if (( root_avail_kb > 0 && root_avail_kb < req_kb )); then
+        local avail_gb=$(( root_avail_kb / 1024 / 1024 ))
+        log_warn "Storage '${STORAGE}' reports ${avail_gb} GiB (${root_avail_kb} KiB) available (< requested --disk ${DISK} GiB); verify capacity or thin-provisioning headroom."
       fi
     fi
     if [[ "$tpl_status" != "active" ]]; then
@@ -1833,8 +2032,23 @@ append_lxc_conf_lines() {
       log_info "[DRY-RUN] Would append to ${conf_file}: ${line}"
       continue
     fi
-    if ! grep -qxF "$line" "$conf_file" 2>/dev/null; then
-      printf '%s\n' "$line" >> "$conf_file"
+    local live_cfg=""
+    if [[ -f "$conf_file" ]]; then
+      live_cfg="$(strip_pct_snapshots "$(cat "$conf_file" 2>/dev/null || true)")"
+    fi
+    if ! grep -qxF "$line" <<< "$live_cfg" 2>/dev/null; then
+      if [[ -f "$conf_file" ]] && awk '/^\[/ && $0 != "[PENDING]" {found=1; exit} END {exit !found}' "$conf_file" 2>/dev/null; then
+        ensure_tmp_dir
+        local tmp_conf="${TMP_WORK_DIR}/lxc_${CTID}.conf"
+        awk -v ins="$line" '
+          !inserted && /^\[/ && $0 != "[PENDING]" { print ins; inserted=1 }
+          { print }
+          END { if (!inserted) print ins }
+        ' "$conf_file" > "$tmp_conf"
+        cat "$tmp_conf" > "$conf_file"
+      else
+        printf '%s\n' "$line" >> "$conf_file"
+      fi
     fi
   done
 }
@@ -1847,15 +2061,11 @@ is_pve_ge_82() {
 resolve_nvidia_minors_for_slot() {
   local slot="${1:-}"
   local info_file="" minor=""
-  local -a found=()
+  local -a found=() gpu_info_files=()
 
-  local _ng_was_on=0
-  shopt -q nullglob && _ng_was_on=1
-  shopt -s nullglob
-  local -a gpu_info_files=(/proc/driver/nvidia/gpus/*/information)
-  (( _ng_was_on )) || shopt -u nullglob
+  glob_matches gpu_info_files "/proc/driver/nvidia/gpus/*/information"
 
-  for info_file in "${gpu_info_files[@]}"; do
+  for info_file in ${gpu_info_files[@]+"${gpu_info_files[@]}"}; do
     [[ -r "$info_file" ]] || continue
     local dir_slot=""
     dir_slot="$(basename "$(dirname "$info_file")")"
@@ -1891,18 +2101,14 @@ resolve_nvidia_minors_for_slot() {
 }
 
 resolve_nvidia_pci_slots() {
-  local -a slots=()
+  local -a slots=() gpu_dirs=()
   if [[ -n "$PCI_SLOT" ]]; then
     printf '%s\n' "$PCI_SLOT"
     return 0
   fi
-  local _ng_was_on=0
-  shopt -q nullglob && _ng_was_on=1
-  shopt -s nullglob
-  local -a gpu_dirs=(/proc/driver/nvidia/gpus/*)
-  (( _ng_was_on )) || shopt -u nullglob
+  glob_matches gpu_dirs "/proc/driver/nvidia/gpus/*"
   local d="" slot_base=""
-  for d in "${gpu_dirs[@]}"; do
+  for d in ${gpu_dirs[@]+"${gpu_dirs[@]}"}; do
     [[ -d "$d" ]] || continue
     slot_base="$(basename "$d")"
     slots+=("${slot_base,,}")
@@ -1926,6 +2132,40 @@ resolve_nvidia_pci_slots() {
   fi
   if (( ${#slots[@]} > 0 )); then
     printf '%s\n' "${slots[@]}" | awk '!seen[$0]++'
+  fi
+}
+
+resolve_dri_nodes_for_slot() {
+  local slot="${1:-}"
+  local -n _out_r="$2"
+  local -n _out_c="$3"
+  [[ -n "$slot" ]] || return 0
+
+  local r_node="" c_node=""
+  if [[ -e "/dev/dri/by-path/pci-${slot}-render" ]]; then
+    r_node="$(readlink -f "/dev/dri/by-path/pci-${slot}-render" 2>/dev/null || true)"
+    [[ -n "$r_node" ]] && _out_r+=("$r_node")
+  fi
+  if [[ -z "$r_node" ]]; then
+    local -a sys_r=()
+    local sr=""
+    glob_matches sys_r "/sys/bus/pci/devices/${slot}/drm/renderD*"
+    for sr in ${sys_r[@]+"${sys_r[@]}"}; do
+      _out_r+=("/dev/dri/${sr##*/}")
+    done
+  fi
+
+  if [[ -e "/dev/dri/by-path/pci-${slot}-card" ]]; then
+    c_node="$(readlink -f "/dev/dri/by-path/pci-${slot}-card" 2>/dev/null || true)"
+    [[ -n "$c_node" ]] && _out_c+=("$c_node")
+  fi
+  if [[ -z "$c_node" ]]; then
+    local -a sys_c=()
+    local sc=""
+    glob_matches sys_c "/sys/bus/pci/devices/${slot}/drm/card*"
+    for sc in ${sys_c[@]+"${sys_c[@]}"}; do
+      _out_c+=("/dev/dri/${sc##*/}")
+    done
   fi
 }
 
@@ -1996,13 +2236,10 @@ configure_nvidia_passthrough() {
   if [[ -z "$uvm_major" && -r /proc/devices ]]; then
     uvm_major="$(awk '$2 == "nvidia-uvm" {print $1; exit}' /proc/devices 2>/dev/null || true)"
   fi
-  local _ng_was_on=0
-  shopt -q nullglob && _ng_was_on=1
-  shopt -s nullglob
-  local -a cap_nodes=(/dev/nvidia-caps/nvidia-cap*)
-  (( _ng_was_on )) || shopt -u nullglob
+  local -a cap_nodes=()
+  glob_matches cap_nodes "/dev/nvidia-caps/nvidia-cap*"
   local cap_node=""
-  for cap_node in "${cap_nodes[@]}"; do
+  for cap_node in ${cap_nodes[@]+"${cap_nodes[@]}"}; do
     if [[ -c "$cap_node" ]]; then
       caps_major="$(get_char_major "$cap_node" || true)"
       break
@@ -2041,15 +2278,12 @@ configure_nvidia_passthrough() {
 
   if (( ! DO_INTEL && ! DO_AMD )) && ! is_pve_ge_82; then
     if [[ -n "$PCI_SLOT" ]]; then
-      if [[ -e "/dev/dri/by-path/pci-${PCI_SLOT}-render" ]]; then
-        local r_real="" c_real=""
-        r_real="$(readlink -f "/dev/dri/by-path/pci-${PCI_SLOT}-render" 2>/dev/null || true)"
-        [[ -n "$r_real" ]] && lines+=("lxc.mount.entry: ${r_real} ${r_real#/} none bind,optional,create=file")
-        if [[ -e "/dev/dri/by-path/pci-${PCI_SLOT}-card" ]]; then
-          c_real="$(readlink -f "/dev/dri/by-path/pci-${PCI_SLOT}-card" 2>/dev/null || true)"
-          [[ -n "$c_real" ]] && lines+=("lxc.mount.entry: ${c_real} ${c_real#/} none bind,optional,create=file")
-        fi
-      fi
+      local -a nv_r_nodes=() nv_c_nodes=()
+      local node=""
+      resolve_dri_nodes_for_slot "$PCI_SLOT" nv_r_nodes nv_c_nodes
+      for node in ${nv_r_nodes[@]+"${nv_r_nodes[@]}"} ${nv_c_nodes[@]+"${nv_c_nodes[@]}"}; do
+        lines+=("lxc.mount.entry: ${node} dev/dri/${node##*/} none bind,optional,create=file")
+      done
     else
       lines+=("lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir")
     fi
@@ -2127,22 +2361,12 @@ wait_lxc_net_ready() {
   fi
 }
 
-apply_nullglob_dri_fallback() {
-  local -n _out_render="$1"
-  local -n _out_card="$2"
-  local _ng_was_on=0
-  shopt -q nullglob && _ng_was_on=1
-  shopt -s nullglob
-  _out_render=(/dev/dri/renderD*)
-  _out_card=(/dev/dri/card*)
-  (( _ng_was_on )) || shopt -u nullglob
-}
-
 sync_pct_indices_from_config() {
   local cfg="${1:-}"
   if [[ -z "$cfg" ]] && command -v pct >/dev/null 2>&1; then
     cfg="$(pct config "$CTID" 2>/dev/null || true)"
   fi
+  cfg="$(strip_pct_snapshots "$cfg")"
   local max_dev=-1 max_mp=-1 idx=""
   while IFS= read -r idx; do
     [[ "$idx" =~ ^[0-9]+$ ]] || continue
@@ -2172,13 +2396,18 @@ configure_dri_and_kfd_after_boot() {
 
   if (( ! pve_ge_82 )); then
     local -a dri_lines=()
+    local node=""
     if (( ! DO_NVIDIA )); then
       dri_lines+=("lxc.cgroup2.devices.allow: c 226:* rwm")
     fi
-    if [[ -n "$PCI_SLOT" && -e "/dev/dri/by-path/pci-${PCI_SLOT}-render" ]]; then
-      dri_lines+=("lxc.mount.entry: /dev/dri/by-path/pci-${PCI_SLOT}-render dev/dri/renderD128 none bind,optional,create=file")
-      if [[ -e "/dev/dri/by-path/pci-${PCI_SLOT}-card" ]]; then
-        dri_lines+=("lxc.mount.entry: /dev/dri/by-path/pci-${PCI_SLOT}-card dev/dri/card0 none bind,optional,create=file")
+    if [[ -n "$PCI_SLOT" ]]; then
+      local -a pve81_render=() pve81_card=()
+      resolve_dri_nodes_for_slot "$PCI_SLOT" pve81_render pve81_card
+      for node in ${pve81_render[@]+"${pve81_render[@]}"} ${pve81_card[@]+"${pve81_card[@]}"}; do
+        dri_lines+=("lxc.mount.entry: ${node} dev/dri/${node##*/} none bind,optional,create=file")
+      done
+      if (( ${#pve81_render[@]} == 0 && ${#pve81_card[@]} == 0 )); then
+        dri_lines+=("lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir")
       fi
     else
       dri_lines+=("lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir")
@@ -2192,10 +2421,13 @@ configure_dri_and_kfd_after_boot() {
       fi
     fi
     log_warn "PVE < 8.2 uses lxc.mount.entry for DRI/KFD; unprivileged LXCs may require host udev or lxc.idmap for render/video permissions."
-    append_lxc_conf_lines "${dri_lines[@]}"
-    if [[ "${DRY_RUN}" != "1" && "$do_reboot" == "1" ]]; then
-      run_cmd pct reboot "$CTID"
-      wait_lxc_systemd_ready
+    if (( ${#dri_lines[@]} > 0 )); then
+      append_lxc_conf_lines "${dri_lines[@]}"
+      POST_BOOT_DEV_ADDED=1
+      if [[ "${DRY_RUN}" != "1" && "$do_reboot" == "1" ]]; then
+        run_cmd pct reboot "$CTID"
+        wait_lxc_systemd_ready
+      fi
     fi
     return 0
   fi
@@ -2205,56 +2437,44 @@ configure_dri_and_kfd_after_boot() {
     return 0
   fi
 
-  local gid_pair="" video_gid="44" render_gid="104"
+  local gid_pair="" video_gid="44" render_gid="104" parsed_v="" parsed_r=""
   gid_pair="$(pct exec "$CTID" -- bash -c '
     getent group render >/dev/null 2>&1 || groupadd -r render
     v=$(getent group video | cut -d: -f3)
     r=$(getent group render | cut -d: -f3)
     echo "${v:-44}:${r:-104}"
-  ')"
-  video_gid="${gid_pair%%:*}"
-  render_gid="${gid_pair##*:}"
+  ' 2>/dev/null || true)"
+  if [[ "$gid_pair" == *:* ]]; then
+    parsed_v="${gid_pair%%:*}"
+    parsed_r="${gid_pair##*:}"
+    [[ "$parsed_v" =~ ^[0-9]+$ ]] && video_gid="$parsed_v"
+    [[ "$parsed_r" =~ ^[0-9]+$ ]] && render_gid="$parsed_r"
+  fi
 
   local added_dev=0 node=""
   local -a render_nodes=()
   local -a card_nodes=()
 
   if [[ -n "$PCI_SLOT" ]]; then
-    if [[ -e "/dev/dri/by-path/pci-${PCI_SLOT}-render" ]]; then
-      node="$(readlink -f "/dev/dri/by-path/pci-${PCI_SLOT}-render" 2>/dev/null || true)"
-      [[ -n "$node" ]] && render_nodes+=("$node")
-    fi
-    if [[ -e "/dev/dri/by-path/pci-${PCI_SLOT}-card" ]]; then
-      node="$(readlink -f "/dev/dri/by-path/pci-${PCI_SLOT}-card" 2>/dev/null || true)"
-      [[ -n "$node" ]] && card_nodes+=("$node")
-    fi
+    resolve_dri_nodes_for_slot "$PCI_SLOT" render_nodes card_nodes
   elif (( DO_NVIDIA && ! DO_INTEL && ! DO_AMD )); then
     local nv_slot=""
     while IFS= read -r nv_slot; do
       [[ -n "$nv_slot" ]] || continue
-      if [[ -e "/dev/dri/by-path/pci-${nv_slot}-render" ]]; then
-        node="$(readlink -f "/dev/dri/by-path/pci-${nv_slot}-render" 2>/dev/null || true)"
-        [[ -n "$node" ]] && render_nodes+=("$node")
-      fi
-      if [[ -e "/dev/dri/by-path/pci-${nv_slot}-card" ]]; then
-        node="$(readlink -f "/dev/dri/by-path/pci-${nv_slot}-card" 2>/dev/null || true)"
-        [[ -n "$node" ]] && card_nodes+=("$node")
-      fi
+      resolve_dri_nodes_for_slot "$nv_slot" render_nodes card_nodes
     done < <(resolve_nvidia_pci_slots)
-    if (( ${#render_nodes[@]} == 0 && ${#card_nodes[@]} == 0 )); then
-      apply_nullglob_dri_fallback render_nodes card_nodes
-    fi
   else
-    apply_nullglob_dri_fallback render_nodes card_nodes
+    glob_matches render_nodes "/dev/dri/renderD*"
+    glob_matches card_nodes "/dev/dri/card*"
   fi
 
-  for node in "${render_nodes[@]}"; do
+  for node in ${render_nodes[@]+"${render_nodes[@]}"}; do
     [[ -c "$node" ]] || continue
     run_cmd pct set "$CTID" "--dev${DEV_IDX}" "${node},gid=${render_gid},mode=0660"
     DEV_IDX=$((DEV_IDX + 1))
     added_dev=1
   done
-  for node in "${card_nodes[@]}"; do
+  for node in ${card_nodes[@]+"${card_nodes[@]}"}; do
     [[ -c "$node" ]] || continue
     run_cmd pct set "$CTID" "--dev${DEV_IDX}" "${node},gid=${video_gid},mode=0660"
     DEV_IDX=$((DEV_IDX + 1))
@@ -2289,12 +2509,12 @@ configure_wolf_input_after_boot() {
     return 0
   fi
 
-  local input_gid="105"
-  input_gid="$(pct exec "$CTID" -- bash -c '
+  local input_gid="105" queried_gid=""
+  queried_gid="$(pct exec "$CTID" -- bash -c '
     getent group input >/dev/null 2>&1 || groupadd -r input
     getent group input | cut -d: -f3
-  ')"
-  input_gid="${input_gid:-105}"
+  ' 2>/dev/null || true)"
+  [[ "$queried_gid" =~ ^[0-9]+$ ]] && input_gid="$queried_gid"
 
   local added_wolf=0 node=""
   for node in /dev/uinput /dev/uhid; do
@@ -2321,7 +2541,7 @@ configure_wolf_input_after_boot() {
 # ============================================================================
 
 emit_lxc_payload() {
-  cat <<'EOF_LXC_PAYLOAD'
+  cat <<'EOF_LXC_PAYLOAD_HEAD'
 set -euo pipefail
 
 DRY_RUN="${DRY_RUN:-0}"
@@ -2341,6 +2561,7 @@ GPU_MODE="${GPU_MODE:-auto}"
 AIO_DOMAIN="${AIO_DOMAIN:-aio.example.com}"
 AIO_TIMEZONE="${AIO_TIMEZONE:-}"
 AIO_DIR="${AIO_DIR:-${DOCKTUN_DIR}/projects/aiostreams}"
+AIO_COMPOSE_B64="${AIO_COMPOSE_B64:-}"
 PVE_MAJOR="${PVE_MAJOR:-}"
 PVE_MINOR="${PVE_MINOR:-}"
 TEMPLATE_HYGIENE="${TEMPLATE_HYGIENE:-0}"
@@ -2352,6 +2573,9 @@ NVIDIA_CDI_OUTPUT="${NVIDIA_CDI_OUTPUT:-/etc/cdi/nvidia.yaml}"
 NVIDIA_SMOKE_IMAGE="${NVIDIA_SMOKE_IMAGE:-nvidia/cuda:12.6.0-base-ubuntu24.04}"
 DOCKTUN_HEALTH_TIMEOUT="${DOCKTUN_HEALTH_TIMEOUT:-60}"
 LXC_APT_BACKUP_DIR="${LXC_APT_BACKUP_DIR:-/var/backups/proxmox-lxc-apt}"
+APT_BACKUP_DIR="${LXC_APT_BACKUP_DIR}"
+SYS_CLASS_DRM="${SYS_CLASS_DRM:-/sys/class/drm}"
+DOCKTUN_FIRSTBOOT_SCRIPT="${DOCKTUN_FIRSTBOOT_SCRIPT:-/usr/local/libexec/docktun-firstboot.sh}"
 
 declare -a TMP_LXC_FILES=()
 
@@ -2377,6 +2601,11 @@ lxc_log_error()   { printf '[LXC ERROR] %s\n' "$*" >&2; }
 lxc_log_success() { printf '[LXC OK] %s\n' "$*"; }
 lxc_die()         { lxc_log_error "$*"; exit 1; }
 
+log_info()  { lxc_log_info "$@"; }
+log_warn()  { lxc_log_warn "$@"; }
+log_error() { lxc_log_error "$@"; }
+die()       { lxc_die "$@"; }
+
 lxc_run_cmd() {
   if [[ "$#" -eq 0 ]]; then return 0; fi
   if [[ "${DRY_RUN}" == "1" ]]; then
@@ -2387,6 +2616,7 @@ lxc_run_cmd() {
   fi
   "$@"
 }
+run_cmd() { lxc_run_cmd "$@"; }
 
 lxc_apt_install() {
   DEBIAN_FRONTEND=noninteractive lxc_run_cmd apt-get install -y \
@@ -2407,25 +2637,18 @@ lxc_wait_for() {
   lxc_log_error "Timed out after ${timeout}s waiting for: ${desc}"
   return 1
 }
+EOF_LXC_PAYLOAD_HEAD
 
+  declare -f is_valid_ipv4 is_valid_ipv4_cidr is_valid_ipv6 is_valid_ipv6_cidr \
+    is_valid_ssh_pubkey_line detect_os glob_matches write_file_managed \
+    backup_once enable_nonfree_in_list_file enable_nonfree_in_sources_file
+
+  cat <<'EOF_LXC_PAYLOAD'
 lxc_detect_os() {
-  local os_file="${OS_RELEASE_FILE:-/etc/os-release}"
-  [[ -r "$os_file" ]] || return 1
-  local id="" version_id="" version_codename="" ubuntu_codename="" key="" val=""
-  while IFS='=' read -r key val || [[ -n "$key" ]]; do
-    [[ -z "$key" || "$key" == \#* ]] && continue
-    val="${val%$'\r'}"; val="${val#\"}"; val="${val%\"}"; val="${val#\'}"; val="${val%\'}"
-    case "$key" in
-      ID) id="$val" ;;
-      VERSION_ID) version_id="$val" ;;
-      VERSION_CODENAME) version_codename="$val" ;;
-      UBUNTU_CODENAME) ubuntu_codename="$val" ;;
-    esac
-  done < "$os_file"
-  LXC_OS_ID="$id"
-  LXC_OS_VERSION_ID="$version_id"
-  LXC_OS_CODENAME="${version_codename:-$ubuntu_codename}"
-  [[ -n "$LXC_OS_ID" ]]
+  detect_os || return 1
+  LXC_OS_ID="$OS_ID"
+  LXC_OS_VERSION_ID="$OS_VERSION_ID"
+  LXC_OS_CODENAME="$OS_CODENAME"
 }
 
 lxc_write_file() {
@@ -2474,74 +2697,11 @@ lxc_port_in_use() {
   return 1
 }
 
-lxc_is_valid_ipv4() {
-  local ip="$1"
-  [[ "$ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
-  local o=""
-  for o in "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"; do
-    [[ "$o" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
-    (( 10#$o <= 255 )) || return 1
-  done
-  return 0
-}
-
-lxc_is_valid_ipv4_cidr() {
-  local cidr="$1"
-  [[ "$cidr" == */* ]] || return 1
-  local addr="${cidr%/*}" prefix="${cidr#*/}"
-  lxc_is_valid_ipv4 "$addr" || return 1
-  [[ "$prefix" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
-  (( 10#$prefix <= 32 ))
-}
-
-lxc_is_valid_ipv6() {
-  local ip="$1"
-  [[ "$ip" == *:* && "$ip" =~ ^[0-9a-fA-F:]+$ ]] || return 1
-  [[ "$ip" != *:::* ]] || return 1
-  local dbl="${ip#*::}"
-  [[ "$dbl" == "$ip" || "$dbl" != *::* ]] || return 1
-  if [[ "$ip" == *::* ]]; then
-    local left="${ip%%::*}" right="${ip#*::}"
-    local -a lg=() rg=()
-    local non_empty=0 g=""
-    if [[ -n "$left" ]]; then
-      [[ "$left" != :* && "$left" != *: ]] || return 1
-      IFS=':' read -ra lg <<< "$left"
-      for g in "${lg[@]}"; do
-        [[ "$g" =~ ^[0-9a-fA-F]{1,4}$ ]] || return 1
-        non_empty=$((non_empty + 1))
-      done
-    fi
-    if [[ -n "$right" ]]; then
-      [[ "$right" != :* && "$right" != *: ]] || return 1
-      IFS=':' read -ra rg <<< "$right"
-      for g in "${rg[@]}"; do
-        [[ "$g" =~ ^[0-9a-fA-F]{1,4}$ ]] || return 1
-        non_empty=$((non_empty + 1))
-      done
-    fi
-    (( non_empty <= 7 )) || return 1
-  else
-    [[ "$ip" != :* && "$ip" != *: ]] || return 1
-    local -a groups=()
-    IFS=':' read -ra groups <<< "$ip"
-    (( ${#groups[@]} == 8 )) || return 1
-    local g=""
-    for g in "${groups[@]}"; do
-      [[ "$g" =~ ^[0-9a-fA-F]{1,4}$ ]] || return 1
-    done
-  fi
-  return 0
-}
-
-lxc_is_valid_ipv6_cidr() {
-  local cidr="$1"
-  [[ "$cidr" == */* ]] || return 1
-  local addr="${cidr%/*}" prefix="${cidr#*/}"
-  lxc_is_valid_ipv6 "$addr" || return 1
-  [[ "$prefix" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
-  (( 10#$prefix <= 128 ))
-}
+lxc_is_valid_ipv4() { is_valid_ipv4 "$@"; }
+lxc_is_valid_ipv4_cidr() { is_valid_ipv4_cidr "$@"; }
+lxc_is_valid_ipv6() { is_valid_ipv6 "$@"; }
+lxc_is_valid_ipv6_cidr() { is_valid_ipv6_cidr "$@"; }
+lxc_is_valid_ssh_pubkey_line() { is_valid_ssh_pubkey_line "$@"; }
 
 # --- Stage 1: LXC Hardening -------------------------------------------------
 
@@ -2560,12 +2720,6 @@ EOF
     systemctl daemon-reload || true
   fi
   return 0
-}
-
-lxc_is_valid_ssh_pubkey_line() {
-  local line="${1%$'\r'}"
-  [[ -n "$line" && ! "$line" =~ ^[[:space:]]*# ]] || return 1
-  [[ "$line" =~ (^|[[:space:]])(ssh-(rsa|dss|ed25519)|ecdsa-sha2-nistp[0-9]+|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)(-cert-v01@openssh\.com)?[[:space:]]+[^[:space:]]+ ]]
 }
 
 lxc_append_unique_key() {
@@ -2596,7 +2750,9 @@ lxc_inject_docker_user_block() {
   local -a subnets=("$@")
   [[ -f "$rules_file" ]] || return 0
 
-  cp -a "$rules_file" "${rules_file}.bak.pre-docktun"
+  if [[ ! -f "${rules_file}.bak.pre-docktun" ]]; then
+    cp -a "$rules_file" "${rules_file}.bak.pre-docktun"
+  fi
   local tmp_rules=""
   tmp_rules="$(lxc_mktemp)"
 
@@ -2605,6 +2761,11 @@ lxc_inject_docker_user_block() {
     /^# END DOCKTUN DOCKER-USER$/ { skip=0; next }
     !skip { print }
   ' "$rules_file" > "$tmp_rules"
+
+  local def_if=""
+  if command -v ip >/dev/null 2>&1; then
+    def_if="$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}' || true)"
+  fi
 
   local block="" subnet=""
   block+="# BEGIN DOCKTUN DOCKER-USER"$'\n'
@@ -2622,6 +2783,9 @@ lxc_inject_docker_user_block() {
   fi
   block+="-A DOCKER-USER -j ${ufw_forward_chain}"$'\n'
   block+="-A DOCKER-USER -i eth+ -m conntrack --ctstate NEW -j DROP"$'\n'
+  if [[ -n "$def_if" && ! "$def_if" =~ ^(eth|docker0|br-|veth|wg|tailscale|lo) ]]; then
+    block+="-A DOCKER-USER -i ${def_if} -m conntrack --ctstate NEW -j DROP"$'\n'
+  fi
   block+="-A DOCKER-USER -j RETURN"$'\n'
   block+="COMMIT"$'\n'
   block+="# END DOCKTUN DOCKER-USER"$'\n'
@@ -2876,7 +3040,8 @@ EOF
           lxc_log_warn "Skipping invalid UFW LAN subnet '${subnet}'."
           continue
         fi
-        lxc_ufw_exec_safe allow from "$subnet" to any port "$DOCKTUN_PORT" proto tcp comment "DockTun LAN" || break
+        lxc_ufw_exec_safe allow from "$subnet" to any port "$DOCKTUN_PORT" proto tcp comment "DockTun LAN" || \
+          lxc_log_warn "Failed adding UFW rule for ${subnet}; continuing."
         if [[ "$WITH_ZEROCONF" == "1" ]]; then
           lxc_ufw_exec_safe allow from "$subnet" to any port 80 proto tcp comment "DockTun ZeroConf HTTP" || true
           lxc_ufw_exec_safe allow from "$subnet" to any port 5353 proto udp comment "DockTun ZeroConf mDNS" || true
@@ -3038,12 +3203,21 @@ lxc_apply_containerd_zfs_guard() {
 
   install -d -m 0755 "$(dirname "$CONTAINERD_CONFIG")"
   if [[ ! -f "$CONTAINERD_CONFIG" ]]; then
-    printf 'disabled_plugins = %s\n' "$snapshotters_json" > "$CONTAINERD_CONFIG"
+    local ct_ver_line="" cfg_ver=2
+    if command -v containerd >/dev/null 2>&1; then
+      ct_ver_line="$(containerd --version 2>/dev/null || true)"
+      if [[ "$ct_ver_line" =~ [[:space:]]v?2\.[0-9]+ ]]; then
+        cfg_ver=3
+      fi
+    fi
+    printf 'version = %d\ndisabled_plugins = %s\n' "$cfg_ver" "$snapshotters_json" > "$CONTAINERD_CONFIG"
     chmod 0644 "$CONTAINERD_CONFIG"
     return 0
   fi
 
-  cp -a "$CONTAINERD_CONFIG" "${CONTAINERD_CONFIG}.bak.pre-docktun"
+  if [[ ! -f "${CONTAINERD_CONFIG}.bak.pre-docktun" ]]; then
+    cp -a "$CONTAINERD_CONFIG" "${CONTAINERD_CONFIG}.bak.pre-docktun"
+  fi
   local tmp_cfg=""
   tmp_cfg="$(lxc_mktemp)"
 
@@ -3272,97 +3446,22 @@ lxc_apt_exact_version_spec() {
     BEGIN { gsub(/\./, "\\.", v) }
     $3 ~ ("(^|:)" v "([-~+]|$)") { print $3; exit }
   ' || true)"
-  if [[ -z "$exact" ]]; then
-    lxc_die "Exact APT version matching host NVIDIA driver '${host_ver}' not found for package '${pkg}' (prevents NVRM API mismatch)."
-  fi
+  [[ -n "$exact" ]] || return 1
   printf '%s=%s\n' "$pkg" "$exact"
 }
 
 lxc_enable_debian_nonfree() {
-  local f="" updated="" rc=0 bak="" flat=""
-  local backup_dir="${LXC_APT_BACKUP_DIR:-/var/backups/proxmox-lxc-apt}"
-  local _ng_was_on=0
-  shopt -q nullglob && _ng_was_on=1
-  shopt -s nullglob
-  local -a list_files=() source_files=()
+  local f=""
+  local -a list_files=() extra_list_files=() source_files=()
   [[ -f /etc/apt/sources.list ]] && list_files+=(/etc/apt/sources.list)
-  list_files+=(/etc/apt/sources.list.d/*.list)
-  source_files+=(/etc/apt/sources.list.d/*.sources)
-  (( _ng_was_on )) || shopt -u nullglob
-
-  for f in "${list_files[@]:-}"; do
-    [[ -f "$f" ]] || continue
-    updated="$(awk '
-      BEGIN { changed = 0 }
-      /^[[:space:]]*(deb|deb-src)[[:space:]]+/ {
-        if ($0 ~ /([a-z0-9-]+\.)*debian\.org/ && $0 !~ /proxmox\.com/) {
-          line = $0; comment = ""; hash_idx = index(line, "#")
-          if (hash_idx > 0) { comment = substr(line, hash_idx); line = substr(line, 1, hash_idx - 1); sub(/[[:space:]]+$/, "", line) }
-          if (line !~ /(^|[[:space:]])non-free([[:space:]]|$)/) { line = line " non-free"; changed = 1 }
-          if (line !~ /(^|[[:space:]])non-free-firmware([[:space:]]|$)/) { line = line " non-free-firmware"; changed = 1 }
-          if (comment != "") line = line " " comment
-          print line; next
-        }
-      }
-      { print }
-      END { if (changed == 0) exit 10 }
-    ' "$f")" && rc=0 || rc=$?
-    if [[ "$rc" -eq 0 ]]; then
-      flat="${f#/}"; flat="${flat//\//_}"; bak="${backup_dir}/${flat}.bak"
-      if [[ ! -f "$bak" ]]; then mkdir -p "$backup_dir"; cp -a "$f" "$bak"; fi
-      printf '%s\n' "$updated" > "$f"
-    fi
+  glob_matches extra_list_files "/etc/apt/sources.list.d/*.list"
+  list_files+=(${extra_list_files[@]+"${extra_list_files[@]}"})
+  glob_matches source_files "/etc/apt/sources.list.d/*.sources"
+  for f in ${list_files[@]+"${list_files[@]}"}; do
+    enable_nonfree_in_list_file "$f"
   done
-
-  for f in "${source_files[@]:-}"; do
-    [[ -f "$f" ]] || continue
-    updated="$(awk '
-      function strip_comment(s, idx) { idx = index(s, "#"); if (idx > 0) s = substr(s, 1, idx - 1); return s }
-      function flush_stanza(i, cur_key, code, key, rest, uris_val, enabled_val, comp_val, comp_last_idx, has_debian, enabled_ok, has_nf, has_nff, cl, cidx, ccomment) {
-        if (n == 0) return
-        cur_key = ""; uris_val = ""; enabled_val = ""; comp_val = ""; comp_last_idx = 0
-        for (i = 1; i <= n; i++) {
-          if (lines[i] ~ /^[[:space:]]*#/) continue
-          if (lines[i] ~ /^[A-Za-z0-9_-]+:/) {
-            code = strip_comment(lines[i]); key = code; sub(/:.*$/, "", key); rest = code; sub(/^[A-Za-z0-9_-]+:[[:space:]]*/, "", rest); cur_key = tolower(key)
-            if (cur_key == "uris") uris_val = uris_val " " rest
-            else if (cur_key == "enabled") enabled_val = enabled_val " " rest
-            else if (cur_key == "components") { comp_val = comp_val " " rest; comp_last_idx = i }
-          } else if (lines[i] ~ /^[[:space:]]+/ && cur_key != "") {
-            rest = strip_comment(lines[i])
-            if (cur_key == "uris") uris_val = uris_val " " rest
-            else if (cur_key == "enabled") enabled_val = enabled_val " " rest
-            else if (cur_key == "components") { comp_val = comp_val " " rest; comp_last_idx = i }
-          } else { cur_key = "" }
-        }
-        has_debian = (uris_val ~ /([a-z0-9-]+\.)*debian\.org/ && uris_val !~ /proxmox\.com/)
-        enabled_ok = (enabled_val !~ /(^|[[:space:]])[Nn][Oo]([[:space:]]|$)/)
-        if (has_debian && enabled_ok && comp_last_idx > 0) {
-          has_nf = (comp_val ~ /(^|[[:space:]])non-free([[:space:]]|$)/)
-          has_nff = (comp_val ~ /(^|[[:space:]])non-free-firmware([[:space:]]|$)/)
-          if (!has_nf || !has_nff) {
-            cl = lines[comp_last_idx]; ccomment = ""; cidx = index(cl, "#")
-            if (cidx > 0) { ccomment = substr(cl, cidx); cl = substr(cl, 1, cidx - 1) }
-            sub(/[[:space:]]+$/, "", cl)
-            if (!has_nf) { cl = cl " non-free"; changed = 1 }
-            if (!has_nff) { cl = cl " non-free-firmware"; changed = 1 }
-            if (ccomment != "") cl = cl " " ccomment
-            lines[comp_last_idx] = cl
-          }
-        }
-        for (i = 1; i <= n; i++) out[++out_n] = lines[i]
-        n = 0
-      }
-      BEGIN { n = 0; out_n = 0; changed = 0 }
-      /^[[:space:]]*$/ { flush_stanza(); out[++out_n] = $0; next }
-      { lines[++n] = $0 }
-      END { flush_stanza(); if (changed == 0) exit 10; for (i = 1; i <= out_n; i++) print out[i] }
-    ' "$f")" && rc=0 || rc=$?
-    if [[ "$rc" -eq 0 ]]; then
-      flat="${f#/}"; flat="${flat//\//_}"; bak="${backup_dir}/${flat}.bak"
-      if [[ ! -f "$bak" ]]; then mkdir -p "$backup_dir"; cp -a "$f" "$bak"; fi
-      printf '%s\n' "$updated" > "$f"
-    fi
+  for f in ${source_files[@]+"${source_files[@]}"}; do
+    enable_nonfree_in_sources_file "$f"
   done
 }
 
@@ -3424,6 +3523,10 @@ lxc_setup_nvidia() {
     return 0
   fi
 
+  if [[ "${LXC_OS_ID,,}" == "debian" ]]; then
+    lxc_enable_debian_nonfree
+  fi
+
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
   lxc_apt_install --no-install-recommends curl ca-certificates gnupg jq
@@ -3440,32 +3543,30 @@ lxc_setup_nvidia() {
   apt-get update
 
   local -a pkgs=()
-  local chosen="" candidate=""
+  local chosen="" candidate="" have_compute=0 have_utils=0
   for candidate in "libnvidia-compute-${major}" "libnvidia-compute" "libcuda1"; do
-    if lxc_apt_pkg_exists "$candidate"; then
-      chosen="$(lxc_apt_exact_version_spec "$candidate" "$host_ver")"
-      pkgs+=("$chosen"); break
+    if lxc_apt_pkg_exists "$candidate" && chosen="$(lxc_apt_exact_version_spec "$candidate" "$host_ver")"; then
+      pkgs+=("$chosen"); have_compute=1; break
     fi
   done
   for candidate in "nvidia-utils-${major}" "nvidia-utils" "nvidia-smi"; do
-    if lxc_apt_pkg_exists "$candidate"; then
-      chosen="$(lxc_apt_exact_version_spec "$candidate" "$host_ver")"
-      pkgs+=("$chosen"); break
+    if lxc_apt_pkg_exists "$candidate" && chosen="$(lxc_apt_exact_version_spec "$candidate" "$host_ver")"; then
+      pkgs+=("$chosen"); have_utils=1; break
     fi
   done
   for candidate in "libnvidia-encode-${major}" "libnvidia-encode1" "libnvidia-encode"; do
-    if lxc_apt_pkg_exists "$candidate"; then
-      chosen="$(lxc_apt_exact_version_spec "$candidate" "$host_ver")"
+    if lxc_apt_pkg_exists "$candidate" && chosen="$(lxc_apt_exact_version_spec "$candidate" "$host_ver")"; then
       pkgs+=("$chosen"); break
     fi
   done
   for candidate in "libnvidia-decode-${major}" "libnvidia-decode1" "libnvidia-decode" "libnvcuvid1"; do
-    if lxc_apt_pkg_exists "$candidate"; then
-      chosen="$(lxc_apt_exact_version_spec "$candidate" "$host_ver")"
+    if lxc_apt_pkg_exists "$candidate" && chosen="$(lxc_apt_exact_version_spec "$candidate" "$host_ver")"; then
       pkgs+=("$chosen"); break
     fi
   done
-  [[ "${#pkgs[@]}" -gt 0 ]] || lxc_die "No matching NVIDIA userspace packages found for driver ${host_ver}."
+  if (( ! have_compute || ! have_utils || ${#pkgs[@]} == 0 )); then
+    lxc_die "Exact NVIDIA userspace packages matching host driver '${host_ver}' were not found in APT repos (${LXC_OS_ID} ${LXC_OS_CODENAME:-unknown}). Ensure matching CUDA or Debian non-free packages exist for ${host_ver}, or match guest OS to host driver repo."
+  fi
   lxc_apt_install --no-install-recommends --allow-downgrades "${pkgs[@]}"
 
   systemctl mask nvidia-persistenced.service || true
@@ -3537,6 +3638,11 @@ lxc_setup_intel_amd_vaapi() {
     if [[ "${DRY_RUN}" == "1" ]] || lxc_apt_pkg_exists "intel-media-va-driver-non-free"; then
       pkgs+=("intel-media-va-driver-non-free")
     elif lxc_apt_pkg_exists "intel-media-va-driver"; then
+      if [[ "${LXC_OS_ID,,}" == "ubuntu" ]]; then
+        lxc_log_warn "intel-media-va-driver-non-free unavailable (Ubuntu 'multiverse' may be disabled); falling back to free intel-media-va-driver (low-power HuC/GuC encoders for Intel Arc/Gen11+ require multiverse)."
+      else
+        lxc_log_warn "intel-media-va-driver-non-free unavailable; falling back to intel-media-va-driver."
+      fi
       pkgs+=("intel-media-va-driver")
     fi
   fi
@@ -3561,10 +3667,16 @@ lxc_setup_intel_amd_vaapi() {
     usermod -aG video,render "$ADMIN_USER"
   fi
 
-  local render_gid="" node_gid="" render_dev=""
+  local render_gid="" node_gid="" render_dev="" render_name="" render_vendor=""
   render_gid="$(getent group render 2>/dev/null | cut -d: -f3 || true)"
   for render_dev in /dev/dri/renderD*; do
     [[ -c "$render_dev" ]] || continue
+    render_name="${render_dev##*/}"
+    render_vendor="$(tr -d '[:space:]' < "${SYS_CLASS_DRM}/${render_name}/device/vendor" 2>/dev/null || true)"
+    if [[ "${render_vendor,,}" == "0x10de" ]]; then
+      lxc_log_info "Skipping VA-API vainfo check on NVIDIA DRM node ${render_dev}."
+      continue
+    fi
     node_gid="$(stat -c '%g' "$render_dev" 2>/dev/null || true)"
     if [[ -n "$render_gid" && -n "$node_gid" && "$node_gid" != "$render_gid" ]]; then
       lxc_log_warn "GID mismatch on ${render_dev} (node GID=${node_gid}, container render GID=${render_gid}); non-root VA-API access may fail."
@@ -3916,21 +4028,38 @@ lxc_prepare_aiostreams() {
 
   local env_template="${AIO_DIR}/.env.template"
   local env_generated="${AIO_DIR}/.env.generated"
+  local staged_aio_compose=""
 
   if [[ "${DRY_RUN}" == "1" ]]; then
+    if [[ -n "$AIO_COMPOSE_B64" ]]; then
+      lxc_log_info "[DRY-RUN] Would stage ${AIO_DIR}/compose.yml from --aio-compose if absent"
+    fi
     lxc_log_info "[DRY-RUN] Would write ${env_template}, ${env_generated} (non-clobbering), nginx-proxy-streaming.conf.example, and check-readiness.sh"
     return 0
   fi
 
-  local secret_key=""
+  if [[ -n "$AIO_COMPOSE_B64" ]]; then
+    local existing_aio_compose=""
+    if existing_aio_compose="$(lxc_find_existing_compose "$AIO_DIR" 2>/dev/null)"; then
+      lxc_log_info "Preserving existing AIOStreams compose file: ${existing_aio_compose}"
+    else
+      local tmp_aio_compose=""
+      tmp_aio_compose="$(lxc_mktemp "${AIO_DIR}/.compose.yml.XXXXXX")"
+      if ! base64 -d <<< "$AIO_COMPOSE_B64" > "$tmp_aio_compose" 2>/dev/null; then
+        base64 --decode <<< "$AIO_COMPOSE_B64" > "$tmp_aio_compose"
+      fi
+      chmod 0644 "$tmp_aio_compose"
+      mv -f "$tmp_aio_compose" "${AIO_DIR}/compose.yml"
+      staged_aio_compose="${AIO_DIR}/compose.yml"
+      lxc_log_success "Staged ${staged_aio_compose} from --aio-compose."
+    fi
+  fi
+
   if [[ -f "$env_generated" ]]; then
     lxc_log_info "Preserving existing ${env_generated} (will not overwrite SECRET_KEY)."
-    secret_key="$(awk -F= '/^SECRET_KEY=/{print $2; exit}' "$env_generated" 2>/dev/null || true)"
-  fi
-  if [[ -z "$secret_key" ]] || [[ ! "$secret_key" =~ ^[0-9a-fA-F]{64}$ ]]; then
+  else
+    local secret_key=""
     secret_key="$(lxc_generate_hex_secret)"
-  fi
-  if [[ ! -f "$env_generated" ]]; then
     local tmp_gen=""
     tmp_gen="$(lxc_mktemp "${AIO_DIR}/.env.generated.XXXXXX")"
     lxc_render_aio_env "$secret_key" > "$tmp_gen"
@@ -3999,6 +4128,7 @@ set -euo pipefail
 
 DOCKTUN_PORT="\${DOCKTUN_PORT:-${DOCKTUN_PORT}}"
 WITH_ZEROCONF="\${WITH_ZEROCONF:-${WITH_ZEROCONF}}"
+SYS_CLASS_DRM="\${SYS_CLASS_DRM:-${SYS_CLASS_DRM}}"
 STRICT="\${STRICT:-0}"
 [[ "\${1:-}" == "--strict" ]] && STRICT=1
 
@@ -4077,15 +4207,21 @@ fi
 
 if compgen -G "/dev/dri/renderD*" >/dev/null 2>&1; then
   vaapi_ok=0
-  if command -v vainfo >/dev/null 2>&1; then
-    for node in /dev/dri/renderD*; do
-      if [[ -c "\$node" ]] && vainfo --display drm --device "\$node" >/dev/null 2>&1; then
-        vaapi_ok=1
-        break
-      fi
-    done
-  fi
-  if (( vaapi_ok == 1 )); then
+  non_nv_drm=0
+  for node in /dev/dri/renderD*; do
+    [[ -c "\$node" ]] || continue
+    node_name="\${node##*/}"
+    vendor="\$(tr -d '[:space:]' < "\${SYS_CLASS_DRM}/\${node_name}/device/vendor" 2>/dev/null || true)"
+    [[ "\${vendor,,}" == "0x10de" ]] && continue
+    non_nv_drm=1
+    if command -v vainfo >/dev/null 2>&1 && vainfo --display drm --device "\$node" >/dev/null 2>&1; then
+      vaapi_ok=1
+      break
+    fi
+  done
+  if (( non_nv_drm == 0 )); then
+    ok "DRM render node(s) belong to NVIDIA (VA-API check skipped)"
+  elif (( vaapi_ok == 1 )); then
     ok "DRM/VAAPI vainfo --display drm succeeded"
   else
     warn "DRM render node(s) present, but vainfo --display drm failed (check video/render GIDs)"
@@ -4152,7 +4288,18 @@ EOF
   if id "$ADMIN_USER" >/dev/null 2>&1; then
     local target_group="$ADMIN_USER"
     getent group docker >/dev/null 2>&1 && target_group="docker"
-    chown -R "${ADMIN_USER}:${target_group}" "$AIO_DIR"
+    local -a chown_targets=(
+      "$AIO_DIR"
+      "$env_generated"
+      "$env_template"
+      "${AIO_DIR}/nginx-proxy-streaming.conf.example"
+      "${AIO_DIR}/check-readiness.sh"
+    )
+    [[ -n "$staged_aio_compose" && -f "$staged_aio_compose" ]] && chown_targets+=("$staged_aio_compose")
+    chown "${ADMIN_USER}:${target_group}" "${chown_targets[@]}"
+    if [[ -z "$(ls -A "${AIO_DIR}/data" 2>/dev/null)" ]]; then
+      chown "${ADMIN_USER}:${target_group}" "${AIO_DIR}/data"
+    fi
     chmod 2775 "$AIO_DIR" "${AIO_DIR}/data"
     chmod 0600 "$env_generated"
     chmod 0644 "$env_template" "${AIO_DIR}/nginx-proxy-streaming.conf.example"
@@ -4166,7 +4313,7 @@ lxc_apply_template_hygiene() {
   if [[ "$TEMPLATE_HYGIENE" != "1" ]]; then
     return 0
   fi
-  lxc_log_info "Applying template hygiene (first-boot SSH host key regen, docktun-firstboot.service, stripping live DockTun volumes/.env.generated/random-seed, machine-id)..."
+  lxc_log_info "Applying template hygiene (first-boot SSH host key regen, docktun-firstboot.sh/.service, stripping live DockTun volumes/.env.generated/random-seed, machine-id)..."
 
   lxc_write_file "/etc/systemd/system/regenerate-ssh-host-keys.service" 0644 <<'EOF'
 [Unit]
@@ -4189,10 +4336,48 @@ EOF
   local compose_file=""
   compose_file="$(lxc_find_existing_compose "$DOCKTUN_DIR" 2>/dev/null || printf '%s/compose.yml' "$DOCKTUN_DIR")"
   local sentinel_file="${DOCKTUN_DIR}/.firstboot-pending"
+  local firstboot_script="${DOCKTUN_FIRSTBOOT_SCRIPT:-/usr/local/libexec/docktun-firstboot.sh}"
+  local q_compose="" q_aio_dir="" q_admin_user=""
+  printf -v q_compose '%q' "$compose_file"
+  printf -v q_aio_dir '%q' "$AIO_DIR"
+  printf -v q_admin_user '%q' "$ADMIN_USER"
+
+  lxc_write_file "$firstboot_script" 0755 <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+COMPOSE_FILE=${q_compose}
+AIO_DIR=${q_aio_dir}
+ADMIN_USER=${q_admin_user}
+
+if [[ -f "\$COMPOSE_FILE" ]]; then
+  /usr/bin/docker compose -f "\$COMPOSE_FILE" up -d
+fi
+
+if [[ -f "\${AIO_DIR}/.env.template" && ! -f "\${AIO_DIR}/.env.generated" ]]; then
+  secret_key=""
+  if command -v openssl >/dev/null 2>&1; then
+    secret_key="\$(openssl rand -hex 32)"
+  elif [[ -r /dev/urandom ]] && command -v od >/dev/null 2>&1; then
+    secret_key="\$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')"
+  fi
+  if [[ -n "\$secret_key" ]]; then
+    tmp_env="\$(mktemp "\${AIO_DIR}/.env.generated.XXXXXX")"
+    sed "s/REPLACE_WITH_64_HEX_CHARS/\${secret_key}/g" "\${AIO_DIR}/.env.template" > "\$tmp_env"
+    chmod 0600 "\$tmp_env"
+    if id "\$ADMIN_USER" >/dev/null 2>&1; then
+      target_group="\$ADMIN_USER"
+      getent group docker >/dev/null 2>&1 && target_group="docker"
+      chown "\${ADMIN_USER}:\${target_group}" "\$tmp_env"
+    fi
+    mv -f "\$tmp_env" "\${AIO_DIR}/.env.generated"
+  fi
+fi
+EOF
 
   lxc_write_file "/etc/systemd/system/docktun-firstboot.service" 0644 <<EOF
 [Unit]
-Description=Start DockTun stack on first boot of cloned LXC template
+Description=Start DockTun stack and regenerate clone secrets on first boot
 After=docker.service network-online.target
 Wants=docker.service network-online.target
 ConditionPathExists=${sentinel_file}
@@ -4200,7 +4385,7 @@ ConditionPathExists=${sentinel_file}
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/bin/docker compose -f ${compose_file} up -d
+ExecStart=${firstboot_script}
 ExecStartPost=/bin/rm -f ${sentinel_file}
 
 [Install]
@@ -4232,7 +4417,13 @@ EOF
 
   rm -f "${AIO_DIR}/.env.generated" /var/lib/systemd/random-seed /etc/ssh/ssh_host_*
   truncate -s 0 /etc/machine-id
-  [[ -f /var/lib/dbus/machine-id ]] && truncate -s 0 /var/lib/dbus/machine-id
+  if [[ -L /var/lib/dbus/machine-id ]]; then
+    if [[ "$(readlink /var/lib/dbus/machine-id 2>/dev/null || true)" != "/etc/machine-id" ]]; then
+      ln -sf /etc/machine-id /var/lib/dbus/machine-id
+    fi
+  elif [[ -e /var/lib/dbus/machine-id ]]; then
+    ln -sf /etc/machine-id /var/lib/dbus/machine-id
+  fi
   return 0
 }
 
@@ -4279,9 +4470,9 @@ detect_host_nvidia_version() {
     printf '%s\n' "$HOST_NVIDIA_VERSION"
     return 0
   fi
-  if [[ -r /proc/driver/nvidia/version ]]; then
+  if [[ -r "${HOST_NVIDIA_PROC_VERSION_FILE:-/proc/driver/nvidia/version}" ]]; then
     local content=""
-    content="$(cat /proc/driver/nvidia/version 2>/dev/null || true)"
+    content="$(cat "${HOST_NVIDIA_PROC_VERSION_FILE:-/proc/driver/nvidia/version}" 2>/dev/null || true)"
     if [[ "$content" =~ Kernel[[:space:]]+Module([[:space:]]+for[[:space:]]+[^[:space:]]+)?[[:space:]]+([0-9]+(\.[0-9]+)+) ]]; then
       printf '%s\n' "${BASH_REMATCH[2]}"
       return 0
@@ -4299,10 +4490,13 @@ detect_host_nvidia_version() {
 }
 
 stream_lxc_payload() {
-  local resolved_gpu="" host_nv_ver=""
+  local resolved_gpu="" host_nv_ver="" aio_compose_b64=""
   resolved_gpu="$(resolve_stream_gpu_mode)"
   if (( DO_NVIDIA )) || [[ "$resolved_gpu" == *nvidia* ]]; then
     host_nv_ver="$(detect_host_nvidia_version)"
+  fi
+  if [[ -n "$AIO_COMPOSE_FILE" && -r "$AIO_COMPOSE_FILE" ]]; then
+    aio_compose_b64="$(base64 < "$AIO_COMPOSE_FILE" | tr -d '\r\n')"
   fi
 
   if [[ "${DRY_RUN}" == "1" ]]; then
@@ -4330,6 +4524,7 @@ stream_lxc_payload() {
     printf 'PVE_MAJOR=%q\n' "${PVE_MAJOR:-}"
     printf 'PVE_MINOR=%q\n' "${PVE_MINOR:-}"
     printf 'TEMPLATE_HYGIENE=%q\n' "$TEMPLATE_HYGIENE"
+    [[ -n "$aio_compose_b64" ]] && printf 'AIO_COMPOSE_B64=%q\n' "$aio_compose_b64"
     [[ -n "$host_nv_ver" ]] && printf 'HOST_NVIDIA_VERSION=%q\n' "$host_nv_ver"
     [[ -n "${DOCKTUN_IMAGE:-}" ]] && printf 'DOCKTUN_IMAGE=%q\n' "$DOCKTUN_IMAGE"
     [[ -n "${NVIDIA_SMOKE_IMAGE:-}" ]] && printf 'NVIDIA_SMOKE_IMAGE=%q\n' "$NVIDIA_SMOKE_IMAGE"
@@ -4343,7 +4538,10 @@ detect_ct_eth0_ip() {
   local raw="" ip=""
   raw="$(pct exec "$ctid" -- bash -c '
     if command -v ip >/dev/null 2>&1; then
-      ip -4 -o addr show dev eth0 scope global 2>/dev/null | awk "{print \$4}" | cut -d/ -f1 | head -n1
+      out="$(ip -4 -o addr show dev eth0 scope global 2>/dev/null | awk "{print \$4}" | cut -d/ -f1 | head -n1)"
+      [[ -z "$out" ]] && out="$(ip -4 route get 1.1.1.1 2>/dev/null | awk "{for(i=1;i<=NF;i++) if(\$i==\"src\") {print \$(i+1); exit}}")"
+      [[ -z "$out" ]] && out="$(ip -4 -o addr show scope global 2>/dev/null | awk "{print \$4}" | cut -d/ -f1 | head -n1)"
+      printf "%s\n" "$out"
     elif command -v hostname >/dev/null 2>&1; then
       hostname -I 2>/dev/null | awk "{print \$1}"
     fi
@@ -4358,6 +4556,7 @@ detect_ct_docktun_port() {
   local ctid="${1:-$CTID}"
   local port=""
   port="$(pct exec "$ctid" -- bash -c '
+    dt_dir="${1:-/opt/docktun}"
     if command -v docker >/dev/null 2>&1; then
       p="$(docker port docktun 3001/tcp 2>/dev/null | head -n1 | awk -F: "{print \$NF}" | tr -d "[:space:]")"
       if [[ "$p" =~ ^[0-9]+$ ]]; then
@@ -4365,27 +4564,64 @@ detect_ct_docktun_port() {
         exit 0
       fi
     fi
-    for cf in "'"${DOCKTUN_DIR}"'/compose.yml" "'"${DOCKTUN_DIR}"'/compose.yaml" "'"${DOCKTUN_DIR}"'/docker-compose.yml" "'"${DOCKTUN_DIR}"'/docker-compose.yaml"; do
+    for cf in "${dt_dir}/compose.yml" "${dt_dir}/compose.yaml" "${dt_dir}/docker-compose.yml" "${dt_dir}/docker-compose.yaml"; do
       if [[ -r "$cf" ]]; then
-        p="$(awk -F: "/^[[:space:]]*PORT:[[:space:]]*[0-9]+/ {gsub(/[^0-9]/, \"\", \$2); print \$2; exit}" "$cf" 2>/dev/null)"
+        p="$(awk "/[0-9]+:3001(\\/(tcp|udp))?([\"'\'']|[[:space:]]|#|\$)/ { if (match(\$0, /[0-9]+:3001/)) { s=substr(\$0, RSTART, RLENGTH); sub(/:3001\$/, \"\", s); print s; exit } }" "$cf" 2>/dev/null)"
         if [[ "$p" =~ ^[0-9]+$ ]]; then
           printf "%s\n" "$p"
           exit 0
         fi
-        p="$(awk "/:3001[\"'\'']?[[:space:]]*\$/ { if (match(\$0, /[0-9]+:3001/)) { s=substr(\$0, RSTART, RLENGTH); sub(/:3001\$/, \"\", s); print s; exit } }" "$cf" 2>/dev/null)"
+        p="$(awk -F: "/^[[:space:]]*PORT:[[:space:]]*[0-9]+/ {gsub(/[^0-9]/, \"\", \$2); print \$2; exit}" "$cf" 2>/dev/null)"
         if [[ "$p" =~ ^[0-9]+$ ]]; then
           printf "%s\n" "$p"
           exit 0
         fi
       fi
     done
-  ' 2>/dev/null || true)"
+  ' _ "$DOCKTUN_DIR" 2>/dev/null || true)"
   port="${port//[^0-9]/}"
   if [[ "$port" =~ ^[1-9][0-9]*$ ]]; then
     printf '%s\n' "$port"
   else
     printf '%s\n' "$DOCKTUN_PORT"
   fi
+}
+
+update_lxc_notes() {
+  if ! command -v pct >/dev/null 2>&1 && [[ "${DRY_RUN}" != "1" ]]; then
+    return 0
+  fi
+  local lxc_ip="<lxc-ip>" gpu_summary="" aio_dir="${DOCKTUN_DIR}/projects/aiostreams"
+  gpu_summary="$(resolve_stream_gpu_mode)"
+  if [[ "${DRY_RUN}" != "1" ]]; then
+    lxc_ip="$(detect_ct_eth0_ip "$CTID")"
+    [[ -z "$lxc_ip" && "${IP_ADDR,,}" != "dhcp" ]] && lxc_ip="${IP_ADDR%/*}"
+    lxc_ip="${lxc_ip:-<lxc-ip>}"
+  elif [[ "${IP_ADDR,,}" != "dhcp" ]]; then
+    lxc_ip="${IP_ADDR%/*}"
+  fi
+
+  local mdns_line="Disabled (--no-zeroconf)"
+  if (( WITH_ZEROCONF )); then
+    mdns_line="http://docktun.local"
+  fi
+  local notes=""
+  notes="$(cat <<EOF
+## DockTun + AIOStreams Media LXC (CT ${CTID})
+
+- **DockTun Dashboard**: http://${lxc_ip}:${DOCKTUN_PORT}
+- **mDNS URL**: ${mdns_line}
+- **Admin User**: \`${ADMIN_USER}\`
+- **GPU Mode**: \`${gpu_summary}\`
+- **AIOStreams Dir**: \`${aio_dir}\`
+
+### Useful Commands
+- Readiness check: \`pct exec ${CTID} -- ${aio_dir}/check-readiness.sh\`
+- First-run setup token: \`pct exec ${CTID} -- docker exec docktun cat /app/data/setup.token\`
+EOF
+)"
+  run_cmd pct set "$CTID" --description "$notes" || \
+    log_warn "Could not set Proxmox container notes (--description) for CT ${CTID}."
 }
 
 print_post_install_cheat_sheet() {
@@ -4416,7 +4652,7 @@ print_post_install_cheat_sheet() {
     printf '  Clone Setup Token : Run on booted clone: docker exec docktun cat /app/data/setup.token\n'
     printf '  Security Note     : "%s" is in the docker group (root-equivalent on this LXC).\n' "$ADMIN_USER"
     printf '  AIOStreams Setup  :\n'
-    printf '    1. On booted clone: cd %s && cp .env.template .env && sed -i "s/REPLACE_WITH_64_HEX_CHARS/$(openssl rand -hex 32)/" .env\n' "$aio_dir"
+    printf '    1. On booted clone: .env.generated is auto-created with a fresh SECRET_KEY; run: cd %s && cp .env.generated .env\n' "$aio_dir"
     printf '    2. Deploy via DockTun UI (/opt/projects/aiostreams) or docker compose up -d\n'
     printf '    3. Verify on booted clone: %s/check-readiness.sh\n' "$aio_dir"
     printf '    4. Reverse proxy template: %s/nginx-proxy-streaming.conf.example (https://%s)\n' "$aio_dir" "$AIO_DOMAIN"
@@ -4445,6 +4681,7 @@ print_post_install_cheat_sheet() {
 }
 
 create_and_provision_lxc() {
+  preflight_host_checks
   check_host_storage_and_bridge
   resolve_template
 
@@ -4452,7 +4689,7 @@ create_and_provision_lxc() {
   (( WITH_FUSE )) && features="${features},fuse=1"
 
   local net0="name=eth0,bridge=${BRIDGE},firewall=1,ip=${IP_ADDR},type=veth"
-  if [[ "${IP_ADDR}" != "dhcp" && -n "$GW_ADDR" ]]; then
+  if [[ "${IP_ADDR,,}" != "dhcp" && -n "$GW_ADDR" ]]; then
     net0="${net0},gw=${GW_ADDR}"
   fi
   [[ -n "$VLAN_TAG" ]] && net0="${net0},tag=${VLAN_TAG}"
@@ -4478,6 +4715,7 @@ create_and_provision_lxc() {
     --net0 "$net0"
     --tags "$tags"
   )
+  [[ -n "$STARTUP_SPEC" ]] && create_cmd+=(--startup "$STARTUP_SPEC")
   [[ -n "$DNS_ADDR" ]] && create_cmd+=(--nameserver "$DNS_ADDR")
   [[ -n "$SSH_PUBKEY_FILE" ]] && create_cmd+=(--ssh-public-keys "$SSH_PUBKEY_FILE")
 
@@ -4496,6 +4734,9 @@ create_and_provision_lxc() {
   if [[ -n "$MEDIA_DIR" ]]; then
     local media_existed=0
     [[ -d "$MEDIA_DIR" ]] && media_existed=1
+    if (( ! media_existed )); then
+      log_warn "Host --media-dir '${MEDIA_DIR}' does not exist yet (if this is an external/NAS mount, verify it is mounted so mkdir does not write onto the Proxmox rootfs)."
+    fi
     if (( ! media_existed )) || (( CHOWN_MEDIA_DIR )); then
       log_info "Preparing host media directory ${MEDIA_DIR} (owner 101000:101000 -> LXC ${ADMIN_USER} UID 1000)..."
       run_cmd mkdir -p "$MEDIA_DIR"
@@ -4513,12 +4754,16 @@ create_and_provision_lxc() {
   fi
 
   if (( ${#EXTRA_MOUNTS[@]} > 0 )); then
-    local mnt="" host_p="" ct_p=""
+    local mnt="" host_p="" ct_p="" norm_ct=""
     for mnt in "${EXTRA_MOUNTS[@]}"; do
       host_p="${mnt%%:*}"
       ct_p="${mnt#*:}"
-      [[ -d "$host_p" ]] || run_cmd mkdir -p "$host_p"
-      run_cmd pct set "$CTID" "--mp${MP_IDX}" "${host_p},mp=${ct_p}"
+      norm_ct="$(normalize_mount_target "$ct_p")"
+      if [[ ! -d "$host_p" ]]; then
+        log_warn "Host --mount path '${host_p}' does not exist yet (if this is an external/NAS mount, verify it is mounted before creating directories)."
+        run_cmd mkdir -p "$host_p"
+      fi
+      run_cmd pct set "$CTID" "--mp${MP_IDX}" "${host_p},mp=${norm_ct}"
       MP_IDX=$((MP_IDX + 1))
     done
   fi
@@ -4551,6 +4796,7 @@ create_and_provision_lxc() {
   if [[ "${DRY_RUN}" != "1" ]]; then
     PROVISION_SUCCEEDED=1
   fi
+  update_lxc_notes
 
   if (( TEMPLATE_HYGIENE )); then
     log_warn "Template hygiene applied. To convert CT ${CTID} into a template: pct stop ${CTID} && pct template ${CTID}"
@@ -4561,7 +4807,8 @@ create_and_provision_lxc() {
 }
 
 derive_gpu_from_pct_config() {
-  local cfg="$1"
+  local cfg=""
+  cfg="$(strip_pct_snapshots "$1")"
   DO_NVIDIA=0
   DO_INTEL=0
   DO_AMD=0
@@ -4574,7 +4821,7 @@ derive_gpu_from_pct_config() {
     DO_AMD=1
   fi
   if grep -qE '/dev/dri' <<< "$cfg"; then
-    local dri_node="" vendor="" found_dri_vendor=0
+    local dri_node="" vendor="" found_dri_vendor=0 pci_bypath=""
     while IFS= read -r dri_node; do
       dri_node="$(basename "$dri_node")"
       if [[ -r "/sys/class/drm/${dri_node}/device/vendor" ]]; then
@@ -4586,6 +4833,18 @@ derive_gpu_from_pct_config() {
         esac
       fi
     done < <(grep -oE '/dev/dri/(renderD[0-9]+|card[0-9]+)' <<< "$cfg" || true)
+    while IFS= read -r pci_bypath; do
+      [[ "$pci_bypath" =~ pci-([0-9a-fA-F:.]+)-(render|card) ]] || continue
+      local slot="${BASH_REMATCH[1],,}"
+      if [[ -r "/sys/bus/pci/devices/${slot}/vendor" ]]; then
+        vendor="$(tr -d '[:space:]' < "/sys/bus/pci/devices/${slot}/vendor" 2>/dev/null || true)"
+        case "${vendor,,}" in
+          0x8086) DO_INTEL=1; found_dri_vendor=1 ;;
+          0x1002) DO_AMD=1; found_dri_vendor=1 ;;
+          0x10de) found_dri_vendor=1 ;;
+        esac
+      fi
+    done < <(grep -oE 'pci-[0-9a-fA-F:.]+-(render|card)' <<< "$cfg" || true)
     if (( ! found_dri_vendor && ! DO_NVIDIA )); then
       DO_INTEL="$DETECTED_INTEL"
       DO_AMD="$DETECTED_AMD"
@@ -4607,7 +4866,7 @@ run_provision_only() {
     status_out="$(pct status "$CTID" 2>/dev/null || true)"
     [[ -n "$status_out" ]] || die "CTID ${CTID} does not exist in Proxmox."
     local cfg=""
-    cfg="$(pct config "$CTID" 2>/dev/null || true)"
+    cfg="$(strip_pct_snapshots "$(pct config "$CTID" 2>/dev/null || true)")"
     if ! grep -qE '^unprivileged:[[:space:]]*1$' <<< "$cfg"; then
       die "CTID ${CTID} is not an unprivileged LXC (unprivileged: 1 required); refusing to provision."
     fi
@@ -4616,7 +4875,7 @@ run_provision_only() {
       derive_gpu_from_pct_config "$cfg"
       log_info "Derived GPU mode from CT ${CTID} config: $(resolve_stream_gpu_mode)"
     fi
-    if (( DO_NVIDIA )) && [[ ! -r /proc/driver/nvidia/version ]]; then
+    if (( DO_NVIDIA )) && [[ ! -r "${HOST_NVIDIA_PROC_VERSION_FILE:-/proc/driver/nvidia/version}" ]]; then
       die "NVIDIA host kernel driver is not active (/proc/driver/nvidia/version is unreadable); reboot the Proxmox host before provisioning an NVIDIA LXC."
     fi
     local cfg_hostname=""
@@ -4633,6 +4892,7 @@ run_provision_only() {
 
   wait_lxc_net_ready
   stream_lxc_payload
+  update_lxc_notes
   print_post_install_cheat_sheet
   log_success "LXC ${CTID} re-provisioned successfully."
 }
@@ -4648,7 +4908,7 @@ run_doctor_mode() {
   local status_out="" cfg=""
   status_out="$(pct status "$CTID" 2>/dev/null || true)"
   [[ -n "$status_out" ]] || die "CTID ${CTID} does not exist in Proxmox."
-  cfg="$(pct config "$CTID" 2>/dev/null || true)"
+  cfg="$(strip_pct_snapshots "$(pct config "$CTID" 2>/dev/null || true)")"
 
   local doc_fail=0
   if grep -qE '^unprivileged:[[:space:]]*1$' <<< "$cfg"; then
@@ -4693,11 +4953,13 @@ run_doctor_mode() {
     done
   ' 2>/dev/null || true)"
   if [[ -n "$dev_perm_out" ]]; then
-    if grep -qE 'owner=65534:65534|\(nobody:nogroup\)' <<< "$dev_perm_out"; then
-      log_warn "Some inner GPU/input device nodes appear as nobody:nogroup (65534:65534):"
+    if grep -qE 'mode=[0-7]*[0-5][[:space:]]+(owner=65534:65534|\(nobody:nogroup\))' <<< "$dev_perm_out"; then
+      log_warn "Some inner GPU/input device nodes appear as nobody:nogroup (65534:65534) without world-rw (0666):"
       while IFS= read -r dline; do
-        grep -qE '65534:65534|nobody:nogroup' <<< "$dline" && log_warn "  ${dline}"
+        grep -qE 'mode=[0-7]*[0-5][[:space:]]+(owner=65534:65534|\(nobody:nogroup\))' <<< "$dline" && log_warn "  ${dline}"
       done <<< "$dev_perm_out"
+    elif grep -qE 'owner=65534:65534|\(nobody:nogroup\)' <<< "$dev_perm_out"; then
+      log_success "Inner GPU/input device node ownership OK (unmapped nodes have world-rw 0666/0777 access)"
     else
       log_success "Inner GPU/input device node ownership OK (no nobody:nogroup mapping errors)"
     fi
@@ -4743,14 +5005,15 @@ run_list_mode() {
 
   printf '%-8s %-10s %-20s %-18s %s\n' "CTID" "STATUS" "NAME" "IP" "TAGS"
   local vmid="" status="" name="" cfg="" tags="" ip="" found=0
-  while read -r vmid status _ name; do
+  while read -r vmid status _; do
     [[ "$vmid" =~ ^[0-9]+$ ]] || continue
-    cfg="$(pct config "$vmid" 2>/dev/null || true)"
+    cfg="$(strip_pct_snapshots "$(pct config "$vmid" 2>/dev/null || true)")"
     tags="$(awk -F': ' '/^tags:/ {print $2; exit}' <<< "$cfg" || true)"
     if ! grep -qE '(^|[;,[:space:]])docktun([;,[:space:]]|$)' <<< "$tags"; then
       continue
     fi
     found=1
+    name="$(awk -F': ' '/^hostname:/ {print $2; exit}' <<< "$cfg" || true)"
     if [[ "$status" == "running" ]]; then
       ip="$(detect_ct_eth0_ip "$vmid")"
     else
@@ -4760,7 +5023,7 @@ run_list_mode() {
       ip="$(sed -nE 's/^net0:.*ip=([^,]+).*/\1/p' <<< "$cfg" | head -n1)"
     fi
     printf '%-8s %-10s %-20s %-18s %s\n' "$vmid" "$status" "${name:-unknown}" "${ip:-dhcp}" "$tags"
-  done < <(awk 'NR>1 {print $1, $2, "-", $NF}' <<< "$list_out")
+  done < <(awk 'NR>1 {print $1, $2}' <<< "$list_out")
 
   if (( ! found )); then
     log_info "No docktun-tagged LXCs found."
@@ -4814,9 +5077,7 @@ main() {
     log_warn "Running in --dry-run mode as non-root user."
   fi
 
-  auto_detect_defaults
-  run_interactive_wizard
-  validate_inputs
+  validate_early_cli_inputs
 
   if (( LIST_MODE )); then
     run_list_mode
@@ -4824,14 +5085,20 @@ main() {
   fi
 
   if (( DESTROY_MODE )); then
+    validate_inputs
     run_destroy_mode
     return 0
   fi
 
   if (( DOCTOR_MODE )); then
+    validate_inputs
     run_doctor_mode
     return 0
   fi
+
+  auto_detect_defaults
+  run_interactive_wizard
+  validate_inputs
 
   if (( RUN_HOST_PREP )); then
     run_host_preparation
@@ -4849,7 +5116,7 @@ main() {
     return 0
   fi
 
-  if (( DO_NVIDIA )) && [[ "${DRY_RUN}" != "1" && ! -r /proc/driver/nvidia/version ]]; then
+  if (( DO_NVIDIA )) && [[ "${DRY_RUN}" != "1" && ! -r "${HOST_NVIDIA_PROC_VERSION_FILE:-/proc/driver/nvidia/version}" ]]; then
     log_error "NVIDIA host kernel driver is not active (/proc/driver/nvidia/version is unreadable)."
     log_error "Aborting BEFORE LXC creation/provisioning to avoid leaving an incomplete container."
     log_error "Reboot the Proxmox host ('systemctl reboot') to load the NVIDIA module (and unload nouveau), then re-run this script."

@@ -246,7 +246,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main
 ```
 
 - **Automatic mDNS (`docktun-zeroconf`)**: Enabled by default (`http://docktun.local`, host port `80/tcp` + `5353/udp`); pass `--no-zeroconf` / `--without-zeroconf` to keep port `80` free.
-- **Networking & Operational Flags**: Supports `--doctor <ctid>`, `--provision-only <ctid>`, `--list`, `--destroy <ctid>`, `--cleanup-on-failure`, `--vlan <tag>`, `--mtu <bytes>`, `--timezone <tz>`, repeatable `--mount <host:ct>`, and `--template-hygiene` (first-boot SSH key regen + `docktun-firstboot.service`).
+- **Networking & Operational Flags**: Supports `--doctor <ctid>`, `--provision-only <ctid>`, `--list`, `--destroy <ctid>`, `--cleanup-on-failure`, `--startup <spec>`, `--aio-compose <host_file>`, `--vlan <tag>`, `--mtu <bytes>`, `--timezone <tz>`, repeatable `--mount <host:ct>`, Proxmox Web UI `--description` summary notes, and `--template-hygiene` (first-boot SSH key regen + `docktun-firstboot.sh`/`.service` regenerating `.env.generated`).
 - **Wolf / Purah Cloud Gaming**: Pass `--with-wolf-input` for `uinput`/`uhid` (`dev[n]` on PVE 8.2+), `MODE="0666"` virtual input udev rules, and read-only `/run/udev` passthrough.
 
 See [docs/proxmox-lxc.md](docs/proxmox-lxc.md) for CLI flags, `--dry-run` preview, GPU/Wolf notes, and hardening details (script: [scripts/proxmox-lxc.sh](scripts/proxmox-lxc.sh)).

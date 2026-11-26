@@ -98,17 +98,19 @@ bash proxmox-lxc.sh \
 | `--docktun-port <port>` | `8080` | Host port mapped to DockTun `:3001` |
 | `--docktun-dir <dir>` | `/opt/docktun` | DockTun installation directory inside LXC |
 | `--docktun-admin-user <user>` | empty | Optional pre-seeded DockTun admin username (first DB init only) |
-| `--docktun-admin-password <pw>` | empty | Optional pre-seeded DockTun admin password (first DB init only; triggers `0600` compose mode) |
+| `--docktun-admin-password <pw>` | empty | Optional pre-seeded DockTun admin password (12–72 bytes; first DB init only; triggers `0600` compose mode) |
 | `--lan-subnets <cidrs>` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` | Comma-separated trusted IPv4/IPv6 LAN CIDRs allowed in UFW and `DOCKER-USER` |
 | `--media-dir <host_path>` | empty | Optional host directory mounted at `/mnt/media` (newly created dirs `chown 101000:101000` for `ADMIN_USER` UID `1000`; existing dirs preserved unless `--chown-media-dir`) |
 | `--chown-media-dir` | off | `chown 101000:101000` (`ADMIN_USER` UID `1000`; vs `100000:100000` LXC `root`) on an existing `--media-dir` (warns gracefully on `root_squash` NFS; rejects protected system paths) |
-| `--mount <host:ct>` | empty | Repeatable extra bind mount (`<host_path>:<ct_path>`, e.g. `/mnt/dl:/mnt/downloads`) |
+| `--mount <host:ct>` | empty | Repeatable extra bind mount (`<host_path>:<ct_path>`, e.g. `/mnt/dl:/mnt/downloads`; normalized and rejects protected OS/`--docktun-dir` paths) |
+| `--startup <spec>` | empty | Optional Proxmox startup order passed to `pct create --startup` (e.g. `order=2,up=30,down=60`) |
+| `--aio-compose <host_file>` | empty | Optional host `.yml`/`.yaml` file pre-staged as `${DOCKTUN_DIR}/projects/aiostreams/compose.yml` if absent |
 | `--with-fuse` | off | Enable `fuse=1` LXC feature (for `rclone`/`mergerfs`/AppImages) |
 | `--with-wolf-input` | off | Configure `uinput`/`uhid` host modules, udev rules (`MODE="0666"` virtual inputs), and LXC input mounts (`dev[n]` on PVE 8.2+, `/run/udev` `ro`) for Wolf/Purah |
 | `--with-zeroconf` | on | Enable `docktun-zeroconf` service (mDNS `*.local`, uses host port `80`; enabled by default) |
 | `--no-zeroconf`, `--without-zeroconf` | off | Disable `docktun-zeroconf` mDNS service (leaves host port `80` free for reverse proxies or secondary LXCs) |
 | `--allow-unconfined-apparmor` | off | Opt-in escape hatch setting `lxc.apparmor.profile: unconfined` (keep off unless host `lxc-pve` cannot be updated for CVE-2025-52881) |
-| `--template-hygiene` | off | Install `regenerate-ssh-host-keys.service` + `docktun-firstboot.service`, strip live state & `/etc/machine-id` (forbids `--docktun-admin-password`) |
+| `--template-hygiene` | off | Install `regenerate-ssh-host-keys.service` + `docktun-firstboot.sh`/`.service` (regenerates `.env.generated` on clone boot), strip live state & `machine-id` (forbids `--docktun-admin-password`) |
 | `--cleanup-on-failure` | off | Automatically `pct stop`/`pct unlock` + `pct destroy --purge` a newly created LXC (and its prestart hook) if provisioning fails mid-run |
 | `--provision-only <ctid>` | empty | Run/re-run inner LXC provisioning on an existing unprivileged CTID (derives GPU from `pct config` when `--gpu auto`, skips host prep) |
 | `--doctor <ctid>` | empty | Inspect an existing LXC (`pct config`, `/dev/net/tun`, GPU/input permissions, `check-readiness.sh`, UFW/`DOCKER-USER`, actual DockTun port & `/healthz`) |
@@ -127,10 +129,11 @@ bash proxmox-lxc.sh \
 - **Host Global Sysctls**: Writes `/etc/sysctl.d/99-media-lxc.conf` (`vm.overcommit_memory=1`, `fs.inotify.max_user_watches=524288`, `fs.inotify.max_user_instances=1024`, `net.core.somaxconn=4096`) where global kernel parameters actually work outside unprivileged user namespaces.
 
 ### 2. Unprivileged LXC + Secret-Safe Payload Streaming
-- Creates `--unprivileged 1` with `--features keyctl=1,nesting=1` (plus `,fuse=1` if `--with-fuse`), `firewall=1`, `--onboot 1`, optional `--vlan` / `--mtu`, `--timezone`, and Linux or Open vSwitch (`OVSBridge`) bridges.
-- Never uses insecure default passwords (`testing`) and keeps AppArmor confined by default.
+- Creates `--unprivileged 1` with `--features keyctl=1,nesting=1` (plus `,fuse=1` if `--with-fuse`), `firewall=1`, `--onboot 1`, optional `--startup` / `--vlan` / `--mtu`, `--timezone` (traversal-checked), and Linux or Open vSwitch (`OVSBridge`) bridges.
+- Runs fast pre-flight host checks (DNS/HTTPS reachability, active `pve-enterprise` repo without subscription, storage capacity vs `--disk`, early `/dev/shm < 512 MiB` warning when `--memory < 1024`, and missing `--media-dir`/`--mount` host directory warnings).
+- Never uses insecure default passwords (`testing`), validates `--docktun-admin-password` to 12–72 UTF-8 bytes (matching DockTun `auth.go`), and keeps AppArmor confined by default.
 - Waits for systemd and non-loopback IPv4 readiness before streaming the inner provisioning payload via `pct exec "$CTID" -- bash -s` using a `printf '%q'` stdin preamble so secrets (`DOCKTUN_ADMIN_PASSWORD`, `SSH_PUBKEY`) never appear on host `ps aux` / `/proc/<pid>/cmdline` or in temporary container files.
-- Prints a **Post-Install Cheat Sheet** at completion (SSH command, `pct enter`, DockTun URL + `docktun.local`, setup token, and AIOStreams/template next steps), and supports `--cleanup-on-failure` (with `INT`/`TERM` traps & `pct unlock` fallback), `--provision-only <ctid>`, `--doctor <ctid>`, `--list`, and `--destroy <ctid>`.
+- Writes non-secret Proxmox Web UI summary notes (`pct set "$CTID" --description ...` with DockTun URL, mDNS URL, `ADMIN_USER`, GPU mode, AIOStreams directory, and readiness/setup-token commands—never passwords or secrets) and prints a **Post-Install Cheat Sheet** at completion. Supports `--cleanup-on-failure` (with `INT`/`TERM` traps & `pct unlock` fallback), `--provision-only <ctid>`, `--doctor <ctid>`, `--list`, and `--destroy <ctid>`.
 
 ### 3. Security Hardening Inside the LXC
 - **OpenSSH First-Match-Wins**: Writes `/etc/ssh/sshd_config.d/00-hardening.conf` (evaluated before cloud-init `50-*`/`60-*` drop-ins), supports OpenSSH key options (`from="..." ssh-ed25519 ...`) and Ubuntu 24.04 `ssh.socket`, sets `PermitRootLogin no` + `AllowUsers <admin_user>` when an authorized SSH key is present (or warns to run `pct enter <ctid>` + `passwd <admin_user>` when no SSH key is present), and verifies `sshd -t` / `sshd -T` assertions.
