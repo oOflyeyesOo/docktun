@@ -29,6 +29,7 @@ ADMIN_USER="mediaadmin"
 GPU_MODE="auto"
 PCI_SLOT=""
 DOCKTUN_PORT="8080"
+DOCKTUN_PORT_EXPLICIT=0
 DOCKTUN_DIR="/opt/docktun"
 DOCKTUN_ADMIN_USER=""
 DOCKTUN_ADMIN_PASSWORD=""
@@ -36,7 +37,7 @@ LAN_SUBNETS="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 MEDIA_DIR=""
 WITH_FUSE=0
 WITH_WOLF_INPUT=0
-WITH_ZEROCONF=0
+WITH_ZEROCONF=1
 ALLOW_UNCONFINED_APPARMOR=0
 TEMPLATE_HYGIENE=0
 AIO_DOMAIN="aio.example.com"
@@ -51,6 +52,7 @@ LXC_TEMPLATE=""
 DETECTED_NVIDIA=0
 DETECTED_INTEL=0
 DETECTED_AMD=0
+DETECTED_GPU_COUNT=0
 DETECTED_INTEL_DRIVER=""
 DO_NVIDIA=0
 DO_INTEL=0
@@ -268,7 +270,8 @@ Options:
       --media-dir <host_path>     Optional host media path mounted at /mnt/media
       --with-fuse                 Enable fuse=1 feature on the LXC
       --with-wolf-input           Configure uinput/uhid & input passthrough for Wolf/Purah
-      --with-zeroconf             Include optional docktun-zeroconf (mDNS, host port 80)
+      --with-zeroconf             Enable docktun-zeroconf mDNS (*.local, port 80; default: on)
+      --no-zeroconf, --without-zeroconf  Disable docktun-zeroconf mDNS (leave host port 80 free)
       --allow-unconfined-apparmor Opt-in escape hatch to set lxc.apparmor.profile: unconfined
       --template-hygiene          Clear SSH host keys & machine-id after provisioning
       --domain <hostname>         Domain placeholder for AIOStreams BASE_URL/Nginx
@@ -320,8 +323,8 @@ parse_args() {
       --gpu=*) GPU_MODE="${1#*=}"; GPU_MODE="${GPU_MODE,,}"; shift ;;
       --pci-slot) [[ "$#" -ge 2 ]] || die "--pci-slot requires a value"; PCI_SLOT="$2"; shift 2 ;;
       --pci-slot=*) PCI_SLOT="${1#*=}"; shift ;;
-      --docktun-port) [[ "$#" -ge 2 ]] || die "--docktun-port requires a value"; DOCKTUN_PORT="$2"; shift 2 ;;
-      --docktun-port=*) DOCKTUN_PORT="${1#*=}"; shift ;;
+      --docktun-port) [[ "$#" -ge 2 ]] || die "--docktun-port requires a value"; DOCKTUN_PORT="$2"; DOCKTUN_PORT_EXPLICIT=1; shift 2 ;;
+      --docktun-port=*) DOCKTUN_PORT="${1#*=}"; DOCKTUN_PORT_EXPLICIT=1; shift ;;
       --docktun-dir) [[ "$#" -ge 2 ]] || die "--docktun-dir requires a value"; DOCKTUN_DIR="$2"; shift 2 ;;
       --docktun-dir=*) DOCKTUN_DIR="${1#*=}"; shift ;;
       --docktun-admin-user) [[ "$#" -ge 2 ]] || die "--docktun-admin-user requires a value"; DOCKTUN_ADMIN_USER="$2"; shift 2 ;;
@@ -335,6 +338,7 @@ parse_args() {
       --with-fuse) WITH_FUSE=1; shift ;;
       --with-wolf-input) WITH_WOLF_INPUT=1; shift ;;
       --with-zeroconf) WITH_ZEROCONF=1; shift ;;
+      --no-zeroconf|--without-zeroconf) WITH_ZEROCONF=0; shift ;;
       --allow-unconfined-apparmor) ALLOW_UNCONFINED_APPARMOR=1; shift ;;
       --template-hygiene) TEMPLATE_HYGIENE=1; shift ;;
       --domain) [[ "$#" -ge 2 ]] || die "--domain requires a value"; AIO_DOMAIN="$2"; shift 2 ;;
@@ -420,17 +424,23 @@ detect_gpus_via_lspci() {
   DETECTED_NVIDIA=0
   DETECTED_INTEL=0
   DETECTED_AMD=0
+  DETECTED_GPU_COUNT=0
   DETECTED_INTEL_DRIVER=""
 
   if ! command -v lspci >/dev/null 2>&1; then
     return 0
   fi
 
-  local gpu_lines=""
+  local all_gpu_lines="" gpu_lines=""
+  all_gpu_lines="$(lspci -Dnn 2>/dev/null | grep -iE 'VGA|3D|Display' || true)"
+  if [[ -n "$all_gpu_lines" ]]; then
+    DETECTED_GPU_COUNT="$(wc -l <<< "$all_gpu_lines" | tr -d '[:space:]')"
+  fi
+
   if [[ -n "$PCI_SLOT" ]]; then
     gpu_lines="$(lspci -Dnn -s "$PCI_SLOT" 2>/dev/null || true)"
   else
-    gpu_lines="$(lspci -Dnn 2>/dev/null | grep -iE 'VGA|3D|Display' || true)"
+    gpu_lines="$all_gpu_lines"
   fi
 
   if [[ -z "$gpu_lines" ]]; then
@@ -506,6 +516,10 @@ auto_detect_defaults() {
   fi
   if [[ -z "$SSH_PUBKEY_FILE" && -z "$SSH_PUBKEY" ]]; then
     SSH_PUBKEY_FILE="$(detect_default_ssh_pubkey_file)"
+  fi
+  if [[ "$DOCKTUN_PORT_EXPLICIT" != "1" && "$DOCKTUN_PORT" == "8080" ]] && is_port_in_use 8080; then
+    DOCKTUN_PORT="8081"
+    log_info "Host port 8080 is in use; auto-selected DockTun dashboard port ${DOCKTUN_PORT}."
   fi
   detect_host_prep_status
 
@@ -616,6 +630,15 @@ print_summary_banner() {
     ssh_desc="${SSH_PUBKEY_FILE}"
   fi
 
+  local mdns_desc="disabled (port 80 free)"
+  if (( WITH_ZEROCONF )); then
+    mdns_desc="enabled (http://docktun.local)"
+  fi
+  local wolf_desc="off"
+  if (( WITH_WOLF_INPUT )); then
+    wolf_desc="on (uinput/uhid)"
+  fi
+
   printf '\n%s=== Auto-Detected Configuration Summary ===%s\n' "${_CLR_BOLD}${_CLR_CYAN}" "${_CLR_RESET}"
   printf '  Host          : PVE %s (%s %s), Host Prep: %s\n' \
     "$pve_str" "${OS_ID:-unknown}" "${OS_CODENAME:-unknown}" "$host_prep_str"
@@ -627,10 +650,10 @@ print_summary_banner() {
       "$BRIDGE" "$IP_ADDR" "${GW_ADDR:+ gw=${GW_ADDR}}" "$DNS_ADDR"
     printf '  Security      : admin=%s, ssh=%s, AppArmor=%s\n' \
       "$ADMIN_USER" "$ssh_desc" "$( (( ALLOW_UNCONFINED_APPARMOR )) && echo 'unconfined (opt-in)' || echo 'confined (default)' )"
-    printf '  GPU & Extras  : mode=%s (%s)%s, fuse=%s, wolf=%s, zeroconf=%s\n' \
-      "$GPU_MODE" "$gpu_desc" "${PCI_SLOT:+ slot=${PCI_SLOT}}" "$WITH_FUSE" "$WITH_WOLF_INPUT" "$WITH_ZEROCONF"
-    printf '  DockTun / AIO : port=%s, dir=%s, domain=%s\n' \
-      "$DOCKTUN_PORT" "$DOCKTUN_DIR" "$AIO_DOMAIN"
+    printf '  GPU & Extras  : mode=%s (%s)%s, wolf=%s, fuse=%s\n' \
+      "$GPU_MODE" "$gpu_desc" "${PCI_SLOT:+ slot=${PCI_SLOT}}" "$wolf_desc" "$WITH_FUSE"
+    printf '  DockTun / AIO : port=%s, mDNS=%s, dir=%s, domain=%s\n' \
+      "$DOCKTUN_PORT" "$mdns_desc" "$DOCKTUN_DIR" "$AIO_DOMAIN"
   fi
   printf '%s===========================================%s\n\n' "${_CLR_BOLD}${_CLR_CYAN}" "${_CLR_RESET}"
 }
@@ -646,106 +669,61 @@ run_interactive_wizard() {
 
   print_summary_banner
 
-  local mode=""
+  local choice=""
   while true; do
-    read -r -p "[E]xpress (use defaults) / [C]ustomize [E]: " mode </dev/tty
-    mode="${mode,,}"
-    mode="${mode:-e}"
-    case "$mode" in
-      e|express)
-        if [[ "$SKIP_HOST_PREP" != "1" && "$HOST_PREP_ONLY" != "1" && "$HOST_PREP_NEEDED" == "1" ]]; then
-          if prompt_yn "Run Proxmox host preparation first?" "y"; then
-            RUN_HOST_PREP=1
-          else
-            RUN_HOST_PREP=0
-          fi
-        fi
-        if [[ "$HOST_PREP_ONLY" != "1" ]]; then
-          if [[ -z "$SSH_PUBKEY_FILE" && -z "$SSH_PUBKEY" ]]; then
-            local ssh_input=""
-            read -r -p "No SSH key found. Enter key path or pubkey (Enter for password fallback): " ssh_input </dev/tty
-            if [[ -n "$ssh_input" ]]; then
-              if [[ -r "$ssh_input" ]]; then
-                SSH_PUBKEY_FILE="$ssh_input"
-              else
-                SSH_PUBKEY="$ssh_input"
-              fi
-            fi
-          fi
-          if [[ "$DOCKTUN_PORT" == "8080" ]] && is_port_in_use 8080; then
-            log_warn "Port 8080 is currently in use on this host."
-            prompt_val DOCKTUN_PORT "DockTun dashboard port" "8081"
-          fi
-        fi
-        if ! prompt_yn "Proceed with these settings?" "y"; then
-          die "Aborted by user."
-        fi
+    read -r -p "Proceed with these defaults? [Y]es / [c]ustomize / [n]o [Y]: " choice </dev/tty
+    choice="${choice,,}"
+    case "$choice" in
+      ""|y|yes|e|express)
         return 0
         ;;
+      n|no|q)
+        die "Aborted by user."
+        ;;
       c|customize)
-        if [[ "$SKIP_HOST_PREP" != "1" && "$HOST_PREP_ONLY" != "1" ]]; then
-          if prompt_yn "Run Proxmox host preparation first?" "$( (( RUN_HOST_PREP )) && echo y || echo n )"; then
-            RUN_HOST_PREP=1
-          else
-            RUN_HOST_PREP=0
-          fi
-        fi
         if [[ "$HOST_PREP_ONLY" != "1" ]]; then
-          prompt_val CTID "Container ID (CTID >= 100)" "$CTID"
-          prompt_val HOSTNAME "Container hostname" "$HOSTNAME"
-          prompt_val OS_CHOICE "Container OS (debian12|debian13|ubuntu2404)" "$OS_CHOICE"
-          prompt_val STORAGE "Proxmox rootfs storage" "$STORAGE"
-          prompt_val TEMPLATE_STORAGE "Proxmox template storage" "$TEMPLATE_STORAGE"
+          prompt_val CTID "CTID" "$CTID"
+          prompt_val HOSTNAME "Hostname" "$HOSTNAME"
+          prompt_val OS_CHOICE "OS (debian12|debian13|ubuntu2404)" "$OS_CHOICE"
+          OS_CHOICE="${OS_CHOICE,,}"
           prompt_val CORES "CPU cores" "$CORES"
           prompt_val MEMORY "Memory (MiB)" "$MEMORY"
-          prompt_val SWAP "Swap (MiB)" "$SWAP"
-          prompt_val DISK "Root disk size (GiB)" "$DISK"
-          prompt_val BRIDGE "Network bridge" "$BRIDGE"
+          prompt_val DISK "Disk size (GiB)" "$DISK"
           prompt_val IP_ADDR "IPv4 CIDR or 'dhcp'" "$IP_ADDR"
           if [[ "${IP_ADDR,,}" != "dhcp" ]]; then
             prompt_val GW_ADDR "IPv4 gateway" "$GW_ADDR"
           fi
-          prompt_val DNS_ADDR "DNS server" "$DNS_ADDR"
-          prompt_val ADMIN_USER "Admin sudo/docker username" "$ADMIN_USER"
-          if [[ -z "$SSH_PUBKEY" ]]; then
-            prompt_val SSH_PUBKEY_FILE "SSH public key file path (blank for none)" "$SSH_PUBKEY_FILE"
-          fi
           prompt_val GPU_MODE "Shared GPU mode (auto|nvidia|intel|amd|all|none)" "$GPU_MODE"
           GPU_MODE="${GPU_MODE,,}"
-          if [[ "$GPU_MODE" != "none" ]]; then
-            prompt_val PCI_SLOT "Specific GPU PCI slot (blank for auto/all)" "$PCI_SLOT"
+          if [[ "$GPU_MODE" != "none" ]] && (( DETECTED_GPU_COUNT > 1 )); then
+            prompt_val PCI_SLOT "PCI slot (blank for auto/all)" "$PCI_SLOT"
           fi
           prompt_val DOCKTUN_PORT "DockTun dashboard port" "$DOCKTUN_PORT"
-          prompt_val DOCKTUN_DIR "DockTun directory inside LXC" "$DOCKTUN_DIR"
-          prompt_val DOCKTUN_ADMIN_USER "DockTun pre-seeded admin user (optional)" "$DOCKTUN_ADMIN_USER"
-          if [[ -n "$DOCKTUN_ADMIN_USER" ]]; then
-            prompt_val DOCKTUN_ADMIN_PASSWORD "DockTun pre-seeded admin password" "$DOCKTUN_ADMIN_PASSWORD" 1
-          fi
-          prompt_val LAN_SUBNETS "Trusted LAN subnets for UFW/DOCKER-USER" "$LAN_SUBNETS"
-          prompt_val AIO_DOMAIN "AIOStreams domain placeholder" "$AIO_DOMAIN"
-          prompt_val MEDIA_DIR "Host media dir to mount at /mnt/media (optional)" "$MEDIA_DIR"
-          if (( ! WITH_FUSE )) && prompt_yn "Enable FUSE feature (fuse=1)?" "n"; then
-            WITH_FUSE=1
-          fi
-          if (( ! WITH_WOLF_INPUT )) && prompt_yn "Enable Wolf virtual input passthrough?" "n"; then
+          local wolf_default="n"
+          (( WITH_WOLF_INPUT )) && wolf_default="y"
+          if prompt_yn "Enable Wolf game-streaming input passthrough?" "$wolf_default"; then
             WITH_WOLF_INPUT=1
-          fi
-          if (( ! WITH_ZEROCONF )) && prompt_yn "Enable DockTun ZeroConf mDNS (host port 80)?" "n"; then
-            WITH_ZEROCONF=1
-          fi
-          if (( ! TEMPLATE_HYGIENE )) && prompt_yn "Clean SSH host keys & machine-id for templating after setup?" "n"; then
-            TEMPLATE_HYGIENE=1
+          else
+            WITH_WOLF_INPUT=0
           fi
           resolve_effective_gpus
+          detect_host_prep_status
+          if [[ "$SKIP_HOST_PREP" == "1" ]]; then
+            RUN_HOST_PREP=0
+          elif [[ "$HOST_PREP_ONLY" == "1" || "$HOST_PREP_NEEDED" == "1" ]]; then
+            RUN_HOST_PREP=1
+          else
+            RUN_HOST_PREP=0
+          fi
         fi
         print_summary_banner
-        if ! prompt_yn "Proceed with these settings?" "y"; then
+        if ! prompt_yn "Proceed?" "y"; then
           die "Aborted by user."
         fi
         return 0
         ;;
       *)
-        log_warn "Please enter 'E' for Express or 'C' for Customize."
+        log_warn "Please enter 'Y' (yes), 'c' (customize), or 'n' (no)."
         ;;
     esac
   done
@@ -1568,7 +1546,7 @@ DOCKTUN_ADMIN_PASSWORD="${DOCKTUN_ADMIN_PASSWORD:-}"
 LAN_SUBNETS="${LAN_SUBNETS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
 ENABLE_UFW="${ENABLE_UFW:-1}"
 ENABLE_WIREGUARD_PORT="${ENABLE_WIREGUARD_PORT:-1}"
-WITH_ZEROCONF="${WITH_ZEROCONF:-0}"
+WITH_ZEROCONF="${WITH_ZEROCONF:-1}"
 GPU_MODE="${GPU_MODE:-auto}"
 AIO_DOMAIN="${AIO_DOMAIN:-aio.example.com}"
 AIO_DIR="${AIO_DIR:-${DOCKTUN_DIR}/projects/aiostreams}"
@@ -1877,6 +1855,10 @@ EOF
         subnet="${subnet%"${subnet##*[![:space:]]}"}"
         [[ -z "$subnet" ]] && continue
         lxc_ufw_exec_safe allow from "$subnet" to any port "$DOCKTUN_PORT" proto tcp comment "DockTun LAN" || break
+        if [[ "$WITH_ZEROCONF" == "1" ]]; then
+          lxc_ufw_exec_safe allow from "$subnet" to any port 80 proto tcp comment "DockTun ZeroConf HTTP" || true
+          lxc_ufw_exec_safe allow from "$subnet" to any port 5353 proto udp comment "DockTun ZeroConf mDNS" || true
+        fi
       done
       if [[ "$ENABLE_WIREGUARD_PORT" == "1" ]]; then
         lxc_ufw_exec_safe allow 51820/udp comment "DockTun WireGuard" || true
@@ -2547,6 +2529,13 @@ lxc_is_existing_docktun_on_port() {
   grep -qE ":${port}([[:space:]]|$)" <<< "$mapped"
 }
 
+lxc_is_existing_zeroconf_running() {
+  command -v docker >/dev/null 2>&1 || return 1
+  local running=""
+  running="$(docker inspect -f '{{.State.Running}}' docktun-zeroconf 2>/dev/null || true)"
+  [[ "$running" == "true" ]]
+}
+
 lxc_install_docktun() {
   local projects_dir="${DOCKTUN_DIR}/projects"
   lxc_run_cmd install -d -m 0755 "$DOCKTUN_DIR" "$projects_dir"
@@ -2571,13 +2560,22 @@ lxc_install_docktun() {
     fi
   fi
 
+  if [[ "${DRY_RUN}" != "1" && "$WITH_ZEROCONF" == "1" ]] && lxc_port_in_use 80; then
+    if lxc_is_existing_zeroconf_running; then
+      lxc_log_info "Port 80 is already held by running 'docktun-zeroconf' container (idempotent update)."
+    else
+      lxc_log_warn "Port 80 is already bound inside the LXC by another non-docktun-zeroconf service; disabling ZeroConf mDNS and falling back to core DockTun only."
+      WITH_ZEROCONF=0
+    fi
+  fi
+
   local compose_file=""
   if compose_file="$(lxc_find_existing_compose "$DOCKTUN_DIR")"; then
     lxc_log_info "Preserving existing compose file: ${compose_file}"
   else
     compose_file="${DOCKTUN_DIR}/compose.yml"
     if [[ "${DRY_RUN}" == "1" ]]; then
-      lxc_log_info "[DRY-RUN] Would write ${compose_file} (port=${DOCKTUN_PORT}, SELF_PATH=/opt/projects/docktun, TAILSCALE_NETWORK=docktun)"
+      lxc_log_info "[DRY-RUN] Would write ${compose_file} (port=${DOCKTUN_PORT}, zeroconf=${WITH_ZEROCONF}, SELF_PATH=/opt/projects/docktun, TAILSCALE_NETWORK=docktun)"
     else
       local tmp_file=""
       tmp_file="$(mktemp "${DOCKTUN_DIR}/.compose.yml.XXXXXX")"
@@ -2616,7 +2614,11 @@ lxc_install_docktun() {
 
   local host_ip=""
   host_ip="$(lxc_detect_primary_ip)"
-  lxc_log_success "DockTun is healthy and reachable at http://${host_ip}:${DOCKTUN_PORT}"
+  if [[ "$WITH_ZEROCONF" == "1" ]]; then
+    lxc_log_success "DockTun is healthy and reachable at http://${host_ip}:${DOCKTUN_PORT} (or http://docktun.local via mDNS)"
+  else
+    lxc_log_success "DockTun is healthy and reachable at http://${host_ip}:${DOCKTUN_PORT}"
+  fi
   if [[ -z "$DOCKTUN_ADMIN_PASSWORD" ]]; then
     local setup_token=""
     setup_token="$(docker exec docktun sh -c 'if [ -f /app/data/setup.token ]; then cat /app/data/setup.token; fi' 2>/dev/null || true)"

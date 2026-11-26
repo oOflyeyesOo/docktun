@@ -57,11 +57,13 @@ bash proxmox-lxc.sh \
    - Default network bridge (`vmbr*`)
    - Host GPUs via `lspci` with word-boundary matching (so `NVIDIA Corporation` / `Intel Corporation` never false-match `ATI`), plus Intel `i915` vs `xe` kernel driver detection
    - Existing host SSH public keys (`/root/.ssh/id_ed25519.pub`, `/root/.ssh/id_rsa.pub`, `/root/.ssh/authorized_keys`, `/root/.ssh/*.pub`)
-   - Whether host preparation is already configured or still needed
-3. **Express vs. Customize**:
-   - Displays a concise **Auto-Detected Configuration Summary** banner.
-   - **`[E]xpress`**: Uses detected defaults and only confirms host prep (if needed), missing SSH key (if none found), port `8080` conflict (if bound), and final go-ahead.
-   - **`[C]ustomize`**: Steps through concise prompts where pressing `Enter` accepts each auto-detected default.
+   - Host port `8080` collisions (automatically bumps `DOCKTUN_PORT` to `8081` unless `--docktun-port` was explicitly specified)
+   - Whether host preparation is already configured or still needed (runs automatically when needed unless `--skip-host-prep` is set)
+3. **1-Keystroke Default vs. Streamlined Customize**:
+   - Displays a concise **Auto-Detected Configuration Summary** banner (showing mDNS `*.local` status, detected GPU, SSH key status, and DockTun port).
+   - Prompts once: `Proceed with these defaults? [Y]es / [c]ustomize / [n]o [Y]:`
+     - **`Enter` / `y` / `e`**: Proceeds immediately with all auto-detected defaults (1 keystroke total).
+     - **`c`**: Asks only the 8 essential settings (`CTID`, `Hostname`, `OS`, `CPU/RAM/Disk`, `IPv4/Gateway`, `Shared GPU mode` + `PCI slot` if multiple GPUs exist, `DockTun port`, and `Wolf input passthrough`), with `Enter` keeping each auto-detected default. All other options remain configurable via CLI flags.
 
 ---
 
@@ -99,7 +101,8 @@ bash proxmox-lxc.sh \
 | `--media-dir <host_path>` | empty | Optional host directory (`chown 100000:100000`, `chmod 0775`) mounted at `/mnt/media` |
 | `--with-fuse` | off | Enable `fuse=1` LXC feature (for `rclone`/`mergerfs`/AppImages) |
 | `--with-wolf-input` | off | Configure `uinput`/`uhid` host modules, udev rules, and LXC input mounts for Wolf/Purah |
-| `--with-zeroconf` | off | Include optional `docktun-zeroconf` service (mDNS `*.local`, uses host port `80`) |
+| `--with-zeroconf` | on | Enable `docktun-zeroconf` service (mDNS `*.local`, uses host port `80`; enabled by default) |
+| `--no-zeroconf`, `--without-zeroconf` | off | Disable `docktun-zeroconf` mDNS service (leaves host port `80` free for reverse proxies) |
 | `--allow-unconfined-apparmor` | off | Opt-in escape hatch setting `lxc.apparmor.profile: unconfined` (keep off unless host `lxc-pve` cannot be updated for CVE-2025-52881) |
 | `--template-hygiene` | off | Remove `/etc/ssh/ssh_host_*` and truncate `/etc/machine-id` after provisioning |
 | `--domain <hostname>` | `aio.example.com` | Domain placeholder for AIOStreams `BASE_URL` and Nginx example |
@@ -121,7 +124,7 @@ bash proxmox-lxc.sh \
 
 ### 3. Security Hardening Inside the LXC
 - **OpenSSH First-Match-Wins**: Writes `/etc/ssh/sshd_config.d/00-hardening.conf` (evaluated before cloud-init `50-*`/`60-*` drop-ins), runs `sshd -t` and logs `sshd -T`, and only sets `PasswordAuthentication no` when an authorized SSH key exists.
-- **UFW + `DOCKER-USER` Chain**: Enables UFW (`default deny incoming`, `22/tcp`, LAN-scoped `DOCKTUN_PORT/tcp`, `51820/udp` WireGuard) and injects a managed `DOCKER-USER` block into `/etc/ufw/after.rules` so Docker's NAT bypass cannot expose `DOCKTUN_PORT` outside `--lan-subnets`.
+- **UFW + `DOCKER-USER` Chain**: Enables UFW (`default deny incoming`, `22/tcp`, LAN-scoped `DOCKTUN_PORT/tcp`, `51820/udp` WireGuard, plus LAN-scoped `5353/udp` mDNS and `80/tcp` when `WITH_ZEROCONF=1`) and injects a managed `DOCKER-USER` block into `/etc/ufw/after.rules` so Docker's NAT bypass cannot expose `DOCKTUN_PORT` outside `--lan-subnets`.
 - **Fail2ban**: Configures `/etc/fail2ban/jail.d/99-sshd.local` with `backend = systemd` and `banaction = nftables-multiport` for modern Debian/Ubuntu `journald` + `nftables` hosts.
 - **Unattended Upgrades & Boot Speed**: Installs `/etc/apt/apt.conf.d/52unattended-upgrades-local` blacklisting `^nvidia-` and `^libnvidia-`, and adds a `systemd-networkd-wait-online.service` drop-in (`--timeout=5 --any`) to prevent 120s boot hangs.
 - **LXC Net-NS Sysctls**: Writes `net.ipv4.ip_forward=1` and `net.ipv4.conf.all.src_valid_mark=1` to `/etc/sysctl.d/99-lxc-media.conf`.
@@ -151,13 +154,32 @@ bash proxmox-lxc.sh \
 - Skips `firmware-amd-graphics` when `pve-firmware` / Proxmox VE is detected (since `pve-firmware` already bundles AMD GPU firmware and conflicts with `firmware-amd-graphics`, which would attempt to remove `proxmox-ve`); passes `/dev/dri/*` and `/dev/kfd` (when present) into the LXC with `render`/`video` group permissions and `mesa-va-drivers`.
 
 ### Wolf / Purah (Optional)
-- Pass `--with-wolf-input` to configure `uinput`/`uhid`, `/etc/udev/rules.d/85-wolf-virtual-inputs.rules`, and `/dev/uinput`, `/dev/uhid`, `/dev/input`, `/run/udev` passthrough.
+- Pass `--with-wolf-input` (or enable it during `[c]ustomize`) to configure `uinput`/`uhid`, `/etc/udev/rules.d/85-wolf-virtual-inputs.rules` (`seat9`), and `/dev/uinput`, `/dev/uhid`, `/dev/input`, `/run/udev` passthrough.
+
+---
+
+## What Wolf Can Do (Cloud Gaming & Virtual Desktop Streaming)
+
+[Wolf](https://github.com/games-on-whales/wolf) (and setups built on it like [Purah](https://github.com/redtronguy/purah)) turns this shared-GPU LXC into a self-hosted **Moonlight-compatible cloud gaming and virtual desktop server** inside Docker:
+
+- **Headless Virtual Displays (No Monitor or HDMI Dummy Plug)**: Wolf uses an embedded **Wayland / Sway / Gamescope** compositor inside Docker to create virtual displays on demand at whatever resolution, refresh rate, and HDR profile your Moonlight client requests—no physical display or HDMI/DP dummy plug required.
+- **Multi-User Isolated Sibling Containers**: Each paired Moonlight client can launch isolated sibling containers managed via `/var/run/docker.sock`, including **Steam Big Picture**, **RetroArch**, **Lutris / Heroic**, full **desktop/browser** sessions, and the **Wolf Den** web management UI—all running concurrently with per-user state.
+- **Hardware Encoding & 3D Acceleration Over Shared GPU**:
+  - **NVIDIA**: NVENC hardware video encoding + Vulkan/OpenGL 3D acceleration via `nvidia-container-toolkit` (`--gpus all` / CDI).
+  - **Intel iGPU / Arc**: QSV and VA-API acceleration (`iHD` driver; on Intel Arc Alchemist/Battlemage, prefer `vah264lpenc` / `vah265lpenc` low-power VA-API encoders).
+  - **AMD Radeon / APU**: VA-API (`radeonsi`) hardware encoding and Mesa Vulkan/OpenGL 3D acceleration over `/dev/dri/*` (and `/dev/kfd` where applicable).
+- **Virtual Gamepads & Input Passthrough (`--with-wolf-input`)**: Creates virtual **Xbox, DualSense, and Nintendo Switch** controllers plus virtual mouse and keyboard devices via host `uinput` and `uhid` kernel modules, `/dev/input`, `/run/udev`, and `/etc/udev/rules.d/85-wolf-virtual-inputs.rules` (which assigns Wolf virtual inputs to `seat9` so they never hijack host TTYs).
+- **Key Operational Caveats**:
+  - **`HOST_APPS_STATE_FOLDER` Path Parity**: Mount `HOST_APPS_STATE_FOLDER` at the **exact same path inside and outside** the Wolf container (e.g. `/opt/wolf:/opt/wolf`), because Wolf passes host paths directly to the Docker daemon when spawning sibling app containers.
+  - **Port `8080` Collision (Wolf Den vs. DockTun)**: **Wolf Den** defaults to port `8080`. Deploy DockTun with `--docktun-port 8081` (or let `proxmox-lxc.sh` auto-bump when `8080` is busy) so both dashboards coexist cleanly.
+  - **Moonlight Host-Network Ports**: Wolf runs with `network_mode: host` and requires **`47984/tcp`**, **`47989/tcp`**, **`48010/tcp`**, **`47998-48200/udp`**, plus mDNS **`5353/udp`** for local Moonlight discovery.
+  - **Trusted Network Only (`docker.sock`)**: Because Wolf mounts `/var/run/docker.sock` to spawn sibling containers, keep Wolf and Wolf Den strictly on your trusted LAN, **Tailscale**, or **WireGuard** VPN—never expose them directly to the public internet.
 
 ---
 
 ## DockTun + AIOStreams Port & Reverse Proxy Notes
 
-- **Compose Alignment**: Preserves any existing `compose.yml` / `compose.yaml` / `docker-compose.yml` / `docker-compose.yaml` in `DOCKTUN_DIR` (just like `docktun/install.sh`). When creating `/opt/docktun/compose.yml`, sets `SELF_PATH: /opt/projects/docktun`, `TAILSCALE_NETWORK: docktun`, `PORT: ${DOCKTUN_PORT}`, `DOCKER_NETWORK: docktun`, `TAILSCALE_STATE_VOLUME: docktun-tailscale-state`, `WIREGUARD_PORT: 51820`, `DB_PATH: /app/data/app.db`, `CLOUDFLARED_*`, and `networks.docktun.aliases`. `zeroconf` is omitted by default (enable with `--with-zeroconf`) so port `80` remains free for reverse proxies.
+- **Compose Alignment**: Preserves any existing `compose.yml` / `compose.yaml` / `docker-compose.yml` / `docker-compose.yaml` in `DOCKTUN_DIR` (just like `docktun/install.sh`). When creating `/opt/docktun/compose.yml`, sets `SELF_PATH: /opt/projects/docktun`, `TAILSCALE_NETWORK: docktun`, `PORT: ${DOCKTUN_PORT}`, `DOCKER_NETWORK: docktun`, `TAILSCALE_STATE_VOLUME: docktun-tailscale-state`, `WIREGUARD_PORT: 51820`, `DB_PATH: /app/data/app.db`, `CLOUDFLARED_*`, and `networks.docktun.aliases`. `docktun-zeroconf` (`http://docktun.local`, host port `80` + mDNS `5353/udp`) is **enabled by default** (`WITH_ZEROCONF=1`); if port `80` is already bound by another non-`docktun-zeroconf` service inside the LXC, `proxmox-lxc.sh` warns and automatically falls back to core `docktun` only (`--no-zeroconf` / `--without-zeroconf` opts out explicitly so port `80` stays free for reverse proxies).
 - **Port `8080` Collision Note**: DockTun defaults to `8080/tcp`. AIOStreams' `stremthru` also defaults to `8080` if bound to `0.0.0.0`. Keep `INTERNAL_BIND_IP=127.0.0.1` (default in `.env.generated`/`.env.template`) or set `--docktun-port 8081`.
 - **AIOStreams Readiness (`/opt/docktun/projects/aiostreams`)**:
   - Generates a non-clobbering 64-char hex `SECRET_KEY` in `.env.generated` (`0600`) and `.env.template` (`0644`), with `NODE_OPTIONS=--dns-result-order=ipv4first` and `INTERNAL_BIND_IP=127.0.0.1`.
