@@ -4457,6 +4457,7 @@ lxc_prepare_aiostreams() {
 
   local env_template="${AIO_DIR}/.env.template"
   local env_generated="${AIO_DIR}/.env.generated"
+  local aio_readme="${AIO_DIR}/README.md"
   local staged_aio_compose=""
 
   if [[ "${DRY_RUN}" == "1" ]]; then
@@ -4465,7 +4466,7 @@ lxc_prepare_aiostreams() {
     elif [[ -n "$AIO_REPO_URL" ]]; then
       lxc_log_info "[DRY-RUN] Would install git (if needed) and clone ${AIO_REPO_URL}${AIO_REPO_BRANCH:+ (${AIO_REPO_BRANCH})} into ${AIO_DIR} if absent"
     fi
-    lxc_log_info "[DRY-RUN] Would ensure ${AIO_DIR}/data, ${env_template}, ${env_generated} (non-clobbering), nginx-proxy-streaming.conf.example, and check-readiness.sh"
+    lxc_log_info "[DRY-RUN] Would ensure ${AIO_DIR}/data, ${env_template}, ${env_generated} (non-clobbering), nginx-proxy-streaming.conf.example, check-readiness.sh, and README.md (non-clobbering)"
     return 0
   fi
 
@@ -4820,6 +4821,78 @@ echo "=== Summary: \${PASS_COUNT} passed, \${WARN_COUNT} warnings, \${FAIL_COUNT
 exit 0
 EOF
 
+  if [[ -f "$aio_readme" ]]; then
+    lxc_log_info "Preserving existing ${aio_readme}."
+  else
+    lxc_write_file "$aio_readme" 0644 <<EOF
+# AIOStreams & Media Stack Directory (${AIO_DIR})
+
+This directory is mounted inside the DockTun container as \`/opt/projects/aiostreams\`.
+
+## What You Need to Place in This Directory
+
+| File / Folder | Required? | Purpose |
+|---|---|---|
+| \`compose.yml\` *(or \`compose.yaml\`)* | **Yes** | Your AIOStreams / media Docker Compose stack (keep **only one** compose file here; pre-staged automatically if you passed \`--aio-compose\` or \`--aio-repo\`). |
+| \`.env\` | **Yes** | Runtime environment secrets. Copy from \`.env.generated\` (\`cp -n .env.generated .env && chmod 0600 .env\`), then add any upstream/provider tokens. **Never commit \`.env\` or \`.env.generated\`.** |
+| Extra app config files *(optional)* | Optional | Place stack config files under \`./\` or \`./data/\`. Host-mapped media from Proxmox is mounted at \`/mnt/media\` (and any custom \`--mount\` targets). |
+
+## Files Already Created Here by \`proxmox-lxc.sh\`
+
+| File / Folder | Purpose |
+|---|---|
+| \`data/\` | Persistent application data directory (\`chmod 2775\`, owned by \`${ADMIN_USER}:docker\` when initially empty). |
+| \`.env.generated\` | Pre-generated \`0600\` env starter containing a fresh 64-char hex \`SECRET_KEY\`, \`INTERNAL_BIND_IP=127.0.0.1\`, \`BASE_URL=https://${AIO_DOMAIN}\`, and \`NODE_OPTIONS=--dns-result-order=ipv4first\`. *(Under \`--template-hygiene\`, this is regenerated on each clone's first boot.)* |
+| \`.env.template\` | Non-secret reference template (\`SECRET_KEY=REPLACE_WITH_64_HEX_CHARS\`). Safe to keep in Git. |
+| \`nginx-proxy-streaming.conf.example\` | TLS reverse proxy config with \`proxy_buffering off\`, HTTP \`206\` byte-range headers, and WebSocket upgrades (includes Debian 12 Nginx 1.22 \`http2\` note). |
+| \`check-readiness.sh\` | Diagnostic check for \`/dev/net/tun\`, Docker, \`/dev/shm\`, \`nofile=65536\`, DNS, GPU (\`nvidia-smi\`/\`vainfo\`), UFW + \`DOCKER-USER\`, DockTun \`/healthz\`, and port conflicts. |
+| \`README.md\` | This directory guide (preserved on re-runs or \`--aio-repo\` clones). |
+
+## Important LXC Networking & Port Notes
+
+- **\`userland-proxy: false\` & Loopback**: Host-LXC reverse proxies (Nginx/Caddy) must target \`http://127.0.0.1:3001\` — **never \`localhost\`**, which can resolve to IPv6 \`::1\` and fail with \`Connection refused\`. If your reverse proxy runs in Docker on the \`docktun\` network, target \`http://aiostreams:3001\`.
+- **DockTun External Network**: Join containers to DockTun's bridge network when proxying internally:
+  \`\`\`yaml
+  networks:
+    docktun:
+      external: true
+  \`\`\`
+- **Port \`8080\` & \`80\` Collisions**: DockTun runs on host port \`${DOCKTUN_PORT}\` (and ZeroConf \`http://docktun.local\` binds \`:80\` + \`5353/udp\` when enabled). Services like \`stremthru\` or Wolf Den also default to \`8080\` — keep \`INTERNAL_BIND_IP=127.0.0.1\` or run DockTun on \`8081\` (\`--docktun-port 8081\`).
+
+## Shared GPU Compose Snippets (Host-Driven, Current LXC Mode: \`${GPU_MODE}\`)
+
+- **Intel iGPU / Arc or AMD Radeon / APU**:
+  \`\`\`yaml
+  devices:
+    - /dev/dri:/dev/dri
+    # - /dev/kfd:/dev/kfd  # Uncomment for AMD ROCm / compute if present
+  \`\`\`
+- **NVIDIA GPU** *(uses \`nvidia-container-toolkit\` + host shared nodes)*:
+  \`\`\`yaml
+  environment:
+    - NVIDIA_VISIBLE_DEVICES=all
+    - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+  \`\`\`
+- **Optional Wolf / Purah Cloud Gaming**: Mount \`HOST_APPS_STATE_FOLDER\` at the **exact same path** inside and outside Wolf, expose Moonlight host-network ports (\`47984/tcp\`, \`47989/tcp\`, \`48010/tcp\`, \`47998-48200/udp\`, \`5353/udp\`), provision \`--with-wolf-input\`, and restrict access to trusted LAN/WireGuard/Tailscale (\`docker.sock\` is root-equivalent).
+
+## Quick Launch
+
+\`\`\`bash
+cd "${AIO_DIR}"
+cp -n .env.generated .env && chmod 0600 .env
+sudo ./check-readiness.sh
+docker compose up -d   # or deploy directly in the DockTun Web UI -> Projects
+\`\`\`
+EOF
+  fi
+
   if id "$ADMIN_USER" >/dev/null 2>&1; then
     local target_group="$ADMIN_USER"
     getent group docker >/dev/null 2>&1 && target_group="docker"
@@ -4829,6 +4902,7 @@ EOF
       "$env_template"
       "${AIO_DIR}/nginx-proxy-streaming.conf.example"
       "${AIO_DIR}/check-readiness.sh"
+      "$aio_readme"
     )
     [[ -n "$staged_aio_compose" && -f "$staged_aio_compose" ]] && chown_targets+=("$staged_aio_compose")
     chown "${ADMIN_USER}:${target_group}" "${chown_targets[@]}"
@@ -4837,7 +4911,7 @@ EOF
     fi
     chmod 2775 "$AIO_DIR" "${AIO_DIR}/data"
     chmod 0600 "$env_generated"
-    chmod 0644 "$env_template" "${AIO_DIR}/nginx-proxy-streaming.conf.example"
+    chmod 0644 "$env_template" "${AIO_DIR}/nginx-proxy-streaming.conf.example" "$aio_readme"
     chmod 0755 "${AIO_DIR}/check-readiness.sh"
   fi
 
@@ -5325,7 +5399,7 @@ print_post_install_cheat_sheet() {
     printf '    1. On booted clone: .env.generated is auto-created with a fresh SECRET_KEY; run: cd %s && cp .env.generated .env\n' "$aio_dir"
     printf '    2. Deploy via DockTun UI (/opt/projects/aiostreams) or docker compose up -d\n'
     printf '    3. Verify on booted clone: %s/check-readiness.sh\n' "$aio_dir"
-    printf '    4. Reverse proxy template: %s/nginx-proxy-streaming.conf.example (https://%s)\n' "$aio_dir" "$AIO_DOMAIN"
+    printf '    4. Reverse proxy & directory guide: %s/nginx-proxy-streaming.conf.example (https://%s) | %s/README.md\n' "$aio_dir" "$AIO_DOMAIN" "$aio_dir"
     printf '  Template Convert  : pct stop %s && pct template %s\n' "$CTID" "$CTID"
   else
     printf '  DockTun Dashboard : http://%s:%s%s\n' "$lxc_ip" "$docktun_port" "$mdns_suffix"
@@ -5341,7 +5415,7 @@ print_post_install_cheat_sheet() {
     printf '    1. pct exec %s -- bash -lc '\''cd %s && cp .env.generated .env'\''\n' "$CTID" "$aio_dir"
     printf '    2. Deploy via DockTun UI (/opt/projects/aiostreams) or docker compose up -d\n'
     printf '    3. Re-verify anytime: pct exec %s -- %s/check-readiness.sh\n' "$CTID" "$aio_dir"
-    printf '    4. Reverse proxy template: %s/nginx-proxy-streaming.conf.example (https://%s)\n' "$aio_dir" "$AIO_DOMAIN"
+    printf '    4. Reverse proxy & directory guide: %s/nginx-proxy-streaming.conf.example (https://%s) | %s/README.md\n' "$aio_dir" "$AIO_DOMAIN" "$aio_dir"
   fi
   printf '%s=====================================================%s\n\n' "${_CLR_BOLD}${_CLR_GREEN}" "${_CLR_RESET}"
 }
