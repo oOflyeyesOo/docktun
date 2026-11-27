@@ -74,6 +74,7 @@ PREFLIGHT_DONE=0
 CLI_CTID=""
 MODE_CTID=""
 EFFECTIVE_ZEROCONF=""
+EFFECTIVE_ZEROCONF_FALLBACK=""
 declare -a CREATION_FLAGS_USED=()
 LXC_OSTYPE="debian"
 TPL_PATTERN="debian-12-standard_"
@@ -376,15 +377,15 @@ parse_args() {
       --chown-media-dir) (( has_eq )) && die "${opt} does not accept a value"; CHOWN_MEDIA_DIR=1; CREATION_FLAGS_USED+=("--chown-media-dir"); shift ;;
       --list) (( has_eq )) && die "${opt} does not accept a value"; LIST_MODE=1; shift ;;
       --with-fuse) (( has_eq )) && die "${opt} does not accept a value"; WITH_FUSE=1; CREATION_FLAGS_USED+=("--with-fuse"); shift ;;
-      --with-wolf-input) (( has_eq )) && die "${opt} does not accept a value"; WITH_WOLF_INPUT=1; shift ;;
+      --with-wolf-input) (( has_eq )) && die "${opt} does not accept a value"; WITH_WOLF_INPUT=1; CREATION_FLAGS_USED+=("--with-wolf-input"); shift ;;
       --with-zeroconf) (( has_eq )) && die "${opt} does not accept a value"; WITH_ZEROCONF=1; shift ;;
       --no-zeroconf|--without-zeroconf) (( has_eq )) && die "${opt} does not accept a value"; WITH_ZEROCONF=0; shift ;;
       --allow-unconfined-apparmor) (( has_eq )) && die "${opt} does not accept a value"; ALLOW_UNCONFINED_APPARMOR=1; CREATION_FLAGS_USED+=("--allow-unconfined-apparmor"); shift ;;
       --template-hygiene) (( has_eq )) && die "${opt} does not accept a value"; TEMPLATE_HYGIENE=1; shift ;;
       -h|--help) (( has_eq )) && die "${opt} does not accept a value"; usage; exit 0 ;;
-      --provision-only) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--provision-only requires a CTID"; val="$2"; shift; }; [[ -n "$val" ]] || die "--provision-only cannot be empty"; PROVISION_ONLY=1; MODE_CTID="$val"; CTID="$val"; shift ;;
-      --doctor) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--doctor requires a CTID"; val="$2"; shift; }; [[ -n "$val" ]] || die "--doctor cannot be empty"; DOCTOR_MODE=1; MODE_CTID="$val"; CTID="$val"; shift ;;
-      --destroy) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--destroy requires a CTID"; val="$2"; shift; }; [[ -n "$val" ]] || die "--destroy cannot be empty"; DESTROY_MODE=1; MODE_CTID="$val"; CTID="$val"; shift ;;
+      --provision-only) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--provision-only requires a CTID"; val="$2"; shift; }; [[ -n "$val" ]] || die "--provision-only cannot be empty"; (( PROVISION_ONLY )) && [[ "$MODE_CTID" != "$val" ]] && die "Conflicting --provision-only CTIDs: '${MODE_CTID}' vs '${val}'."; PROVISION_ONLY=1; MODE_CTID="$val"; CTID="$val"; shift ;;
+      --doctor) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--doctor requires a CTID"; val="$2"; shift; }; [[ -n "$val" ]] || die "--doctor cannot be empty"; (( DOCTOR_MODE )) && [[ "$MODE_CTID" != "$val" ]] && die "Conflicting --doctor CTIDs: '${MODE_CTID}' vs '${val}'."; DOCTOR_MODE=1; MODE_CTID="$val"; CTID="$val"; shift ;;
+      --destroy) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--destroy requires a CTID"; val="$2"; shift; }; [[ -n "$val" ]] || die "--destroy cannot be empty"; (( DESTROY_MODE )) && [[ "$MODE_CTID" != "$val" ]] && die "Conflicting --destroy CTIDs: '${MODE_CTID}' vs '${val}'."; DESTROY_MODE=1; MODE_CTID="$val"; CTID="$val"; shift ;;
       --ctid) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--ctid requires a value"; val="$2"; shift; }; [[ -n "$val" ]] || die "--ctid cannot be empty"; CLI_CTID="$val"; CTID="$val"; shift ;;
       --hostname) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--hostname requires a value"; val="$2"; shift; }; HOSTNAME="$val"; CREATION_FLAGS_USED+=("--hostname"); shift ;;
       --os) (( has_eq )) || { [[ "$#" -ge 2 ]] || die "--os requires a value"; val="$2"; shift; }; OS_CHOICE="${val,,}"; CREATION_FLAGS_USED+=("--os"); shift ;;
@@ -672,7 +673,11 @@ check_zeroconf_collision() {
   fi
   local existing_ip=""
   if command -v avahi-resolve >/dev/null 2>&1; then
-    existing_ip="$(avahi-resolve -n -4 docktun.local 2>/dev/null | awk '{print $2; exit}' || true)"
+    if command -v timeout >/dev/null 2>&1; then
+      existing_ip="$(timeout 2 avahi-resolve -n -4 docktun.local 2>/dev/null | awk '{print $2; exit}' || true)"
+    else
+      existing_ip="$(avahi-resolve -n -4 docktun.local 2>/dev/null | awk '{print $2; exit}' || true)"
+    fi
   elif command -v getent >/dev/null 2>&1; then
     existing_ip="$(getent hosts docktun.local 2>/dev/null | awk '{print $1; exit}' || true)"
   fi
@@ -837,8 +842,12 @@ print_summary_banner() {
     fi
     printf '  Compute/Disk  : %s cores, %s MiB RAM%s, %s MiB swap, %s GiB (%s / tpl:%s)%s\n' \
       "$CORES" "$MEMORY" "$shm_note" "$SWAP" "$DISK" "$STORAGE" "$TEMPLATE_STORAGE" "${STARTUP_SPEC:+ startup=${STARTUP_SPEC}}"
+    local gw_display=""
+    if [[ "${IP_ADDR,,}" != "dhcp" && -n "$GW_ADDR" ]]; then
+      gw_display=" gw=${GW_ADDR}"
+    fi
     printf '  Network       : bridge=%s%s%s, ip=%s%s, dns=%s\n' \
-      "$BRIDGE" "${VLAN_TAG:+ vlan=${VLAN_TAG}}" "${MTU_BYTES:+ mtu=${MTU_BYTES}}" "$IP_ADDR" "${GW_ADDR:+ gw=${GW_ADDR}}" "$DNS_ADDR"
+      "$BRIDGE" "${VLAN_TAG:+ vlan=${VLAN_TAG}}" "${MTU_BYTES:+ mtu=${MTU_BYTES}}" "$IP_ADDR" "$gw_display" "$DNS_ADDR"
     printf '  Security      : admin=%s, ssh=%s, AppArmor=%s\n' \
       "$ADMIN_USER" "$ssh_desc" "$( (( ALLOW_UNCONFINED_APPARMOR )) && echo 'unconfined (opt-in)' || echo 'confined (default)' )"
     printf '  GPU & Extras  : mode=%s (%s)%s, wolf=%s, fuse=%s\n' \
@@ -1044,13 +1053,42 @@ check_ctid_exists_cluster() {
 
 normalize_mount_target() {
   local raw="${1:-}"
-  if [[ "$raw" =~ (^|/)\.\.(/|$) ]]; then
-    die "Invalid mount path '${raw}' (path traversal '..' segments are not allowed)"
+  if [[ "$raw" =~ [[:cntrl:]=] ]]; then
+    die "Invalid mount path '${raw}' (control characters and '=' are not allowed)"
+  fi
+  if [[ "$raw" =~ (^|/)\.\.?(/|$) ]]; then
+    die "Invalid mount path '${raw}' (path traversal '.' or '..' segments are not allowed)"
   fi
   local norm=""
   norm="$(printf '%s' "$raw" | sed -E 's#/+#/#g; s#/$##')"
   [[ -z "$norm" ]] && norm="/"
   printf '%s\n' "$norm"
+}
+
+is_protected_system_path() {
+  local check_path="${1:-}"
+  local include_root_mnt="${2:-0}"
+  case "$check_path" in
+    /|/bin|/bin/*|/boot|/boot/*|/dev|/dev/*|/etc|/etc/*|/lib|/lib/*|/lib32|/lib32/*|/lib64|/lib64/*|/libx32|/libx32/*|/proc|/proc/*|/run|/run/*|/sbin|/sbin/*|/sys|/sys/*|/usr|/usr/*|/var)
+      return 0
+      ;;
+    /mnt|/root|/root/*)
+      (( include_root_mnt )) && return 0
+      return 1
+      ;;
+  esac
+  return 1
+}
+
+validate_docktun_dir() {
+  [[ -n "$DOCKTUN_DIR" && "$DOCKTUN_DIR" == /* ]] || \
+    die "Invalid --docktun-dir '${DOCKTUN_DIR}' (must be an absolute path)"
+  if [[ "$DOCKTUN_DIR" =~ [[:space:][:cntrl:]:,%] || "$DOCKTUN_DIR" == *'$'* ]]; then
+    die "Invalid --docktun-dir '${DOCKTUN_DIR}' (whitespace, control chars, ':', ',', '\$', and '%' are not allowed)"
+  fi
+  if [[ "$DOCKTUN_DIR" =~ (^|/)\.\.?(/|$) ]]; then
+    die "Invalid --docktun-dir '${DOCKTUN_DIR}' (path traversal '.' or '..' segments are not allowed)"
+  fi
 }
 
 validate_mode_flags() {
@@ -1084,6 +1122,9 @@ validate_gpu_and_pci_slot() {
 validate_startup_spec() {
   local spec="${1:-}"
   [[ -n "$spec" ]] || return 0
+  if [[ "$spec" == *$'\n'* || "$spec" == *$'\r'* || "$spec" =~ [[:cntrl:]] ]]; then
+    die "Invalid --startup '${spec}' (newlines and control characters are not allowed)"
+  fi
   if [[ "$spec" == ,* || "$spec" == *, || "$spec" == *,,* ]]; then
     die "Invalid --startup '${spec}' (empty token; expected comma-separated order=<uint>, up=<uint>, down=<uint>)"
   fi
@@ -1134,7 +1175,7 @@ validate_aio_repo_opts() {
     if [[ "$AIO_REPO_URL" == -* || "$AIO_REPO_URL" =~ [[:space:][:cntrl:]] ]]; then
       die "Invalid --aio-repo '${AIO_REPO_URL}' (must be a safe HTTPS or SSH Git URL)"
     fi
-    if [[ ! "$AIO_REPO_URL" =~ ^(https://[A-Za-z0-9._-]+(:[0-9]+)?/[A-Za-z0-9._~/%+-]+|ssh://([A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+(:[0-9]+)?/[A-Za-z0-9._~/%+-]+|[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:[A-Za-z0-9._~/%+-]+)$ ]]; then
+    if [[ ! "$AIO_REPO_URL" =~ ^(https://[A-Za-z0-9._-]+(:[0-9]+)?/[A-Za-z0-9._~/%+-]+|ssh://([A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+(:[0-9]+)?/[A-Za-z0-9._~/%+-]+|[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:[A-Za-z0-9._~/%+][A-Za-z0-9._~/%+-]*)$ ]]; then
       die "Invalid --aio-repo '${AIO_REPO_URL}' (expected safe https://, ssh://, or user@host:path Git URL)"
     fi
   fi
@@ -1148,19 +1189,32 @@ validate_aio_repo_opts() {
 
 validate_media_dir() {
   [[ -n "$MEDIA_DIR" ]] || return 0
-  [[ "$MEDIA_DIR" == /* && "$MEDIA_DIR" != *$'\n'* && "$MEDIA_DIR" != *$'\r'* && "$MEDIA_DIR" != *[,:]* ]] || \
-    die "Invalid --media-dir '${MEDIA_DIR}' (must be an absolute path without commas, colons, or newlines)"
-  if [[ "$MEDIA_DIR" =~ (^|/)\.\.(/|$) ]]; then
-    die "Invalid --media-dir '${MEDIA_DIR}' (path traversal '..' segments are not allowed)"
+  [[ "$MEDIA_DIR" == /* && "$MEDIA_DIR" != *[,:]* ]] || \
+    die "Invalid --media-dir '${MEDIA_DIR}' (must be an absolute path without commas or colons)"
+  if [[ "$MEDIA_DIR" =~ [[:cntrl:]=] ]]; then
+    die "Invalid --media-dir '${MEDIA_DIR}' (control characters and '=' are not allowed)"
+  fi
+  if [[ "$MEDIA_DIR" =~ (^|/)\.\.?(/|$) ]]; then
+    die "Invalid --media-dir '${MEDIA_DIR}' (path traversal '.' or '..' segments are not allowed)"
   fi
   if (( CHOWN_MEDIA_DIR )); then
     local norm_media=""
     norm_media="$(normalize_mount_target "$MEDIA_DIR")"
-    case "$norm_media" in
-      /|/bin|/bin/*|/boot|/boot/*|/dev|/dev/*|/etc|/etc/*|/lib|/lib/*|/lib32|/lib32/*|/lib64|/lib64/*|/libx32|/libx32/*|/mnt|/proc|/proc/*|/root|/root/*|/run|/run/*|/sbin|/sbin/*|/sys|/sys/*|/usr|/usr/*|/var)
-        die "Refusing --chown-media-dir on protected system path '${MEDIA_DIR}'."
-        ;;
-    esac
+    if is_protected_system_path "$norm_media" 1; then
+      die "Refusing --chown-media-dir on protected system path '${MEDIA_DIR}'."
+    fi
+    if [[ "${DRY_RUN}" != "1" ]]; then
+      if [[ -L "$MEDIA_DIR" ]]; then
+        die "Refusing --chown-media-dir on symlink '${MEDIA_DIR}'."
+      fi
+      if command -v realpath >/dev/null 2>&1; then
+        local resolved_media=""
+        resolved_media="$(realpath -m -- "$MEDIA_DIR" 2>/dev/null || true)"
+        if [[ -n "$resolved_media" ]] && is_protected_system_path "$resolved_media" 1; then
+          die "Refusing --chown-media-dir on protected system path '${MEDIA_DIR}' (resolves to '${resolved_media}')."
+        fi
+      fi
+    fi
   fi
 }
 
@@ -1206,22 +1260,23 @@ validate_extra_mounts() {
   [[ -n "$MEDIA_DIR" ]] && seen_ct_paths["/mnt/media"]=1
   docktun_norm="$(normalize_mount_target "$DOCKTUN_DIR")"
   for mnt in "${EXTRA_MOUNTS[@]}"; do
-    [[ "$mnt" == *:* && "$mnt" != *$'\n'* && "$mnt" != *$'\r'* ]] || \
+    [[ "$mnt" == *:* ]] || \
       die "Invalid --mount '${mnt}' (expected <host_path>:<ct_path>)"
+    if [[ "$mnt" =~ [[:cntrl:]=] ]]; then
+      die "Invalid --mount '${mnt}' (control characters and '=' are not allowed)"
+    fi
     host_p="${mnt%%:*}"
     ct_p="${mnt#*:}"
     [[ "$host_p" == /* && "$ct_p" == /* && "$host_p" != *:* && "$ct_p" != *:* && "$host_p" != *,* && "$ct_p" != *,* ]] || \
       die "Invalid --mount '${mnt}' (both paths must be absolute without commas or extra colons)"
-    if [[ "$host_p" =~ (^|/)\.\.(/|$) || "$ct_p" =~ (^|/)\.\.(/|$) ]]; then
-      die "Invalid --mount '${mnt}': path traversal ('..') segments are not allowed"
+    if [[ "$host_p" =~ (^|/)\.\.?(/|$) || "$ct_p" =~ (^|/)\.\.?(/|$) ]]; then
+      die "Invalid --mount '${mnt}': path traversal ('.' or '..') segments are not allowed"
     fi
     norm_ct="$(normalize_mount_target "$ct_p")"
-    case "$norm_ct" in
-      /|/bin|/bin/*|/boot|/boot/*|/dev|/dev/*|/etc|/etc/*|/lib|/lib/*|/lib32|/lib32/*|/lib64|/lib64/*|/libx32|/libx32/*|/proc|/proc/*|/run|/run/*|/sbin|/sbin/*|/sys|/sys/*|/usr|/usr/*|/var)
-        die "Invalid --mount '${mnt}': refusing protected container target '${norm_ct}'"
-        ;;
-    esac
-    if [[ "$norm_ct" == "$docktun_norm" || "$norm_ct" == "${docktun_norm}/"* ]]; then
+    if is_protected_system_path "$norm_ct" 0; then
+      die "Invalid --mount '${mnt}': refusing protected container target '${norm_ct}'"
+    fi
+    if [[ "$norm_ct" == "$docktun_norm" || "$norm_ct" == "${docktun_norm}/"* || "$docktun_norm" == "${norm_ct}/"* ]]; then
       die "Invalid --mount '${mnt}': container target collides with --docktun-dir (${docktun_norm})"
     fi
     if [[ -n "${seen_ct_paths[$norm_ct]+x}" ]]; then
@@ -1242,7 +1297,11 @@ validate_early_cli_inputs() {
   elif (( PROVISION_ONLY || DOCTOR_MODE || DESTROY_MODE )); then
     die "A CTID (>= 100) is required."
   fi
-  if (( HOST_PREP_ONLY || DESTROY_MODE || DOCTOR_MODE )); then
+  if (( HOST_PREP_ONLY || DESTROY_MODE )); then
+    return 0
+  fi
+  validate_docktun_dir
+  if (( DOCTOR_MODE )); then
     return 0
   fi
   validate_timezone_value
@@ -1275,8 +1334,7 @@ validate_inputs() {
   fi
 
   [[ "$DOCKTUN_PORT" =~ ^[1-9][0-9]*$ ]] && (( 10#$DOCKTUN_PORT >= 1 && 10#$DOCKTUN_PORT <= 65535 )) || die "Invalid --docktun-port '${DOCKTUN_PORT}'"
-  [[ -n "$DOCKTUN_DIR" && "$DOCKTUN_DIR" == /* ]] || die "Invalid --docktun-dir '${DOCKTUN_DIR}' (must be an absolute path)"
-  [[ ! "$DOCKTUN_DIR" =~ [[:space:][:cntrl:]] ]] || die "Invalid --docktun-dir '${DOCKTUN_DIR}' (whitespace and control characters are not allowed)"
+  validate_docktun_dir
   [[ "$ADMIN_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "Invalid --admin-user '${ADMIN_USER}' (must be a valid Linux username)"
   case "$ADMIN_USER" in
     root|daemon|bin|sys|sync|games|man|lp|mail|news|uucp|proxy|www-data|backup|list|irc|_apt|nobody|systemd-network|systemd-resolve|messagebus|sshd|docker|ubuntu|debian)
@@ -1303,6 +1361,9 @@ validate_inputs() {
   [[ "$AIO_DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]] || \
     die "Invalid --domain '${AIO_DOMAIN}' (expected valid hostname)"
 
+  if [[ "$LAN_SUBNETS" == *$'\n'* || "$LAN_SUBNETS" == *$'\r'* || "$LAN_SUBNETS" =~ [[:cntrl:]] ]]; then
+    die "Invalid --lan-subnets (newlines and control characters are not allowed)"
+  fi
   local -a lan_tokens=()
   local tok="" valid_lan_count=0
   IFS=',' read -ra lan_tokens <<< "$LAN_SUBNETS"
@@ -1391,6 +1452,10 @@ validate_inputs() {
 
     if [[ "${IP_ADDR,,}" != "dhcp" ]]; then
       is_valid_ipv4_cidr "$IP_ADDR" || die "Invalid --ip '${IP_ADDR}'; expected IPv4 CIDR (e.g. 192.168.1.50/24) or 'dhcp'."
+      local ip_prefix="${IP_ADDR#*/}"
+      if (( 10#$ip_prefix < 1 || 10#$ip_prefix > 32 )); then
+        die "Invalid --ip '${IP_ADDR}'; CIDR prefix must be between 1 and 32."
+      fi
       if [[ -z "$GW_ADDR" ]]; then
         log_warn "Static IP '${IP_ADDR}' specified without --gw; container may lack a default route."
       fi
@@ -1977,8 +2042,15 @@ preflight_host_checks() {
     fi
   fi
 
+  local amd_needs_apt=0
+  if (( ${DO_AMD:-0} )); then
+    if ! { command -v dpkg-query >/dev/null 2>&1 && dpkg-query -W -f='${Status}\n' pve-firmware 2>/dev/null | grep -qE '^(install|hold) ok installed$'; } && \
+       ! command -v pveversion >/dev/null 2>&1; then
+      amd_needs_apt=1
+    fi
+  fi
   local skip_net_probe=0
-  if (( HOST_PREP_ONLY )) && [[ "$GPU_MODE" == "none" || ( "${GPUS_RESOLVED:-0}" == "1" && "${DO_NVIDIA:-0}" == "0" && "${DO_INTEL:-0}" == "0" && "${DO_AMD:-0}" == "0" ) ]]; then
+  if (( HOST_PREP_ONLY )) && [[ "$GPU_MODE" == "none" || ( "${GPUS_RESOLVED:-0}" == "1" && "${DO_NVIDIA:-0}" == "0" && "${DO_INTEL:-0}" == "0" && "$amd_needs_apt" == "0" ) ]]; then
     skip_net_probe=1
   fi
   if (( skip_net_probe )); then
@@ -1986,7 +2058,7 @@ preflight_host_checks() {
     return 0
   fi
 
-  local probe_proxy=""
+  local probe_proxy="" env_proxy=""
   if command -v apt-config >/dev/null 2>&1; then
     local apt_cfg_out="" apt_https_proxy="" apt_http_proxy="" cand_proxy=""
     apt_cfg_out="$(apt-config dump Acquire::http::Proxy Acquire::https::Proxy 2>/dev/null || true)"
@@ -1999,12 +2071,22 @@ preflight_host_checks() {
       fi
     done
   fi
+  if [[ -z "$probe_proxy" ]]; then
+    env_proxy="${https_proxy:-${HTTPS_PROXY:-${http_proxy:-${HTTP_PROXY:-}}}}"
+  fi
 
   local net_fail=0
   if [[ -n "$probe_proxy" ]]; then
     if command -v curl >/dev/null 2>&1; then
       if ! curl -fsSIL --max-time 5 --proxy "$probe_proxy" https://deb.debian.org >/dev/null 2>&1 && \
          ! curl -fsSIL --max-time 5 --proxy "$probe_proxy" http://deb.debian.org >/dev/null 2>&1; then
+        net_fail=1
+      fi
+    fi
+  elif [[ -n "$env_proxy" ]]; then
+    if command -v curl >/dev/null 2>&1; then
+      if ! curl -fsSIL --max-time 5 https://deb.debian.org >/dev/null 2>&1 && \
+         ! curl -fsSIL --max-time 5 http://deb.debian.org >/dev/null 2>&1; then
         net_fail=1
       fi
     fi
@@ -2174,7 +2256,7 @@ append_lxc_conf_lines() {
     if [[ -f "$conf_file" ]]; then
       live_cfg="$(strip_pct_snapshots "$(cat "$conf_file" 2>/dev/null || true)")"
     fi
-    if ! grep -qxF "$line" <<< "$live_cfg" 2>/dev/null; then
+    if ! grep -qxF -- "$line" <<< "$live_cfg" 2>/dev/null; then
       if [[ -f "$conf_file" ]] && grep -qE '^\[' "$conf_file" 2>/dev/null; then
         ensure_tmp_dir
         local tmp_conf="${TMP_WORK_DIR}/lxc_${CTID}.conf"
@@ -2184,6 +2266,7 @@ append_lxc_conf_lines() {
           { print }
           END { if (!inserted) print ins }
         ' "$conf_file" > "$tmp_conf"
+        [[ -s "$tmp_conf" ]] || die "Failed updating ${conf_file}: generated temp config is empty."
         cat "$tmp_conf" > "$conf_file"
       else
         printf '%s\n' "$line" >> "$conf_file"
@@ -2323,7 +2406,7 @@ ensure_nvidia_prestart_hook() {
     modprobe_cmds+="/usr/bin/nvidia-modprobe -u -c${m} -m >/dev/null 2>&1 || true"$'\n'
   done
   local hook_body=""
-  hook_body="#!/usr/bin/env bash"$'\n'"${modprobe_cmds}/usr/bin/nvidia-smi >/dev/null 2>&1 || true"
+  hook_body="#!/usr/bin/env bash"$'\n'"${modprobe_cmds}/usr/bin/nvidia-smi >/dev/null 2>&1 || true"$'\n'"command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=5 >/dev/null 2>&1 || true"
   if [[ "${DRY_RUN}" == "1" ]]; then
     log_info "[DRY-RUN] Would write executable NVIDIA pre-start hook ${hook_path} (minors: ${minors[*]})" >&2
   else
@@ -2368,6 +2451,8 @@ configure_nvidia_passthrough() {
     nv_major="195"
     if [[ -c "$nv_dev" ]]; then
       nv_major="$(get_char_major "$nv_dev")" || die "Failed to determine major device number for ${nv_dev}"
+    elif [[ "${DRY_RUN}" != "1" ]]; then
+      die "NVIDIA device node ${nv_dev} is missing after nvidia-modprobe; verify host NVIDIA driver and reboot state."
     fi
     nv_majors+=("$nv_major")
   done
@@ -2737,19 +2822,24 @@ declare -a TMP_LXC_FILES=()
 lxc_cleanup() {
   local f=""
   for f in ${TMP_LXC_FILES[@]+"${TMP_LXC_FILES[@]}"}; do
-    [[ -n "$f" && -e "$f" ]] && rm -rf "$f"
+    if [[ -n "$f" ]] && [[ -e "$f" || -L "$f" ]]; then
+      rm -rf "$f"
+    fi
   done
   return 0
 }
 trap lxc_cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 lxc_mktemp() {
-  local -n _mk_out="$1"
+  [[ "${1:-}" != __lxc_mk_* ]] || lxc_die "lxc_mktemp: invalid output variable name '${1:-}'"
+  local -n __lxc_mk_out="$1"
   shift
-  local _mk_f=""
-  _mk_f="$(mktemp "$@")"
-  TMP_LXC_FILES+=("$_mk_f")
-  _mk_out="$_mk_f"
+  local __lxc_mk_f=""
+  __lxc_mk_f="$(mktemp "$@")"
+  TMP_LXC_FILES+=("$__lxc_mk_f")
+  __lxc_mk_out="$__lxc_mk_f"
 }
 
 lxc_log_info()    { printf '[LXC INFO] %s\n' "$*"; }
@@ -2905,6 +2995,10 @@ lxc_inject_docker_user_block() {
   local ufw_forward_chain="$2"
   shift 2
   local -a subnets=("$@")
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    lxc_log_info "[DRY-RUN] Would inject DOCKER-USER block into ${rules_file}"
+    return 0
+  fi
   [[ -f "$rules_file" ]] || return 0
 
   if [[ ! -f "${rules_file}.bak.pre-docktun" ]]; then
@@ -2914,9 +3008,17 @@ lxc_inject_docker_user_block() {
   lxc_mktemp tmp_rules
 
   awk '
-    /^# BEGIN DOCKTUN DOCKER-USER$/ { skip=1; next }
-    /^# END DOCKTUN DOCKER-USER$/ { skip=0; next }
-    !skip { print }
+    BEGIN { in_blk=0; buf="" }
+    /^# BEGIN DOCKTUN DOCKER-USER$/ {
+      if (in_blk) { printf "%s", buf; buf="" }
+      in_blk=1; buf=$0 "\n"; next
+    }
+    in_blk && /^# END DOCKTUN DOCKER-USER$/ {
+      in_blk=0; buf=""; next
+    }
+    in_blk { buf = buf $0 "\n"; next }
+    { print }
+    END { if (in_blk) printf "%s", buf }
   ' "$rules_file" > "$tmp_rules"
 
   local def_if="" route_flag="-4"
@@ -2925,12 +3027,14 @@ lxc_inject_docker_user_block() {
   fi
   if command -v ip >/dev/null 2>&1; then
     def_if="$(ip "$route_flag" route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") {print $(i+1); exit}}' || true)"
+    def_if="${def_if%%@*}"
   fi
 
   local block="" subnet=""
   block+="# BEGIN DOCKTUN DOCKER-USER"$'\n'
   block+="*filter"$'\n'
   block+=":DOCKER-USER - [0:0]"$'\n'
+  block+="-F DOCKER-USER"$'\n'
   block+="-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN"$'\n'
   block+="-A DOCKER-USER -i docker0 -j RETURN"$'\n'
   block+="-A DOCKER-USER -i br-+ -j RETURN"$'\n'
@@ -2943,7 +3047,7 @@ lxc_inject_docker_user_block() {
   fi
   block+="-A DOCKER-USER -j ${ufw_forward_chain}"$'\n'
   block+="-A DOCKER-USER -i eth+ -m conntrack --ctstate NEW -j DROP"$'\n'
-  if [[ -n "$def_if" && "$def_if" =~ ^[a-zA-Z0-9._-]+$ && ! "$def_if" =~ ^(eth|docker0|br-|veth|wg|tailscale|lo) ]]; then
+  if [[ -n "$def_if" && "$def_if" =~ ^[a-zA-Z0-9._-]+$ && ! "$def_if" =~ ^(eth|docker0|br-|veth|wg|tailscale|tun|zt|tap|lo) ]]; then
     block+="-A DOCKER-USER -i ${def_if} -m conntrack --ctstate NEW -j DROP"$'\n'
   fi
   block+="-A DOCKER-USER -j RETURN"$'\n'
@@ -2997,7 +3101,7 @@ lxc_configure_ufw_docker_user() {
       local ip6_test_ok=1
       if command -v ip6tables-restore >/dev/null 2>&1; then
         local test6=""
-        test6="$(printf '*filter\n:ufw6-user-forward - [0:0]\n:DOCKER-USER - [0:0]\n-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n-A DOCKER-USER -j ufw6-user-forward\n-A DOCKER-USER -i eth+ -m conntrack --ctstate NEW -j DROP\n-A DOCKER-USER -j RETURN\nCOMMIT\n')"
+        test6="$(printf '*filter\n:ufw6-user-forward - [0:0]\n:DOCKER-USER - [0:0]\n-F DOCKER-USER\n-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n-A DOCKER-USER -j ufw6-user-forward\n-A DOCKER-USER -i eth+ -m conntrack --ctstate NEW -j DROP\n-A DOCKER-USER -j RETURN\nCOMMIT\n')"
         if ! ip6tables-restore --test <<< "$test6" >/dev/null 2>&1; then
           ip6_test_ok=0
         fi
@@ -3318,19 +3422,27 @@ Unattended-Upgrade::Package-Blacklist {
 };
 EOF
 
-  # PAM file descriptor limits for host-LXC services (Nginx, admin shells)
+  # PAM shell limits (ssh/su/sudo) and systemd DefaultLimitNOFILE for LXC services (e.g. Nginx)
   lxc_write_file "/etc/security/limits.d/99-lxc-media.conf" 0644 <<'EOF'
 * soft nofile 65536
 * hard nofile 65536
 root soft nofile 65536
 root hard nofile 65536
 EOF
+  lxc_write_file "/etc/systemd/system.conf.d/99-lxc-media.conf" 0644 <<'EOF'
+[Manager]
+DefaultLimitNOFILE=65536:524288
+EOF
+  if [[ "${DRY_RUN}" != "1" ]] && command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reexec >/dev/null 2>&1 || systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
 
   # LXC network-namespace sysctls
   lxc_write_file "/etc/sysctl.d/99-lxc-media.conf" 0644 <<'EOF'
 net.ipv4.ip_forward = 1
 net.ipv4.conf.all.src_valid_mark = 1
 net.ipv4.conf.all.rp_filter = 2
+net.ipv4.conf.default.rp_filter = 2
 EOF
   if [[ "${DRY_RUN}" == "1" ]]; then
     lxc_run_cmd sysctl -p /etc/sysctl.d/99-lxc-media.conf
@@ -3392,22 +3504,49 @@ lxc_apply_containerd_zfs_guard() {
   local tmp_cfg=""
   lxc_mktemp tmp_cfg "${CONTAINERD_CONFIG}.XXXXXX"
 
-  if grep -qE '^[[:space:]]*disabled_plugins[[:space:]]*=' "$CONTAINERD_CONFIG"; then
+  local has_top_dp=0
+  if awk '
+    /^[[:space:]]*\[/ { exit 1 }
+    /^[[:space:]]*disabled_plugins[[:space:]]*=/ { found=1; exit 0 }
+    END { exit !found }
+  ' "$CONTAINERD_CONFIG"; then
+    has_top_dp=1
+  fi
+
+  if (( has_top_dp )); then
     local existing_array="" normalized_array="" merged_array=""
     existing_array="$(awk '
-      BEGIN { in_dp=0; buf="" }
-      !in_dp && /^[[:space:]]*disabled_plugins[[:space:]]*=/ {
+      function strip_toml_comment(s,    i, c, in_dq, in_sq, esc) {
+        in_dq = 0; in_sq = 0; esc = 0
+        for (i = 1; i <= length(s); i++) {
+          c = substr(s, i, 1)
+          if (esc) { esc = 0; continue }
+          if (in_dq) {
+            if (c == "\\") esc = 1
+            else if (c == "\"") in_dq = 0
+          } else if (in_sq) {
+            if (c == "'"'"'") in_sq = 0
+          } else {
+            if (c == "\"") in_dq = 1
+            else if (c == "'"'"'") in_sq = 1
+            else if (c == "#") return substr(s, 1, i - 1)
+          }
+        }
+        return s
+      }
+      BEGIN { in_dp=0; in_sec=0; buf="" }
+      !in_dp && !in_sec && /^[[:space:]]*\[/ { in_sec=1; next }
+      !in_dp && !in_sec && /^[[:space:]]*disabled_plugins[[:space:]]*=/ {
         line = $0
         sub(/^[[:space:]]*disabled_plugins[[:space:]]*=[[:space:]]*/, "", line)
-        sub(/[[:space:]]*#.*/, "", line)
+        line = strip_toml_comment(line)
         buf = line
         if (index(line, "]") > 0) { print buf; exit }
         in_dp = 1
         next
       }
       in_dp {
-        line = $0
-        sub(/[[:space:]]*#.*/, "", line)
+        line = strip_toml_comment($0)
         buf = buf " " line
         if (index(line, "]") > 0) { print buf; exit }
       }
@@ -3418,18 +3557,35 @@ lxc_apply_containerd_zfs_guard() {
     fi
 
     awk -v repl="disabled_plugins = ${merged_array}" '
-      BEGIN { in_dp=0; done=0 }
-      !done && !in_dp && /^[[:space:]]*disabled_plugins[[:space:]]*=/ {
+      function strip_toml_comment(s,    i, c, in_dq, in_sq, esc) {
+        in_dq = 0; in_sq = 0; esc = 0
+        for (i = 1; i <= length(s); i++) {
+          c = substr(s, i, 1)
+          if (esc) { esc = 0; continue }
+          if (in_dq) {
+            if (c == "\\") esc = 1
+            else if (c == "\"") in_dq = 0
+          } else if (in_sq) {
+            if (c == "'"'"'") in_sq = 0
+          } else {
+            if (c == "\"") in_dq = 1
+            else if (c == "'"'"'") in_sq = 1
+            else if (c == "#") return substr(s, 1, i - 1)
+          }
+        }
+        return s
+      }
+      BEGIN { in_dp=0; in_sec=0; done=0 }
+      !in_dp && !in_sec && /^[[:space:]]*\[/ { in_sec=1 }
+      !done && !in_dp && !in_sec && /^[[:space:]]*disabled_plugins[[:space:]]*=/ {
         print repl
         done = 1
-        code = $0
-        sub(/[[:space:]]*#.*/, "", code)
+        code = strip_toml_comment($0)
         if (index(code, "]") == 0) in_dp = 1
         next
       }
       in_dp {
-        code = $0
-        sub(/[[:space:]]*#.*/, "", code)
+        code = strip_toml_comment($0)
         if (index(code, "]") > 0) in_dp = 0
         next
       }
@@ -3441,8 +3597,8 @@ lxc_apply_containerd_zfs_guard() {
       cat "$CONTAINERD_CONFIG"
     } > "$tmp_cfg"
   fi
+  chmod 0644 "$tmp_cfg"
   mv -f "$tmp_cfg" "$CONTAINERD_CONFIG"
-  chmod 0644 "$CONTAINERD_CONFIG"
 
   if command -v containerd >/dev/null 2>&1; then
     if ! containerd --config "$CONTAINERD_CONFIG" config dump >/dev/null 2>&1; then
@@ -3484,8 +3640,8 @@ lxc_merge_daemon_json() {
       .["storage-driver"] = (.["storage-driver"] // "overlay2") |
       .["default-address-pools"] = (.["default-address-pools"] // $base_pools)
     ' "$DOCKER_DAEMON_JSON" | jq "$extra_jq" > "$tmp_json"
+  chmod 0644 "$tmp_json"
   mv -f "$tmp_json" "$DOCKER_DAEMON_JSON"
-  chmod 0644 "$DOCKER_DAEMON_JSON"
 }
 
 lxc_docker_ready() {
@@ -3493,14 +3649,18 @@ lxc_docker_ready() {
 }
 
 lxc_enable_fuse_overlayfs_fallback() {
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    lxc_log_info "[DRY-RUN] Would install fuse-overlayfs, update ${DOCKER_DAEMON_JSON}, and restart docker"
+    return 0
+  fi
   lxc_log_warn "Docker overlay2 failed or fell back to vfs; attempting fuse-overlayfs fallback..."
   if [[ ! -e /dev/fuse ]]; then
     lxc_log_error "/dev/fuse is not available in this LXC (enable Proxmox feature fuse=1 via --with-fuse)."
     return 1
   fi
-  lxc_apt_install --no-install-recommends fuse-overlayfs
-  lxc_merge_daemon_json '.["storage-driver"] = "fuse-overlayfs"'
-  systemctl restart docker
+  lxc_apt_install --no-install-recommends fuse-overlayfs || return 1
+  lxc_merge_daemon_json '.["storage-driver"] = "fuse-overlayfs"' || return 1
+  systemctl restart docker || return 1
   lxc_wait_for 30 "Docker daemon readiness" lxc_docker_ready || return 1
 }
 
@@ -3751,6 +3911,14 @@ lxc_setup_nvidia() {
   curl -fsSL "$keyring_url" -o "$tmp_deb"
   dpkg -i "$tmp_deb"
   rm -f "$tmp_deb"
+  local -a old_cuda_files=()
+  glob_matches old_cuda_files "/etc/apt/sources.list.d/cuda-debian*.list" "/etc/apt/sources.list.d/cuda-debian*.sources" "/etc/apt/sources.list.d/cuda-ubuntu*.list" "/etc/apt/sources.list.d/cuda-ubuntu*.sources"
+  local f=""
+  for f in ${old_cuda_files[@]+"${old_cuda_files[@]}"}; do
+    if [[ "$f" != "$list_file" && "$f" != "$sources_file" ]]; then
+      rm -f "$f"
+    fi
+  done
   if [[ ! -f "$list_file" && ! -f "$sources_file" ]]; then
     printf 'deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] %s/ /\n' "$repo_url" > "$list_file"
     chmod 0644 "$list_file"
@@ -3800,7 +3968,7 @@ EOF
   local -a installed_nv_pkgs=()
   mapfile -t installed_nv_pkgs < <(
     dpkg-query -W -f='${Status}\t${Package}\n' 'nvidia-*' 'libnvidia-*' 'libcuda*' 'libnvcuvid*' 2>/dev/null \
-      | awk -F'\t' '$1 == "install ok installed" {print $2}'
+      | awk -F'\t' '$1 == "install ok installed" && $2 !~ /^(nvidia-container-toolkit|libnvidia-container)/ {print $2}'
   )
   if [[ "${#installed_nv_pkgs[@]}" -gt 0 ]]; then
     apt-mark hold "${installed_nv_pkgs[@]}"
@@ -3814,7 +3982,7 @@ EOF
   curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
     | sed "s#deb https://#deb [signed-by=${nv_keyring}] https://#g" > "$nv_list"
   apt-get update
-  lxc_apt_install nvidia-container-toolkit
+  lxc_apt_install --allow-change-held-packages nvidia-container-toolkit
 
   nvidia-ctk config --in-place --set nvidia-container-cli.no-cgroups=true
   nvidia-ctk runtime configure --runtime=docker
@@ -4143,8 +4311,9 @@ lxc_install_docktun() {
     fi
   fi
 
-  local compose_file="" rc=0
+  local compose_file="" rc=0 preserved_compose=0
   if compose_file="$(lxc_find_existing_compose "$DOCKTUN_DIR")"; then
+    preserved_compose=1
     lxc_log_info "Preserving existing compose file: ${compose_file}"
   else
     rc=$?
@@ -4168,16 +4337,49 @@ lxc_install_docktun() {
     fi
   fi
 
+  local has_zeroconf_svc="$WITH_ZEROCONF"
   if [[ "${DRY_RUN}" != "1" ]]; then
     docker compose -f "$compose_file" config --quiet
+    local services_out=""
+    services_out="$(docker compose -f "$compose_file" config --services 2>/dev/null || true)"
+    if [[ -n "$services_out" ]]; then
+      if (( preserved_compose )) && ! grep -qx 'docktun' <<< "$services_out"; then
+        lxc_die "Existing compose file ${compose_file} does not define a 'docktun' service."
+      fi
+      if grep -qx 'zeroconf' <<< "$services_out"; then
+        has_zeroconf_svc=1
+      else
+        has_zeroconf_svc=0
+      fi
+    elif (( preserved_compose )); then
+      if ! grep -qE '^[[:space:]]*docktun:' "$compose_file"; then
+        lxc_die "Existing compose file ${compose_file} does not define a 'docktun' service."
+      fi
+      if grep -qE '^[[:space:]]*(zeroconf:|container_name:[[:space:]]*docktun-zeroconf)' "$compose_file"; then
+        has_zeroconf_svc=1
+      else
+        has_zeroconf_svc=0
+      fi
+    fi
   fi
 
-  if [[ "$WITH_ZEROCONF" == "1" ]]; then
+  local zc_active=0
+  if [[ "$WITH_ZEROCONF" == "1" && "$has_zeroconf_svc" == "1" ]]; then
+    zc_active=1
     lxc_run_cmd docker compose -f "$compose_file" pull
     lxc_run_cmd docker compose -f "$compose_file" up -d
   else
+    if [[ "$WITH_ZEROCONF" == "1" && "$has_zeroconf_svc" == "0" && "$preserved_compose" == "1" ]]; then
+      lxc_log_info "Preserved compose file ${compose_file} does not include 'zeroconf'; ZeroConf mDNS will remain inactive."
+    fi
+    if [[ "$WITH_ZEROCONF" == "0" && "${DRY_RUN}" != "1" ]] && lxc_is_existing_zeroconf_running; then
+      lxc_log_info "Stopping running 'docktun-zeroconf' container (--no-zeroconf)..."
+      docker stop docktun-zeroconf >/dev/null 2>&1 || true
+      docker rm -f docktun-zeroconf >/dev/null 2>&1 || true
+    fi
     lxc_run_cmd docker compose -f "$compose_file" pull docktun
     lxc_run_cmd docker compose -f "$compose_file" up -d --no-deps docktun
+    zc_active=0
   fi
 
   if [[ "${DRY_RUN}" == "1" ]]; then
@@ -4185,6 +4387,7 @@ lxc_install_docktun() {
     return 0
   fi
 
+  WITH_ZEROCONF="$zc_active"
   if ! lxc_wait_for "$DOCKTUN_HEALTH_TIMEOUT" "DockTun /healthz" lxc_docktun_health_probe; then
     docker logs --tail 50 docktun >&2 || true
     lxc_die "DockTun healthcheck failed."
@@ -4192,11 +4395,11 @@ lxc_install_docktun() {
 
   local host_ip=""
   host_ip="$(lxc_detect_primary_ip)"
-  printf '[LXC STATE] DOCKTUN_ZEROCONF_ACTIVE=%s\n' "$WITH_ZEROCONF"
+  printf '[LXC STATE] DOCKTUN_ZEROCONF_ACTIVE=%s\n' "$zc_active"
   if (( zeroconf_fallback )); then
     printf '[LXC STATE] DOCKTUN_ZEROCONF_FALLBACK=port80\n'
   fi
-  if [[ "$WITH_ZEROCONF" == "1" ]]; then
+  if [[ "$zc_active" == "1" ]]; then
     lxc_log_success "DockTun is healthy and reachable at http://${host_ip}:${DOCKTUN_PORT} (or http://docktun.local via mDNS)"
   else
     lxc_log_success "DockTun is healthy and reachable at http://${host_ip}:${DOCKTUN_PORT}"
@@ -4249,8 +4452,8 @@ EOF
 }
 
 lxc_prepare_aiostreams() {
-  lxc_run_cmd install -d -m 0755 "$AIO_DIR" "${AIO_DIR}/data"
-  lxc_run_cmd chmod 0775 "$AIO_DIR" "${AIO_DIR}/data"
+  lxc_run_cmd install -d -m 0755 "$AIO_DIR"
+  lxc_run_cmd chmod 0775 "$AIO_DIR"
 
   local env_template="${AIO_DIR}/.env.template"
   local env_generated="${AIO_DIR}/.env.generated"
@@ -4262,7 +4465,7 @@ lxc_prepare_aiostreams() {
     elif [[ -n "$AIO_REPO_URL" ]]; then
       lxc_log_info "[DRY-RUN] Would install git (if needed) and clone ${AIO_REPO_URL}${AIO_REPO_BRANCH:+ (${AIO_REPO_BRANCH})} into ${AIO_DIR} if absent"
     fi
-    lxc_log_info "[DRY-RUN] Would write ${env_template}, ${env_generated} (non-clobbering), nginx-proxy-streaming.conf.example, and check-readiness.sh"
+    lxc_log_info "[DRY-RUN] Would ensure ${AIO_DIR}/data, ${env_template}, ${env_generated} (non-clobbering), nginx-proxy-streaming.conf.example, and check-readiness.sh"
     return 0
   fi
 
@@ -4291,7 +4494,16 @@ lxc_prepare_aiostreams() {
       clean_bytes="$(LC_ALL=C tr -d '\0' < "$tmp_aio_compose" | wc -c | tr -d '[:space:]')"
       [[ "$raw_bytes" == "$clean_bytes" ]] || lxc_die "Decoded --aio-compose file contains NUL bytes."
       if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-        docker compose -f "$tmp_aio_compose" config --quiet || \
+        local tmp_val_dir="" val_compose=""
+        lxc_mktemp tmp_val_dir -d
+        val_compose="${tmp_val_dir}/compose.yml"
+        cp "$tmp_aio_compose" "$val_compose"
+        if [[ -f "${AIO_DIR}/.env" ]]; then
+          cp "${AIO_DIR}/.env" "${tmp_val_dir}/.env"
+        else
+          : > "${tmp_val_dir}/.env"
+        fi
+        docker compose -f "$val_compose" --no-interpolate config --quiet || \
           lxc_die "Invalid Compose YAML in --aio-compose (failed 'docker compose config --quiet')."
       fi
       chmod 0644 "$tmp_aio_compose"
@@ -4309,20 +4521,29 @@ lxc_prepare_aiostreams() {
         lxc_apt_install --no-install-recommends git
       fi
       local tmp_clone=""
-      lxc_mktemp tmp_clone -d "${DOCKTUN_DIR}/.aio-clone.XXXXXX"
+      lxc_mktemp tmp_clone -d "$(dirname "$AIO_DIR")/.aio-clone.XXXXXX"
       local -a clone_cmd=(git clone --depth 1)
       [[ -n "$AIO_REPO_BRANCH" ]] && clone_cmd+=(--branch "$AIO_REPO_BRANCH")
       clone_cmd+=(-- "$AIO_REPO_URL" "$tmp_clone")
-      "${clone_cmd[@]}" || lxc_die "Failed to clone --aio-repo '${AIO_REPO_URL}'."
+      GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes" "${clone_cmd[@]}" </dev/null || \
+        lxc_die "Failed to clone --aio-repo '${AIO_REPO_URL}'."
+      local clone_rc=0
+      lxc_find_existing_compose "$tmp_clone" >/dev/null || clone_rc=$?
+      if (( clone_rc == 2 )); then
+        lxc_die "Multiple compose files found in --aio-repo '${AIO_REPO_URL}'; keep only one."
+      fi
       if id "$ADMIN_USER" >/dev/null 2>&1; then
         local clone_grp="$ADMIN_USER"
         getent group docker >/dev/null 2>&1 && clone_grp="docker"
-        find "$tmp_clone" -exec chown "${ADMIN_USER}:${clone_grp}" {} + 2>/dev/null || true
+        find "$tmp_clone" -exec chown -h "${ADMIN_USER}:${clone_grp}" {} + 2>/dev/null || true
       fi
       shopt -s dotglob nullglob
       local item="" base=""
       for item in "${tmp_clone}"/*; do
         base="${item##*/}"
+        if [[ "$base" == "data" && -d "${AIO_DIR}/data" && -z "$(ls -A "${AIO_DIR}/data" 2>/dev/null)" ]]; then
+          rmdir "${AIO_DIR}/data" 2>/dev/null || true
+        fi
         if [[ -e "${AIO_DIR}/${base}" ]]; then
           lxc_log_info "Preserving existing ${AIO_DIR}/${base} during --aio-repo clone."
           continue
@@ -4337,14 +4558,13 @@ lxc_prepare_aiostreams() {
       if staged_aio_compose="$(lxc_find_existing_compose "$AIO_DIR")"; then
         lxc_log_success "Cloned --aio-repo into ${AIO_DIR} (compose: ${staged_aio_compose})."
       else
-        local clone_rc=$?
-        if (( clone_rc == 2 )); then
-          lxc_die "Multiple compose files found in ${AIO_DIR} after cloning --aio-repo."
-        fi
         lxc_log_success "Cloned --aio-repo into ${AIO_DIR}."
       fi
     fi
   fi
+
+  install -d -m 0755 "${AIO_DIR}/data"
+  chmod 0775 "${AIO_DIR}/data"
 
   if [[ -f "$env_generated" ]]; then
     lxc_log_info "Preserving existing ${env_generated} (will not overwrite SECRET_KEY)."
@@ -4420,6 +4640,7 @@ set -euo pipefail
 
 DOCKTUN_PORT="\${DOCKTUN_PORT:-${DOCKTUN_PORT}}"
 WITH_ZEROCONF="\${WITH_ZEROCONF:-${WITH_ZEROCONF}}"
+ADMIN_USER="\${ADMIN_USER:-${ADMIN_USER}}"
 SYS_CLASS_DRM="\${SYS_CLASS_DRM:-${SYS_CLASS_DRM}}"
 STRICT="\${STRICT:-0}"
 [[ "\${1:-}" == "--strict" ]] && STRICT=1
@@ -4471,8 +4692,18 @@ if [[ -d /dev/shm ]]; then
   (( \${shm_mb:-0} >= 512 )) && ok "/dev/shm size is \${shm_mb} MiB" || warn "/dev/shm size is \${shm_mb:-0} MiB (< 512 MiB)"
 fi
 
-if [[ -r /etc/docker/daemon.json ]] && grep -q '65536' /etc/docker/daemon.json 2>/dev/null; then
-  ok "Docker daemon.json configures nofile=65536"
+if [[ -r /etc/docker/daemon.json ]]; then
+  if command -v jq >/dev/null 2>&1; then
+    if jq -e '.["default-ulimits"].nofile.Soft == 65536 and .["default-ulimits"].nofile.Hard == 65536' /etc/docker/daemon.json >/dev/null 2>&1; then
+      ok "Docker daemon.json configures nofile=65536"
+    else
+      warn "Docker daemon.json missing nofile=65536"
+    fi
+  elif grep -q '65536' /etc/docker/daemon.json 2>/dev/null; then
+    ok "Docker daemon.json configures nofile=65536"
+  else
+    warn "Docker daemon.json missing nofile=65536"
+  fi
 else
   warn "Docker daemon.json missing nofile=65536"
 fi
@@ -4506,9 +4737,16 @@ if compgen -G "/dev/dri/renderD*" >/dev/null 2>&1; then
     vendor="\$(tr -d '[:space:]' < "\${SYS_CLASS_DRM}/\${node_name}/device/vendor" 2>/dev/null || true)"
     [[ "\${vendor,,}" == "0x10de" ]] && continue
     non_nv_drm=1
-    if command -v vainfo >/dev/null 2>&1 && vainfo --display drm --device "\$node" >/dev/null 2>&1; then
-      vaapi_ok=1
-      break
+    if command -v vainfo >/dev/null 2>&1; then
+      if [[ "\${EUID:-\$(id -u)}" -eq 0 ]] && id "\$ADMIN_USER" >/dev/null 2>&1 && command -v runuser >/dev/null 2>&1; then
+        if runuser -u "\$ADMIN_USER" -- vainfo --display drm --device "\$node" </dev/null >/dev/null 2>&1; then
+          vaapi_ok=1
+          break
+        fi
+      elif vainfo --display drm --device "\$node" >/dev/null 2>&1; then
+        vaapi_ok=1
+        break
+      fi
     fi
   done
   if (( non_nv_drm == 0 )); then
@@ -4568,7 +4806,11 @@ for check_port in "\${check_ports[@]}"; do
       warn "Port \${check_port} is already bound"
     fi
   else
-    ok "Port \${check_port} is free"
+    if [[ "\${WITH_ZEROCONF}" == "1" && "\$check_port" == "80" ]]; then
+      warn "Port 80 is free (WITH_ZEROCONF=1 expects docktun-zeroconf on :80)"
+    else
+      ok "Port \${check_port} is free"
+    fi
   fi
 done
 
@@ -4662,6 +4904,9 @@ COMPOSE_FILE=${q_compose}
 AIO_DIR=${q_aio_dir}
 ADMIN_USER=${q_admin_user}
 
+tmp_env=""
+trap '[[ -n "\${tmp_env:-}" ]] && rm -f "\$tmp_env"' EXIT
+
 if [[ -f "\$COMPOSE_FILE" ]]; then
   /usr/bin/docker compose -f "\$COMPOSE_FILE" up -d
 fi
@@ -4683,6 +4928,7 @@ if [[ -f "\${AIO_DIR}/.env.template" && ! -f "\${AIO_DIR}/.env.generated" ]]; th
       chown "\${ADMIN_USER}:\${target_group}" "\$tmp_env"
     fi
     mv -f "\$tmp_env" "\${AIO_DIR}/.env.generated"
+    tmp_env=""
   fi
 fi
 EOF
@@ -4824,6 +5070,7 @@ stream_lxc_payload() {
   fi
 
   EFFECTIVE_ZEROCONF=""
+  EFFECTIVE_ZEROCONF_FALLBACK=""
   ensure_tmp_dir
   local payload_out="${TMP_WORK_DIR}/lxc_payload.out"
   log_info "Streaming inner LXC provisioning payload to CT ${CTID} (GPU mode: ${resolved_gpu})..."
@@ -4859,6 +5106,9 @@ stream_lxc_payload() {
     EFFECTIVE_ZEROCONF=0
   elif grep -q 'DOCKTUN_ZEROCONF_ACTIVE=1' "$payload_out" 2>/dev/null; then
     EFFECTIVE_ZEROCONF=1
+  fi
+  if grep -q 'DOCKTUN_ZEROCONF_FALLBACK=port80' "$payload_out" 2>/dev/null; then
+    EFFECTIVE_ZEROCONF_FALLBACK="port80"
   fi
 }
 
@@ -4899,12 +5149,12 @@ detect_ct_docktun_port() {
     fi
     for cf in "${dt_dir}/compose.yml" "${dt_dir}/compose.yaml" "${dt_dir}/docker-compose.yml" "${dt_dir}/docker-compose.yaml"; do
       if [[ -r "$cf" ]]; then
-        p="$(awk "/[0-9]+:3001(\\/(tcp|udp))?([\"'\'']|[[:space:]]|#|\$)/ { if (match(\$0, /[0-9]+:3001/)) { s=substr(\$0, RSTART, RLENGTH); sub(/:3001\$/, \"\", s); print s; exit } }" "$cf" 2>/dev/null)"
+        p="$(awk "!/^[[:space:]]*#/ && /[0-9]+:3001(\\/(tcp|udp))?([\"'\'']|[[:space:]]|#|\$)/ { if (match(\$0, /[0-9]+:3001/)) { s=substr(\$0, RSTART, RLENGTH); sub(/:3001\$/, \"\", s); print s; exit } }" "$cf" 2>/dev/null)"
         if [[ "$p" =~ ^[0-9]+$ ]]; then
           printf "%s\n" "$p"
           exit 0
         fi
-        p="$(awk -F: "/^[[:space:]]*PORT:[[:space:]]*[0-9]+/ {gsub(/[^0-9]/, \"\", \$2); print \$2; exit}" "$cf" 2>/dev/null)"
+        p="$(awk -F: "!/^[[:space:]]*#/ && /^[[:space:]]*PORT:[[:space:]]*[0-9]+/ {sub(/#.*/, \"\", \$2); gsub(/[^0-9]/, \"\", \$2); print \$2; exit}" "$cf" 2>/dev/null)"
         if [[ "$p" =~ ^[0-9]+$ ]]; then
           printf "%s\n" "$p"
           exit 0
@@ -4913,7 +5163,7 @@ detect_ct_docktun_port() {
     done
   ' _ "$DOCKTUN_DIR" 2>/dev/null || true)"
   port="${port//[^0-9]/}"
-  if [[ "$port" =~ ^[1-9][0-9]*$ ]]; then
+  if [[ "$port" =~ ^[1-9][0-9]*$ ]] && (( 10#$port >= 1 && 10#$port <= 65535 )); then
     printf '%s\n' "$port"
   else
     printf '%s\n' "$DOCKTUN_PORT"
@@ -4992,8 +5242,10 @@ update_lxc_notes() {
   local mdns_line="Disabled (--no-zeroconf)"
   if [[ "$zc_active" == "1" ]]; then
     mdns_line="http://docktun.local"
-  elif (( WITH_ZEROCONF )); then
+  elif [[ "${EFFECTIVE_ZEROCONF_FALLBACK:-}" == "port80" ]]; then
     mdns_line="Disabled (port 80 conflict fallback)"
+  elif (( WITH_ZEROCONF )); then
+    mdns_line="Disabled (not configured in compose)"
   fi
 
   local notes=""
@@ -5054,8 +5306,10 @@ print_post_install_cheat_sheet() {
   local mdns_suffix=""
   if [[ "$zc_active" == "1" ]]; then
     mdns_suffix="  (mDNS: http://docktun.local)"
-  elif (( WITH_ZEROCONF )); then
+  elif [[ "${EFFECTIVE_ZEROCONF_FALLBACK:-}" == "port80" ]]; then
     mdns_suffix="  (mDNS skipped: port 80 in use)"
+  elif (( WITH_ZEROCONF )); then
+    mdns_suffix="  (mDNS disabled in compose)"
   fi
 
   local aio_dir="${DOCKTUN_DIR}/projects/aiostreams"
@@ -5359,20 +5613,20 @@ run_doctor_mode() {
 
   local dev_perm_out=""
   dev_perm_out="$(pct exec "$CTID" -- bash -c '
-    for p in /dev/dri/renderD* /dev/dri/card* /dev/nvidia* /dev/kfd /dev/uinput /dev/uhid /dev/input/event* /dev/input/js*; do
-      [[ -e "$p" ]] || continue
+    for p in /dev/dri/renderD* /dev/dri/card* /dev/nvidia* /dev/nvidia-caps/nvidia-cap* /dev/kfd /dev/uinput /dev/uhid /dev/input/event* /dev/input/js*; do
+      [[ -e "$p" && ! -d "$p" ]] || continue
       stat -c "%n mode=%a owner=%u:%g (%U:%G)" "$p" 2>/dev/null || true
     done
   ' 2>/dev/null || true)"
   if [[ -n "$dev_perm_out" ]]; then
-    if grep -qE 'mode=[0-7]*[0-5][[:space:]]+(owner=65534:65534|\(nobody:nogroup\))' <<< "$dev_perm_out"; then
-      log_warn "Some inner GPU/input device nodes appear as nobody:nogroup (65534:65534) without world-rw (0666):"
+    if grep -qE 'mode=[0-7]*[0-5][[:space:]]+(owner=(65534:[0-9]+|[0-9]+:65534)|\(nobody:nogroup\))' <<< "$dev_perm_out"; then
+      log_warn "Some inner GPU/input device nodes appear as nobody:nogroup (65534:65534) or unmapped (65534) without world-rw (0666):"
       while IFS= read -r dline; do
-        if grep -qE 'mode=[0-7]*[0-5][[:space:]]+(owner=65534:65534|\(nobody:nogroup\))' <<< "$dline"; then
+        if grep -qE 'mode=[0-7]*[0-5][[:space:]]+(owner=(65534:[0-9]+|[0-9]+:65534)|\(nobody:nogroup\))' <<< "$dline"; then
           log_warn "  ${dline}"
         fi
       done <<< "$dev_perm_out"
-    elif grep -qE 'owner=65534:65534|\(nobody:nogroup\)' <<< "$dev_perm_out"; then
+    elif grep -qE 'owner=(65534:[0-9]+|[0-9]+:65534)|\(nobody:nogroup\)' <<< "$dev_perm_out"; then
       log_success "Inner GPU/input device node ownership OK (unmapped nodes have world-rw 0666/0777 access)"
     else
       log_success "Inner GPU/input device node ownership OK (no nobody:nogroup mapping errors)"
@@ -5384,7 +5638,14 @@ run_doctor_mode() {
     pct exec "$CTID" -- "$readiness_script" || doc_fail=1
   else
     log_warn "${readiness_script} not found inside CT ${CTID}; running basic checks..."
-    pct exec "$CTID" -- ufw status || doc_fail=1
+    local ufw_out=""
+    ufw_out="$(pct exec "$CTID" -- ufw status 2>/dev/null || true)"
+    if grep -qi 'Status:[[:space:]]*active' <<< "$ufw_out"; then
+      log_success "UFW firewall is active inside CT ${CTID}"
+    else
+      log_warn "UFW firewall is not active inside CT ${CTID}"
+      doc_fail=1
+    fi
     pct exec "$CTID" -- iptables -S DOCKER-USER || doc_fail=1
     if pct exec "$CTID" -- grep -q '^# BEGIN DOCKTUN DOCKER-USER$' /etc/ufw/after6.rules 2>/dev/null && \
        pct exec "$CTID" -- ip6tables -L -n >/dev/null 2>&1; then
@@ -5393,11 +5654,17 @@ run_doctor_mode() {
     pct exec "$CTID" -- docker exec docktun curl -fsS http://127.0.0.1:3001/healthz >/dev/null || doc_fail=1
   fi
 
-  local lxc_ip="" actual_port=""
+  local lxc_ip="" actual_port="" zc_active=""
   lxc_ip="$(detect_ct_eth0_ip "$CTID")"
   actual_port="$(detect_ct_docktun_port "$CTID")"
+  zc_active="$(detect_ct_zeroconf_active "$CTID")"
   if [[ -n "$lxc_ip" ]]; then
     log_info "Reachable DockTun URL: http://${lxc_ip}:${actual_port}"
+  fi
+  if [[ "$zc_active" == "1" ]]; then
+    log_info "DockTun ZeroConf mDNS: active (http://docktun.local)"
+  else
+    log_info "DockTun ZeroConf mDNS: inactive"
   fi
   (( doc_fail == 0 )) || exit 1
   log_success "Doctor check completed cleanly for CT ${CTID}."
@@ -5434,7 +5701,7 @@ run_list_mode() {
       ip=""
     fi
     if [[ -z "$ip" ]]; then
-      ip="$(sed -nE 's/^net0:.*ip=([^,]+).*/\1/p' <<< "$cfg" | head -n1)"
+      ip="$(sed -nE 's/^net0:.*ip=([^,]+).*/\1/p' <<< "$cfg" | head -n1 || true)"
     fi
     printf '%-8s %-10s %-20s %-18s %s\n' "$vmid" "$status" "${name:-unknown}" "${ip:-dhcp}" "$tags"
   done < <(awk 'NR>1 {print $1, $2}' <<< "$list_out")
