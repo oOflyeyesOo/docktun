@@ -245,8 +245,8 @@ Run on your Proxmox VE host as `root` to provision an unprivileged, hardened LXC
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/oOflyeyesOo/docktun/main/scripts/proxmox-lxc.sh)"
 ```
 
-- **Automatic mDNS (`docktun-zeroconf`)**: Enabled by default (`http://docktun.local`, host port `80/tcp` + `5353/udp`); pass `--no-zeroconf` / `--without-zeroconf` to keep port `80` free.
-- **Networking & Operational Flags**: Supports `--doctor <ctid>`, `--provision-only <ctid>`, `--list`, `--destroy <ctid>`, `--cleanup-on-failure`, `--startup <spec>`, `--aio-compose <host_file>`, `--vlan <tag>`, `--mtu <bytes>`, `--timezone <tz>`, repeatable `--mount <host:ct>`, Proxmox Web UI `--description` summary notes, and `--template-hygiene` (first-boot SSH key regen + `docktun-firstboot.sh`/`.service` regenerating `.env.generated`).
+- **Automatic mDNS (`docktun-zeroconf`)**: Enabled by default (`http://docktun.local`, host port `80/tcp` + `5353/udp`); pass `--no-zeroconf` / `--without-zeroconf` to keep port `80` free (port-80 conflict fallback is accurately reflected in Proxmox notes and cheat sheet).
+- **Networking & Operational Flags**: Supports `--doctor <ctid>`, `--provision-only <ctid>`, `--list`, `--destroy <ctid>`, `--cleanup-on-failure`, `--startup <spec>`, `--aio-compose <host_file>`, `--aio-repo <git_url>`, `--aio-branch <ref>`, `--vlan <tag>`, `--mtu <bytes>`, `--timezone <tz>`, repeatable `--mount <host:ct>`, template-aware Proxmox Web UI `--description` summary notes, weekly `docktun-docker-prune.timer` (never prunes volumes), Docker `default-address-pools`, `nofile=65536` limits, and `--template-hygiene` (first-boot SSH key regen + `docktun-firstboot.sh`/`.service` regenerating `.env.generated`).
 - **Wolf / Purah Cloud Gaming**: Pass `--with-wolf-input` for `uinput`/`uhid` (`dev[n]` on PVE 8.2+), `MODE="0666"` virtual input udev rules, and read-only `/run/udev` passthrough.
 
 See [docs/proxmox-lxc.md](docs/proxmox-lxc.md) for CLI flags, `--dry-run` preview, GPU/Wolf notes, and hardening details (script: [scripts/proxmox-lxc.sh](scripts/proxmox-lxc.sh)).
